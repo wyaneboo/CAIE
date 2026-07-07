@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Topic 7 — Professional Ethics &amp; Responsible AI I · CAIE Course</title>
+<link rel="stylesheet" href="../assets/course.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<script defer src="../assets/course.js"></script>
+</head>
+<body data-page="t07" data-root="..">
+<a class="skip" href="#main">Skip to content</a>
+<header class="topbar">
+  <button id="navToggle" class="iconbtn" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html">CAIE<span>·</span>Course</a>
+  <span class="topbar-title">Level I · Topic 7 · Professional Ethics &amp; Responsible AI I</span>
+  <button id="themeToggle" class="iconbtn" aria-label="Toggle theme">◐</button>
+</header>
+<nav id="sidebar"></nav>
+
+<main id="main">
+<div class="kicker">Level I · Topic 7 · Exam weight 6% — but a borderline candidate who fails ethics fails the exam</div>
+<h1>Professional Ethics &amp; Responsible AI I</h1>
+<p class="lead">
+  Like the CFA's ethics core, this topic is small in hours and disproportionate in consequence — by
+  exam design and by career design. The engineering content is real (the fairness-criteria
+  impossibility below is a theorem, not a sentiment), and the professional content is the difference
+  between an engineer and a chartered one: knowing what you may build, for whom, and when to say no.
+</p>
+
+<div class="box los">
+  <div class="box-title">Learning outcomes</div>
+  <ul>
+    <li>Describe the CAIE Code of Conduct and Standards of Professional Practice.</li>
+    <li>Define algorithmic bias and the major fairness criteria (demographic parity, equalized odds) — and explain why they are mutually incompatible.</li>
+    <li>Describe privacy principles (consent, minimization, purpose limitation) and major regulations (GDPR, EU AI Act risk tiers).</li>
+    <li>Explain informed consent and dual-use risk; describe the duty of competence.</li>
+  </ul>
+</div>
+
+<h2>7.1 The Code, compressed</h2>
+<p>The CAIE Code of Conduct reduces to six standards. Learn them as tests you apply to a scenario:</p>
+<ol>
+  <li><strong>Integrity of work:</strong> report results honestly — no cherry-picked benchmarks, no undisclosed test-set tuning, no claiming a metric you didn't measure.</li>
+  <li><strong>Duty of competence:</strong> operate within the limits of your models <em>and yourself</em>; know your model's failure modes before others discover them; disclose uncertainty.</li>
+  <li><strong>Duty to users:</strong> the people affected by a system outrank the convenience of its builders. Foreseeable harm is your responsibility even when unintended.</li>
+  <li><strong>Data stewardship:</strong> collect the minimum, protect what you hold, use it only for its consented purpose.</li>
+  <li><strong>Independence and objectivity:</strong> resist pressure — commercial or hierarchical — to misstate what a system can do or to skip evaluation.</li>
+  <li><strong>Professional responsibility:</strong> the license to build advanced systems carries the obligation to escalate, document, and — in the limit — refuse (Topic 22 trains this).</li>
+</ol>
+
+<h2>7.2 Algorithmic bias and the fairness impossibility</h2>
+<p>
+  <strong>Algorithmic bias</strong> is systematic error that disadvantages a group — usually
+  inherited from data (historical decisions encode historical discrimination; sampling
+  under-represents groups; labels proxy something other than truth) or from deployment context.
+  To reason about it, formalize: for a binary predictor \(\hat Y\), outcome \(Y\), and group
+  \(A\), the three canonical criteria are:
+</p>
+<ul>
+  <li><strong>Demographic parity:</strong> \(P(\hat Y = 1 \mid A = a)\) equal across groups — equal selection rates.</li>
+  <li><strong>Equalized odds:</strong> \(P(\hat Y = 1 \mid Y = y, A = a)\) equal across groups for each true \(y\) — equal true-positive <em>and</em> false-positive rates.</li>
+  <li><strong>Predictive parity / calibration:</strong> \(P(Y = 1 \mid \hat Y = 1, A = a)\) equal — a positive prediction means the same thing for every group.</li>
+</ul>
+<p>
+  The theorem the syllabus wants: <strong>when base rates differ between groups, no non-perfect
+  classifier can satisfy all of these simultaneously.</strong> (Kleinberg et al. 2016; Chouldechova
+  2016 — provoked by the COMPAS recidivism debate, where the tool was calibrated but had unequal
+  false-positive rates.) This is arithmetic, not politics: choosing <em>which</em> fairness
+  criterion to satisfy is a value judgment about which error costs matter, and it must be made
+  explicitly, documented, and owned — not discovered by journalists.
+</p>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Interactive — the impossibility theorem, on sliders</div>
+    <div class="wsub">Two applicant groups with different base rates of repayment. Each group gets its own score distributions and its own decision threshold. Try to zero all three fairness gaps at once. You can't — that's the theorem.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label>base rate A <input type="range" id="f-bA" min="0.1" max="0.9" step="0.01" value="0.5"><span class="val" id="f-bA-v"></span></label>
+      <label>base rate B <input type="range" id="f-bB" min="0.1" max="0.9" step="0.01" value="0.3"><span class="val" id="f-bB-v"></span></label>
+      <label>threshold A <input type="range" id="f-tA" min="-2" max="4" step="0.02" value="1"><span class="val" id="f-tA-v"></span></label>
+      <label>threshold B <input type="range" id="f-tB" min="-2" max="4" step="0.02" value="1"><span class="val" id="f-tB-v"></span></label>
+    </div>
+    <div class="controls">
+      <span style="font-size:0.8rem;color:var(--muted)">auto-solve for:</span>
+      <button class="btn ghost" id="f-eqSel">equal selection rates</button>
+      <button class="btn ghost" id="f-eqTPR">equal TPR</button>
+      <button class="btn ghost" id="f-eqPPV">equal precision</button>
+    </div>
+    <canvas id="f-canvas" width="640" height="210"></canvas>
+    <div class="tablewrap"><table id="f-table"></table></div>
+    <p class="wcaption">
+      Press each auto-solve button in turn and watch the other two gap rows light up red. With
+      different base rates, equalizing selection rates forces unequal error rates; equalizing error
+      rates forces unequal precision. Every deployed decision system has implicitly picked a corner
+      of this triangle — the professional standard is to pick it on purpose.
+    </p>
+  </div>
+</div>
+
+<h2>7.3 Privacy and regulation</h2>
+<p>
+  The three privacy principles the syllabus names, in engineering terms:
+  <strong>consent</strong> — data subjects agreed to <em>this</em> use, and consent to use A is not
+  consent to use B (training a model on support tickets collected "to improve service" is a purpose
+  change); <strong>minimization</strong> — collect and retain only what the purpose requires (every
+  extra column is liability, not asset); <strong>purpose limitation</strong> — data collected for
+  one purpose cannot be silently repurposed. GDPR operationalizes these for anyone touching EU
+  residents' data, adding rights of access, correction, erasure, and meaningful information about
+  automated decisions — with fines up to 4% of global revenue.
+</p>
+<p>
+  The <strong>EU AI Act</strong> regulates by <em>risk tier</em>, and the tiers are exam material:
+</p>
+<div class="tablewrap">
+<table>
+  <tr><th>Tier</th><th>Treatment</th><th>Examples</th></tr>
+  <tr><td><strong>Unacceptable</strong></td><td>banned outright</td><td>social scoring by governments, manipulative techniques exploiting vulnerabilities, real-time remote biometric ID in public (narrow exceptions)</td></tr>
+  <tr><td><strong>High risk</strong></td><td>conformity assessment, risk management, human oversight, logging, documentation</td><td>hiring/screening tools, credit scoring, medical devices, critical infrastructure, law enforcement uses</td></tr>
+  <tr><td><strong>Limited risk</strong></td><td>transparency duties</td><td>chatbots must disclose they're AI; deepfakes must be labeled</td></tr>
+  <tr><td><strong>Minimal risk</strong></td><td>no new obligations</td><td>spam filters, game AI, recommendation of songs</td></tr>
+</table>
+</div>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Interactive — classify the system, AI-Act style</div>
+    <div class="wsub">For each scenario, pick the risk tier. This is exactly the format Level I tests it in.</div>
+  </div>
+  <div class="widget-body" id="aia-body"></div>
+</div>
+
+<h2>7.4 Consent, dual use, and the duty of competence</h2>
+<p>
+  <strong>Informed consent</strong> requires that the person understands what is collected, for
+  what, with what risks, and can refuse without penalty — a checkbox under a 40-page policy is
+  consent-shaped, not consent. <strong>Dual-use risk</strong>: many capabilities are harm-neutral
+  until context (a voice cloner is an accessibility tool and a fraud tool; a protein-design model is
+  a drug pipeline and a toxin pipeline). The professional duty is to <em>assess</em> plausible
+  misuse before release and mitigate (access controls, monitoring, staged release) — Level III
+  (Topic 19) makes this quantitative.
+</p>
+<p>
+  The <strong>duty of competence</strong> deserves its physics phrasing: know your model's domain of
+  validity the way you know a Taylor expansion's radius of convergence. A model is a fit to a
+  training distribution; outside it, extrapolation is unlabeled guesswork. The competent engineer
+  can answer: on what data does this fail? for which subgroups is accuracy lowest? how does it
+  behave on out-of-distribution input? — and says "I don't know yet" out loud when that's the truth.
+</p>
+
+<div class="box jargon">
+  <div class="box-title">Jargon decoder</div>
+  <dl>
+    <dt>protected attribute</dt><dd>A characteristic (race, sex, age, …) legally shielded from discriminatory treatment. Removing the column doesn't remove the signal — proxies (zip code, names) reconstruct it.</dd>
+    <dt>base rate</dt><dd>The prevalence of the outcome in a group. Different base rates are what make the fairness criteria collide.</dd>
+    <dt>COMPAS</dt><dd>The recidivism-scoring tool at the center of the 2016 ProPublica investigation that made fairness-criteria incompatibility famous.</dd>
+    <dt>PII</dt><dd>Personally Identifiable Information — data that can identify a person directly or in combination.</dd>
+    <dt>data subject</dt><dd>GDPR's term for the human the data is about — the holder of the rights.</dd>
+    <dt>disparate impact</dt><dd>A facially neutral practice with disproportionate adverse effect on a protected group — the legal cousin of demographic-parity violation.</dd>
+  </dl>
+</div>
+
+<h2>Self-check</h2>
+<div class="quiz" data-answer="c">
+  <p class="quiz-q">1. Two groups have repayment base rates of 60% and 40%. A lender's model is perfectly calibrated for both groups. It follows that:</p>
+  <div class="opts">
+    <button data-opt="a">the model also satisfies equalized odds</button>
+    <button data-opt="b">the model satisfies demographic parity</button>
+    <button data-opt="c">the model must violate equalized odds (unless it is a perfect predictor) — calibration + unequal base rates forces unequal error rates</button>
+    <button data-opt="d">the model is illegal under GDPR</button>
+  </div>
+  <div class="quiz-exp"><strong>c.</strong> The impossibility theorem: with unequal base rates, calibration and equalized odds are mutually exclusive short of perfection. This is the COMPAS geometry.</div>
+</div>
+<div class="quiz" data-answer="b">
+  <p class="quiz-q">2. A team removes "gender" from a hiring model's features and declares it fair. The strongest objection:</p>
+  <div class="opts">
+    <button data-opt="a">gender improves accuracy so it should stay</button>
+    <button data-opt="b">correlated proxies (career gaps, sports, word choice) reconstruct the signal; fairness must be measured on outcomes across groups, not asserted from the feature list</button>
+    <button data-opt="c">the model is now unfair to the majority group</button>
+    <button data-opt="d">removing features always increases variance</button>
+  </div>
+  <div class="quiz-exp"><strong>b.</strong> "Fairness through unawareness" reliably fails — the Amazon hiring-tool case is the canonical example (it learned to penalize the word "women's"). You must measure group outcomes on data where the attribute is available for auditing.</div>
+</div>
+<div class="quiz" data-answer="d">
+  <p class="quiz-q">3. Under the EU AI Act, a CV-screening tool that ranks job applicants is:</p>
+  <div class="opts">
+    <button data-opt="a">unacceptable risk — banned</button>
+    <button data-opt="b">limited risk — just disclose it's AI</button>
+    <button data-opt="c">minimal risk</button>
+    <button data-opt="d">high risk — permitted with conformity assessment, human oversight, logging, and documentation</button>
+  </div>
+  <div class="quiz-exp"><strong>d.</strong> Employment and worker-management uses are explicitly listed high-risk. Ban applies to things like state social scoring; disclosure-only applies to chatbots/deepfakes.</div>
+</div>
+<div class="quiz" data-answer="a">
+  <p class="quiz-q">4. Your model ships tomorrow; subgroup evaluation wasn't run; your manager says "we'll check after launch." The Code-consistent move:</p>
+  <div class="opts">
+    <button data-opt="a">state in writing that subgroup performance is unverified, propose the fastest adequate audit, and escalate if overruled — competence and duty-to-users precede schedule</button>
+    <button data-opt="b">ship silently; bias is a research problem</button>
+    <button data-opt="c">refuse to ship and resign on the spot</button>
+    <button data-opt="d">delete the protected attributes so the issue is moot</button>
+  </div>
+  <div class="quiz-exp"><strong>a.</strong> The professional sequence: document, propose a proportionate remedy, escalate. (c) is the last resort, not the first move — Topic 22 trains the full escalation ladder. (d) is question 2's fallacy.</div>
+</div>
+
+<h2>Go deeper</h2>
+<ul class="resources">
+  <li><a href="https://fairmlbook.org/">Fairness and Machine Learning — Barocas, Hardt, Narayanan (free online)</a><div class="rwhat">Ch. 2–3 for the formal criteria and impossibility results. The standard text.</div></li>
+  <li><a href="https://arxiv.org/abs/1609.05807">Kleinberg, Mullainathan, Raghavan 2016 — Inherent Trade-Offs in the Fair Determination of Risk Scores</a><div class="rwhat">The impossibility theorem itself; the introduction is readable without the proofs.</div></li>
+  <li><a href="https://www.propublica.org/article/machine-bias-risk-assessments-in-criminal-sentencing">ProPublica — Machine Bias (2016)</a><div class="rwhat">The COMPAS investigation; read together with Northpointe's rebuttal to see both fairness definitions colliding in the wild.</div></li>
+  <li><a href="https://artificialintelligenceact.eu/">The AI Act Explorer</a><div class="rwhat">Searchable full text; the "high-level summary" page covers the tiers tested here.</div></li>
+  <li><a href="https://gdpr.eu/">GDPR.eu</a><div class="rwhat">Plain-language guides to consent, minimization, and data-subject rights.</div></li>
+  <li><a href="https://www.weaponsofmathdestructionbook.com/">Cathy O'Neil — Weapons of Math Destruction</a><div class="rwhat">The case-study book: opaque models, feedback loops, scale. Chapters on credit and hiring pair directly with this topic.</div></li>
+</ul>
+
+<div class="page-footer"></div>
+</main>
+
+<script>
+document.addEventListener("caie:ready", () => {
+  // ---------- fairness widget ----------
+  (function () {
+    const canvas = document.getElementById("f-canvas");
+    function phi(z) { return Math.exp(-0.5 * z * z) / Math.sqrt(2 * Math.PI); }
+    function Phi(z) {
+      const t = 1 / (1 + 0.2316419 * Math.abs(z)), d = phi(z);
+      let p = d * t * (0.319381530 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))));
+      return z >= 0 ? 1 - p : p;
+    }
+    const SEP = 1.6; // score separation between repayers (+) and defaulters (0)
+    function groupStats(base, thr) {
+      const TPR = 1 - Phi(thr - SEP);       // repayers approved
+      const FPR = 1 - Phi(thr);             // defaulters approved
+      const sel = base * TPR + (1 - base) * FPR;
+      const PPV = base * TPR / Math.max(1e-9, sel);
+      return { TPR, FPR, sel, PPV };
+    }
+    function vals() {
+      return {
+        bA: +document.getElementById("f-bA").value, bB: +document.getElementById("f-bB").value,
+        tA: +document.getElementById("f-tA").value, tB: +document.getElementById("f-tB").value
+      };
+    }
+    function gapCell(g, tol) {
+      const bad = Math.abs(g) > tol;
+      return '<td style="font-family:var(--mono);color:' + (bad ? "var(--critical)" : "var(--good)") + ';font-weight:700">' +
+        (g >= 0 ? "+" : "") + (100 * g).toFixed(1) + " pp " + (bad ? "✗" : "✓") + "</td>";
+    }
+    function draw() {
+      const v = vals();
+      ["bA", "bB"].forEach(k => document.getElementById("f-" + k + "-v").textContent = (100 * v[k]).toFixed(0) + "%");
+      ["tA", "tB"].forEach(k => document.getElementById("f-" + k + "-v").textContent = v[k].toFixed(2));
+      const A = groupStats(v.bA, v.tA), B = groupStats(v.bB, v.tB);
+      const pal = CAIE.pal();
+      // draw densities for both groups side by side
+      const W = Math.min(640, canvas.parentNode.clientWidth - 4);
+      const { ctx, w, h } = CAIE.setupCanvas(canvas, W, 210);
+      ctx.clearRect(0, 0, w, h);
+      const half = w / 2 - 10;
+      [["Group A", v.bA, v.tA, 0], ["Group B", v.bB, v.tB, half + 20]].forEach(([nm, base, thr, x0]) => {
+        const X = x => x0 + (x + 3) / (SEP + 6) * half;
+        const Y = y => h - 24 - y / 0.45 * (h - 50);
+        ctx.font = "600 12px " + CAIE.css("--sans"); ctx.fillStyle = pal.ink2; ctx.textAlign = "left";
+        ctx.fillText(nm + " — base rate " + (100 * base).toFixed(0) + "%", x0 + 4, 14);
+        // defaulters at 0 (weighted 1-base), repayers at SEP (weighted base)
+        ctx.lineWidth = 2;
+        for (const [mu, wgt, col] of [[0, 1 - base, pal.s[5]], [SEP, base, pal.s[1]]]) {
+          ctx.strokeStyle = col; ctx.beginPath();
+          for (let i = 0; i <= 100; i++) {
+            const x = -3 + (SEP + 6) * i / 100;
+            const y = wgt * phi(x - mu);
+            if (i === 0) ctx.moveTo(X(x), Y(y)); else ctx.lineTo(X(x), Y(y));
+          }
+          ctx.stroke();
+        }
+        ctx.strokeStyle = pal.s[2]; ctx.setLineDash([5, 4]); ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(X(thr), 22); ctx.lineTo(X(thr), h - 24); ctx.stroke(); ctx.setLineDash([]);
+        ctx.strokeStyle = pal.baseline;
+        ctx.beginPath(); ctx.moveTo(x0, h - 24); ctx.lineTo(x0 + half, h - 24); ctx.stroke();
+      });
+      const lg = document.createElement("div");
+      // table
+      document.getElementById("f-table").innerHTML =
+        "<tr><th></th><th>selection rate</th><th>TPR (equal opportunity)</th><th>FPR</th><th>precision (PPV)</th></tr>" +
+        "<tr><td><b>Group A</b></td><td>" + (100 * A.sel).toFixed(1) + "%</td><td>" + (100 * A.TPR).toFixed(1) + "%</td><td>" + (100 * A.FPR).toFixed(1) + "%</td><td>" + (100 * A.PPV).toFixed(1) + "%</td></tr>" +
+        "<tr><td><b>Group B</b></td><td>" + (100 * B.sel).toFixed(1) + "%</td><td>" + (100 * B.TPR).toFixed(1) + "%</td><td>" + (100 * B.FPR).toFixed(1) + "%</td><td>" + (100 * B.PPV).toFixed(1) + "%</td></tr>" +
+        "<tr><td><b>gap</b></td>" + gapCell(A.sel - B.sel, 0.02) + gapCell(A.TPR - B.TPR, 0.02) + gapCell(A.FPR - B.FPR, 0.02) + gapCell(A.PPV - B.PPV, 0.02) + "</tr>";
+    }
+    function solve(metric) {
+      // adjust tB to match group A's metric by scanning
+      const v = vals();
+      const target = groupStats(v.bA, v.tA)[metric];
+      let best = v.tB, bd = 1e9;
+      for (let t = -2; t <= 4; t += 0.005) {
+        const m = groupStats(v.bB, t)[metric];
+        if (Math.abs(m - target) < bd) { bd = Math.abs(m - target); best = t; }
+      }
+      document.getElementById("f-tB").value = best;
+      draw();
+    }
+    ["f-bA", "f-bB", "f-tA", "f-tB"].forEach(id => document.getElementById(id).addEventListener("input", draw));
+    document.getElementById("f-eqSel").addEventListener("click", () => solve("sel"));
+    document.getElementById("f-eqTPR").addEventListener("click", () => solve("TPR"));
+    document.getElementById("f-eqPPV").addEventListener("click", () => solve("PPV"));
+    CAIE.onTheme(draw); window.addEventListener("resize", draw);
+    draw();
+  })();
+
+  // ---------- AI Act tier quiz ----------
+  (function () {
+    const scenarios = [
+      { s: "A municipal government scores citizens' 'trustworthiness' from their social behavior, affecting access to services.", a: 0, why: "Social scoring by public authorities is explicitly banned — the canonical unacceptable-risk example." },
+      { s: "A hospital deploys a model that prioritizes patients for ICU beds.", a: 1, why: "Health, safety, and access-to-essential-services decisions are high risk: conformity assessment, human oversight, logging." },
+      { s: "An e-commerce site's chatbot answers product questions.", a: 2, why: "Limited risk — the transparency duty: users must be told they're talking to an AI." },
+      { s: "A photo app suggests which of your own pictures are blurry.", a: 3, why: "Minimal risk — no meaningful rights or safety impact; no new obligations." },
+      { s: "A bank's model sets credit limits for consumer applicants.", a: 1, why: "Creditworthiness evaluation is listed high-risk in Annex III." },
+      { s: "A marketing tool generates photorealistic videos of real politicians saying things they never said, for 'satire'.", a: 2, why: "Deepfakes carry a labeling/transparency obligation (limited risk) — though other laws (defamation, election rules) may bite harder." },
+      { s: "An employer's software analyzes workers' keystrokes and webcam feeds to score productivity and flag 'low performers' for dismissal.", a: 1, why: "Worker management and employment decisions are high risk; emotion-recognition at work is banned in several configurations — at minimum this triggers the full high-risk regime." },
+      { s: "A toy uses voice AI to encourage children to perform dangerous stunts.", a: 0, why: "Exploiting vulnerabilities of a specific group (children) to cause harm is a banned manipulative practice." }
+    ];
+    const tiers = ["Unacceptable (banned)", "High risk", "Limited risk (transparency)", "Minimal risk"];
+    const body = document.getElementById("aia-body");
+    body.innerHTML = scenarios.map((sc, i) =>
+      '<div class="quiz" data-answer="' + "abcd"[sc.a] + '"><p class="quiz-q">' + (i + 1) + ". " + sc.s + '</p><div class="opts">' +
+      tiers.map((t, j) => '<button data-opt="' + "abcd"[j] + '">' + t + "</button>").join("") +
+      '</div><div class="quiz-exp">' + sc.why + "</div></div>"
+    ).join("");
+    // re-wire quizzes added after boot
+    body.querySelectorAll(".quiz").forEach(q => {
+      const ans = q.dataset.answer;
+      q.querySelectorAll(".opts button").forEach(btn => {
+        btn.addEventListener("click", () => {
+          if (q.classList.contains("revealed")) return;
+          q.classList.add("revealed");
+          q.querySelectorAll(".opts button").forEach(b => {
+            if (b.dataset.opt === ans) b.classList.add("correct");
+            else if (b === btn) b.classList.add("wrong");
+            b.disabled = true;
+          });
+        });
+      });
+    });
+  })();
+});
+</script>
+</body>
+</html>

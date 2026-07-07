@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Topic 12 — ML Systems &amp; Distributed Training · CAIE Course</title>
+<link rel="stylesheet" href="../assets/course.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<script defer src="../assets/course.js"></script>
+</head>
+<body data-page="t12" data-root="..">
+<a class="skip" href="#main">Skip to content</a>
+<header class="topbar">
+  <button id="navToggle" class="iconbtn" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html">CAIE<span>·</span>Course</a>
+  <span class="topbar-title">Level II · Topic 12 · ML Systems &amp; Distributed Training</span>
+  <button id="themeToggle" class="iconbtn" aria-label="Toggle theme">◐</button>
+</header>
+<nav id="sidebar"></nav>
+
+<main id="main">
+<div class="kicker">Level II · Topic 12 · Exam weight 14%</div>
+<h1>ML Systems Design &amp; Distributed Training</h1>
+<p class="lead">
+  Everything before this topic assumed the model fits on one device. It doesn't. A 70B-parameter
+  model needs over a terabyte of memory just to <em>train</em> — an 80&nbsp;GB GPU holds 7% of that.
+  This topic is the arithmetic and engineering of splitting work across hundreds of GPUs: where the
+  bytes go, how numbers are represented, how machines talk to each other, and how to size a cluster
+  and a budget. It is almost entirely back-of-envelope math — which makes it the most physics-like
+  topic in Level II, and a favorite exam hunting ground because the calculations have exact answers.
+</p>
+
+<div class="box los">
+  <div class="box-title">Learning outcomes</div>
+  <ul>
+    <li>Calculate training memory: parameters, gradients, optimizer states, activations — and what ZeRO stages shard.</li>
+    <li>Describe data, tensor, and pipeline parallelism, and choose among them for a given model and interconnect.</li>
+    <li>Explain mixed precision (FP16/BF16/FP8) and why loss scaling exists.</li>
+    <li>Explain gradient accumulation and activation checkpointing and their memory/compute tradeoffs.</li>
+    <li>Describe all-reduce / all-gather / reduce-scatter and interconnect constraints (NVLink vs InfiniBand).</li>
+    <li>Size a training run: FLOPs = 6ND, GPU-hours, wall-clock time, and dollars.</li>
+  </ul>
+</div>
+
+<h2>12.1 Where the memory goes — the 16 bytes/parameter rule</h2>
+<p>
+  Inference needs one copy of the weights. Training with Adam needs <em>four kinds</em> of state,
+  and the standard mixed-precision recipe costs about <strong>16 bytes per parameter</strong> before
+  a single activation is stored:
+</p>
+<ul>
+  <li><strong>Weights</strong> in BF16 — 2 bytes/param (the copy used for fast matmuls).</li>
+  <li><strong>Gradients</strong> in BF16 — 2 bytes/param.</li>
+  <li><strong>Optimizer states</strong> in FP32 — 12 bytes/param: a <em>master copy</em> of the
+  weights (4) plus Adam's first moment \(m\) (4) and second moment \(v\) (4). The master copy exists
+  because thousands of tiny updates would vanish if accumulated at 2-byte precision.</li>
+</ul>
+<p>
+  So a 7B model needs \(16 \times 7\times10^9 = 112\) GB of state — it does not fit on one 80&nbsp;GB
+  GPU even at micro-batch 1. (Full FP32 training also lands on ~16 bytes: 4+4+8. Mixed precision
+  buys <em>speed</em> and cheaper activations, not smaller optimizer state.)
+</p>
+<p>
+  On top of state come <strong>activations</strong> — every intermediate tensor the backward pass
+  will need (Topic 5: backprop reuses forward results). For a transformer they scale as
+  \(\text{seq} \times \text{batch} \times \text{hidden} \times \text{layers}\): unlike parameter
+  state, <em>you</em> control them through batch size and sequence length. Historically attention
+  also stored the \(s \times s\) score matrix (a term growing as \(s^2\)); FlashAttention (Topic 8)
+  recomputes it in tiles, removing that term — which is why long-context training became feasible.
+</p>
+<p>
+  Two levers stretch a too-small GPU before you buy more of them:
+</p>
+<ul>
+  <li><strong>Gradient accumulation:</strong> run \(k\) small micro-batches, summing gradients,
+  then apply one optimizer step. Mathematically identical to a \(k\times\) larger batch; activation
+  memory stays at micro-batch size; you pay in wall-clock time, not memory.</li>
+  <li><strong>Activation checkpointing</strong> (recomputation): store only layer <em>inputs</em>
+  during the forward pass, and recompute the interiors during backward. Cuts activation memory
+  by roughly the per-layer interior factor at the cost of ≈ one extra forward pass (~33% more
+  compute). Trading memory for compute is often the best deal in town, because memory is the
+  binding constraint.</li>
+</ul>
+<div class="box bridge">
+  <div class="box-title">⚛ Physics bridge</div>
+  <p>
+    Checkpointing is exactly the trick of a reversible simulation: don't store every intermediate
+    state of the trajectory, store sparse snapshots and re-integrate between them when you need the
+    in-betweens. And the accounting mindset here is calorimetry — every byte must appear in the
+    budget or the run dies with an OOM (out-of-memory) at hour 30. Senior engineers write the
+    memory budget <em>before</em> launching, the way you write the error budget before the
+    experiment.
+  </p>
+</div>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Interactive — training memory calculator</div>
+    <div class="wsub">Per-GPU memory for mixed-precision Adam training. Pick a model, then watch what ZeRO sharding and activation checkpointing do to the bar. Dashed lines mark common GPU sizes (24 / 40 / 80 GB).</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label>Model
+        <select id="mem-model">
+          <option value="0">125M (L12 · h768)</option>
+          <option value="1">1.3B (L24 · h2048)</option>
+          <option value="2" selected>7B (L32 · h4096)</option>
+          <option value="3">13B (L40 · h5120)</option>
+          <option value="4">70B (L80 · h8192)</option>
+          <option value="5">175B (L96 · h12288)</option>
+        </select>
+      </label>
+      <label>ZeRO stage
+        <select id="mem-zero">
+          <option value="0">0 — plain DP</option>
+          <option value="1">1 — shard optimizer</option>
+          <option value="2">2 — + gradients</option>
+          <option value="3">3 — + params (FSDP)</option>
+        </select>
+      </label>
+      <label>GPUs (DP ranks) <input type="range" id="mem-gpus" min="0" max="10" step="1" value="3"><span class="val" id="mem-gpus-v"></span></label>
+      <label>Seq length <input type="range" id="mem-seq" min="9" max="13" step="1" value="12"><span class="val" id="mem-seq-v"></span></label>
+      <label>Micro-batch <input type="range" id="mem-mb" min="1" max="8" step="1" value="1"><span class="val" id="mem-mb-v"></span></label>
+      <label><input type="checkbox" id="mem-ckpt"> activation checkpointing</label>
+    </div>
+    <canvas id="mem-canvas" width="760" height="240"></canvas>
+    <div class="readout" id="mem-readout"></div>
+    <p class="wcaption">
+      Things to try: (1) 7B, ZeRO 0, 8 GPUs — 112&nbsp;GB of state per GPU no matter how many GPUs
+      you add, because plain data parallelism <em>replicates</em> everything. Step through ZeRO
+      1→2→3 and watch the state melt. (2) 70B, ZeRO 3, 64 GPUs: state fits, but crank seq length to
+      8k and activations take over — that's when checkpointing earns its 33%. (3) Note activations
+      don't shrink with ZeRO — they depend on <em>your</em> micro-batch, not on sharding. A fixed
+      ~2&nbsp;GB is included for CUDA context and fragmentation.
+    </p>
+  </div>
+</div>
+
+<h2>12.2 Mixed precision — FP16, BF16, FP8 and loss scaling</h2>
+<p>
+  A floating-point number is scientific notation in binary: sign, exponent (dynamic <em>range</em>),
+  mantissa (relative <em>precision</em>). The formats differ only in how they split the bits:
+</p>
+<div class="tablewrap"><table>
+  <thead><tr><th>Format</th><th>Bits (sign·exp·mantissa)</th><th>Max ≈</th><th>Smallest normal ≈</th><th>Relative precision ≈</th></tr></thead>
+  <tbody>
+    <tr><td>FP32</td><td>1 · 8 · 23</td><td>3.4×10³⁸</td><td>1.2×10⁻³⁸</td><td>10⁻⁷</td></tr>
+    <tr><td>TF32 (matmul mode)</td><td>1 · 8 · 10</td><td>3.4×10³⁸</td><td>1.2×10⁻³⁸</td><td>10⁻³</td></tr>
+    <tr><td>FP16</td><td>1 · 5 · 10</td><td>65,504</td><td>6.1×10⁻⁵</td><td>10⁻³</td></tr>
+    <tr><td>BF16</td><td>1 · 8 · 7</td><td>3.4×10³⁸</td><td>1.2×10⁻³⁸</td><td>4×10⁻³</td></tr>
+    <tr><td>FP8 E4M3</td><td>1 · 4 · 3</td><td>448</td><td>1.6×10⁻²</td><td>6×10⁻²</td></tr>
+    <tr><td>FP8 E5M2</td><td>1 · 5 · 2</td><td>57,344</td><td>6.1×10⁻⁵</td><td>1.3×10⁻¹</td></tr>
+  </tbody>
+</table></div>
+<p>
+  The story of the table: <strong>FP16</strong> has a narrow exponent, so small gradients
+  (typically 10⁻⁵–10⁻⁸) <em>underflow to zero</em>. The fix is <strong>loss scaling</strong>:
+  multiply the loss by a factor \(S\) (say 2¹⁴) before backward — every gradient scales by \(S\)
+  and slides up into representable range — then divide by \(S\) before the optimizer step.
+  <em>Dynamic</em> loss scaling grows \(S\) until an overflow (inf/NaN) appears, then backs off.
+  <strong>BF16</strong> simply keeps FP32's 8 exponent bits and sacrifices mantissa: same range,
+  coarser precision, <em>no loss scaling needed</em> — which is why it's the modern default, with
+  the FP32 master weights absorbing the coarseness. <strong>FP8</strong> (H100 era) pushes further:
+  E4M3 for weights/activations in the forward pass, E5M2 (more range) for gradients, with per-tensor
+  scaling factors maintained by the framework.
+</p>
+<div class="box bridge">
+  <div class="box-title">⚛ Physics bridge</div>
+  <p>
+    Loss scaling is gain-staging on a lock-in amplifier: your signal sits below the ADC's least
+    significant bit, so you amplify it into the instrument's dynamic range, measure, and divide the
+    gain back out. Exponent bits are the instrument's dynamic range; mantissa bits are its
+    resolution. BF16 vs FP16 is choosing a voltmeter with a wider scale but one fewer digit — the
+    right call when the danger is clipping, not read noise. And gradient noise from SGD dwarfs 4×10⁻³
+    rounding noise anyway — that's why 7 mantissa bits are enough.
+  </p>
+</div>
+
+<h2>12.3 The parallelism menu — data, tensor, pipeline, ZeRO</h2>
+<p>
+  Four ways to split training across \(n\) devices, distinguished by <em>what</em> is divided and
+  <em>what must be communicated</em>:
+</p>
+<ul>
+  <li><strong>Data parallelism (DP):</strong> replicate the model; split the batch. Each GPU
+  computes gradients on its shard; an <strong>all-reduce</strong> averages them so every replica
+  steps identically. Communication: one gradient-sized all-reduce per step. Requires the whole
+  model (and its 16 bytes/param) to fit on <em>each</em> GPU.</li>
+  <li><strong>ZeRO / FSDP:</strong> keep data parallelism, but stop replicating. Stage 1 shards
+  optimizer states across the DP ranks; stage 2 also shards gradients; stage 3 (= PyTorch FSDP,
+  Fully Sharded Data Parallel) shards the parameters themselves, <strong>all-gathering</strong>
+  each layer's weights just-in-time for its forward/backward and discarding them after. Memory per
+  GPU falls toward \(16\Psi/n\); communication rises from \(2\Psi\) to \(3\Psi\) per step (a 1.5×
+  overhead for an n-fold memory cut — usually a spectacular trade).</li>
+  <li><strong>Tensor parallelism (TP):</strong> split <em>inside</em> each layer — one giant matmul
+  becomes \(n\) column- or row-slices computed on different GPUs, stitched together with an
+  all-reduce of <em>activations</em> per layer, per micro-batch, forward and backward. Enormous
+  communication volume at tiny intervals — viable only over intra-node NVLink. It's the only
+  option when a single <em>layer's</em> working set outgrows a GPU.</li>
+  <li><strong>Pipeline parallelism (PP):</strong> split by depth — GPU 0 gets layers 1–8, GPU 1
+  gets 9–16, … Communication is tiny (boundary activations, point-to-point), so PP crosses nodes
+  happily. The cost is the <strong>bubble</strong>: stages idle while the pipeline fills and
+  drains. With \(p\) stages and \(m\) micro-batches in flight, the idle fraction is
+  \((p-1)/(m+p-1)\) — you fight it by feeding many micro-batches.</li>
+</ul>
+<p>
+  Real frontier runs compose them — <strong>"3D parallelism"</strong>: TP inside each node (highest
+  bandwidth link), PP across nodes to hold the model, DP/ZeRO across the remaining dimension for
+  throughput. The design rule the exam wants: <em>match each parallelism's communication pattern to
+  the interconnect tier that can afford it.</em>
+</p>
+<div class="box bridge">
+  <div class="box-title">⚛ Physics bridge</div>
+  <p>
+    This is domain decomposition, straight from lattice simulation. Compute scales with the
+    <em>volume</em> of each subdomain; communication scales with its <em>surface</em>. Parallel
+    efficiency is a surface-to-volume argument: make subdomains too small (too many GPUs) and the
+    surface term dominates — exactly the flattening you'll see in the cluster planner below. TP is
+    a fine-grained decomposition (huge surface, needs the fastest links); PP is coarse slabs (small
+    surface, tolerates slow links).
+  </p>
+</div>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Interactive — how 8 GPUs hold a 8-layer model</div>
+    <div class="wsub">Columns are GPUs, rows are layers. Filled = stored on that GPU permanently; faint = materialized only on demand. Switch strategies and read the per-GPU memory and communication bill.</div>
+  </div>
+  <div class="widget-body">
+    <div class="tabs" data-tabgroup="par">
+      <button data-tab="dp" class="active">Data parallel</button>
+      <button data-tab="z3">ZeRO-3 / FSDP</button>
+      <button data-tab="tp">Tensor parallel</button>
+      <button data-tab="pp">Pipeline parallel</button>
+    </div>
+    <div data-tabpane="par:pp" style="display:none">
+      <div class="controls">
+        <label>Micro-batches in flight <input type="range" id="par-mb" min="1" max="32" step="1" value="4"><span class="val" id="par-mb-v"></span></label>
+      </div>
+    </div>
+    <canvas id="par-canvas" width="760" height="300"></canvas>
+    <div class="readout" id="par-readout"></div>
+    <p class="wcaption">
+      Things to try: (1) DP vs ZeRO-3 — same data-parallel training, but the storage pattern flips
+      from "everyone holds everything" to "everyone holds a sliver, borrows the rest". (2) In PP,
+      drag micro-batches from 1 to 32 and watch the bubble shrink as \((p-1)/(m+p-1)\) — at
+      \(m=1\), 7 of 8 GPUs are idle at any instant. (3) TP's fill looks like ZeRO-3's, but the
+      communication row is the tell: activations every layer (TP) vs weights once per layer
+      (ZeRO-3) — that's why TP stays inside a node.
+    </p>
+  </div>
+</div>
+
+<h2>12.4 Communication — the primitives and the pipes</h2>
+<p>
+  Three collective operations (from MPI, now NCCL) run distributed training:
+  <strong>all-reduce</strong> — every GPU ends with the elementwise sum of everyone's tensor (DP
+  gradient averaging); <strong>all-gather</strong> — every GPU ends with the concatenation of
+  everyone's shard (ZeRO-3 materializing a layer); <strong>reduce-scatter</strong> — the sum, but
+  each GPU keeps only its shard (the other half of ZeRO). The identity
+  <em>all-reduce = reduce-scatter + all-gather</em> is why ZeRO's total traffic is only 1.5× plain
+  DP's.
+</p>
+<p>
+  <strong>Ring all-reduce</strong> is the classic implementation: arrange \(n\) GPUs in a ring;
+  each sends chunks around it. Every GPU transmits \(2\frac{n-1}{n}M \approx 2M\) bytes for an
+  \(M\)-byte tensor — <em>nearly independent of \(n\)</em>. Bandwidth needed doesn't grow with the
+  cluster; latency (number of ring steps, \(2(n-1)\)) does, which is why tree and hierarchical
+  variants exist for very large \(n\).
+</p>
+<p>
+  The pipes come in tiers, and the ~15× gaps between them dictate the whole design:
+  <strong>NVLink</strong> within a node (~900 GB/s per H100), <strong>InfiniBand/RoCE</strong>
+  between nodes (~50–100 GB/s), <strong>PCIe</strong> to the host (~64 GB/s). Hence the placement
+  rule from §12.3, and one more senior-engineer habit: <em>overlap communication with compute</em> —
+  start all-reducing layer \(k\)'s gradients while backprop is still working on layer \(k-1\).
+  Frameworks do this automatically; knowing it exists explains why measured scaling can approach
+  ideal despite nonzero communication.
+</p>
+
+<h2>12.5 Sizing a run — FLOPs, GPU-hours, dollars</h2>
+<p>
+  The master formula: training a dense transformer with \(N\) parameters on \(D\) tokens costs
+  $$C \approx 6ND \ \text{FLOPs}$$
+  (≈2 FLOPs per parameter per token forward — each parameter participates in one multiply-add —
+  and the backward pass costs about twice the forward; checkpointing adds ~1 forward more).
+  Divide by what your hardware actually delivers:
+  $$\text{time} = \frac{6ND}{n_{\text{gpu}} \times \text{peak FLOP/s} \times \text{MFU}},$$
+  where <strong>MFU</strong> (model FLOPs utilization) is the fraction of peak actually spent on
+  the model's math — 35–50% is good; the rest is communication, memory stalls, and bubbles.
+</p>
+<p>
+  Worked example (exam-style): 7B params × 1.4T tokens ⇒ \(6 \times 7{\times}10^9 \times 1.4{\times}10^{12}
+  \approx 5.9\times10^{22}\) FLOPs. On H100s (990 TFLOP/s BF16) at 40% MFU ⇒
+  \(\approx 1.5\times10^{8}\) GPU-seconds ≈ <strong>41,000 GPU-hours</strong>. On 256 GPUs: ~6.7
+  days; at $2.50/GPU-hr: ~<strong>$103k</strong>. Notice what the GPU count changed: the calendar,
+  not the bill — GPU-hours are fixed by physics until communication overhead starts inflating them.
+</p>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Interactive — training cluster planner</div>
+    <div class="wsub">Size a pretraining run: compute, time, and money. The chart shows wall-clock days vs cluster size — ideal 1/n scaling against a realistic curve with communication overhead.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label>Params N <input type="range" id="cl-n" min="0" max="30" step="1" value="13"><span class="val" id="cl-n-v"></span></label>
+      <label>Tokens D <input type="range" id="cl-d" min="0" max="32" step="1" value="22"><span class="val" id="cl-d-v"></span></label>
+      <label>GPU
+        <select id="cl-gpu">
+          <option value="0">A100-80GB · 312 TF · $1.80/hr</option>
+          <option value="1" selected>H100 · 990 TF · $2.50/hr</option>
+        </select>
+      </label>
+      <label>MFU <input type="range" id="cl-mfu" min="0.2" max="0.6" step="0.01" value="0.4"><span class="val" id="cl-mfu-v"></span></label>
+      <label>GPUs <input type="range" id="cl-g" min="3" max="14" step="1" value="8"><span class="val" id="cl-g-v"></span></label>
+    </div>
+    <div class="tiles" id="cl-tiles"></div>
+    <canvas id="cl-canvas" width="760" height="260"></canvas>
+    <div class="readout" id="cl-readout"></div>
+    <p class="wcaption">
+      Things to try: (1) Slide the GPU count — cost barely moves while days plummet, until the
+      realistic curve peels off the ideal line: past that point you're buying communication, not
+      training. (2) Check the tokens-per-param readout against the Chinchilla rule of thumb
+      (D ≈ 20N, Topic 16): the planner flags over- and under-trained configs. (3) Compare A100 vs
+      H100 at fixed budget — FLOPs per dollar, not FLOPs per second, is the procurement metric.
+    </p>
+  </div>
+</div>
+
+<div class="box jargon">
+  <div class="box-title">Jargon decoder</div>
+  <dl>
+    <dt>OOM</dt><dd>Out of memory — the CUDA error that ends a run; the whole topic is about avoiding it deliberately rather than by luck.</dd>
+    <dt>master weights</dt><dd>The FP32 copy of parameters kept by the optimizer so tiny updates don't round away in BF16.</dd>
+    <dt>micro-batch / global batch</dt><dd>What one GPU processes in one forward pass vs the total across accumulation steps and DP ranks: global = micro × accum × DP degree.</dd>
+    <dt>ZeRO stage 1/2/3</dt><dd>Shard optimizer states / + gradients / + parameters across data-parallel ranks. Stage 3 ≈ PyTorch FSDP.</dd>
+    <dt>all-reduce / all-gather / reduce-scatter</dt><dd>Everyone gets the sum / everyone gets all shards / everyone gets one shard of the sum.</dd>
+    <dt>NVLink / InfiniBand</dt><dd>Intra-node GPU fabric (~900 GB/s) vs inter-node network (~50–100 GB/s); the 15× gap drives parallelism placement.</dd>
+    <dt>pipeline bubble</dt><dd>Idle time while a pipeline fills/drains: fraction (p−1)/(m+p−1) for p stages, m micro-batches.</dd>
+    <dt>MFU</dt><dd>Model FLOPs utilization: useful model FLOPs ÷ peak hardware FLOPs; the honesty metric for training efficiency.</dd>
+    <dt>loss scaling</dt><dd>Multiplying the loss by S so FP16 gradients don't underflow; unscaled before the update. BF16 mostly obviates it.</dd>
+    <dt>NCCL</dt><dd>NVIDIA's collective-communication library ("nickel") implementing the primitives over NVLink/IB.</dd>
+  </dl>
+</div>
+
+<h2>Self-check</h2>
+<div class="quiz" data-answer="b">
+  <p class="quiz-q">1. You try to fine-tune a 7B model with Adam in mixed precision on a single 80 GB GPU (no ZeRO, no offload). Before any activations:</p>
+  <div class="opts">
+    <button data-opt="a">it fits: 7B × 2 bytes = 14 GB</button>
+    <button data-opt="b">it cannot fit: state alone is ≈ 16 × 7B = 112 GB (weights 2 + grads 2 + FP32 master/m/v 12)</button>
+    <button data-opt="c">it fits only if you reduce the batch size to 1</button>
+    <button data-opt="d">it fits because mixed precision halves optimizer memory</button>
+  </div>
+  <div class="quiz-exp"><strong>b.</strong> The 16 bytes/param rule. Batch size only controls activations, which aren't the problem here. Escape hatches: ZeRO/offload, LoRA (Topic 9 — freeze the base, train adapters, optimizer state shrinks ~1000×), or a smaller optimizer.</div>
+</div>
+<div class="quiz" data-answer="c">
+  <p class="quiz-q">2. Training in FP16 diverges with zero gradients in early layers; the same run in BF16 works untouched. The mechanism:</p>
+  <div class="opts">
+    <button data-opt="a">BF16 has more mantissa bits, so it's more precise</button>
+    <button data-opt="b">FP16 overflows on large activations</button>
+    <button data-opt="c">small gradients underflow FP16's narrow exponent range (min normal ≈ 6×10⁻⁵); BF16 keeps FP32's 8 exponent bits, so they survive</button>
+    <button data-opt="d">BF16 kernels are faster, avoiding a race condition</button>
+  </div>
+  <div class="quiz-exp"><strong>c.</strong> Range, not precision — BF16 actually has <em>fewer</em> mantissa bits (7 vs 10). The FP16 fix is loss scaling; the BF16 fix is not needing one. Classic exam discriminator between the two formats.</div>
+</div>
+<div class="quiz" data-answer="a">
+  <p class="quiz-q">3. A 70B model must train across 4 nodes (8 GPUs each; NVLink inside, InfiniBand between). Sound placement:</p>
+  <div class="opts">
+    <button data-opt="a">tensor parallel within each node, pipeline (and/or ZeRO-data) parallel across nodes</button>
+    <button data-opt="b">tensor parallel across nodes — TP needs the most GPUs</button>
+    <button data-opt="c">plain data parallelism — 70B fits on each GPU in BF16</button>
+    <button data-opt="d">pipeline parallel within nodes, tensor parallel across</button>
+  </div>
+  <div class="quiz-exp"><strong>a.</strong> TP all-reduces activations every layer — it dies on the ~15×-slower inter-node link. PP sends only boundary activations, so it crosses nodes cheaply. And (c) fails arithmetic: 70B × 16 bytes = 1.12 TB of state per replica.</div>
+</div>
+<div class="quiz" data-answer="d">
+  <p class="quiz-q">4. An engineer hits OOM at batch 32, and switches to micro-batch 8 with gradient accumulation 4. What changes?</p>
+  <div class="opts">
+    <button data-opt="a">optimizer-state memory drops 4×</button>
+    <button data-opt="b">the training math changes — smaller effective batch means noisier gradients</button>
+    <button data-opt="c">nothing; accumulation is only a throughput optimization</button>
+    <button data-opt="d">activation memory drops ~4× while the effective batch and update math stay the same; each step takes ~4 forward/backward passes</button>
+  </div>
+  <div class="quiz-exp"><strong>d.</strong> Accumulated gradients sum to the same global-batch gradient (same update, up to batch-norm-style caveats). Optimizer states are untouched — they scale with parameters, not batch. The price is wall-clock time.</div>
+</div>
+
+<h2>Go deeper</h2>
+<ul class="resources">
+  <li><a href="https://blog.eleuther.ai/transformer-math/">EleutherAI — Transformer Math 101</a><div class="rwhat">The memory and FLOPs arithmetic of this whole topic on one page. Read it, then re-derive it with the calculator above.</div></li>
+  <li><a href="https://huggingface.co/spaces/nanotron/ultrascale-playbook">Hugging Face — The Ultra-Scale Playbook</a><div class="rwhat">A free interactive book on training on up to thousands of GPUs: DP → ZeRO → TP → PP with profiler traces. The best single resource for §12.3–12.4.</div></li>
+  <li><a href="https://arxiv.org/abs/1910.02054">ZeRO (Rajbhandari et al., 2019)</a><div class="rwhat">§3 for the three stages and the memory formulas; Fig. 1 is the picture everyone redraws.</div></li>
+  <li><a href="https://arxiv.org/abs/1909.08053">Megatron-LM (Shoeybi et al., 2019)</a><div class="rwhat">§3: how to slice attention and MLP matmuls for tensor parallelism with just two all-reduces per layer.</div></li>
+  <li><a href="https://arxiv.org/abs/1710.03740">Mixed Precision Training (Micikevicius et al., 2017)</a><div class="rwhat">The original FP16 + master weights + loss scaling recipe; Fig. 1's gradient histogram shows the underflow problem in one image.</div></li>
+  <li><a href="https://pytorch.org/tutorials/intermediate/FSDP_tutorial.html">PyTorch FSDP tutorial</a><div class="rwhat">ZeRO-3 as you'd actually run it; wrap policies and mixed-precision config in ~50 lines.</div></li>
+  <li><a href="https://github.com/stas00/ml-engineering">Stas Bekman — Machine Learning Engineering (open book)</a><div class="rwhat">Field notes from real large-scale training: debugging NCCL, node failures, throughput math. The "senior engineer's diary" for this topic.</div></li>
+</ul>
+
+<div class="page-footer"></div>
+</main>
+
+<script>
+document.addEventListener("caie:ready", () => {
+  // ================== memory calculator ==================
+  (function () {
+    const canvas = document.getElementById("mem-canvas");
+    const readout = document.getElementById("mem-readout");
+    // [nominal params, layers, hidden]
+    const MODELS = [
+      [0.125e9, 12, 768], [1.3e9, 24, 2048], [7e9, 32, 4096],
+      [13e9, 40, 5120], [70e9, 80, 8192], [175e9, 96, 12288]
+    ];
+    const OVERHEAD = 2 * 1024 ** 3; // CUDA context + fragmentation
+    function state() {
+      const [N, L, h] = MODELS[+document.getElementById("mem-model").value];
+      const z = +document.getElementById("mem-zero").value;
+      const n = Math.pow(2, +document.getElementById("mem-gpus").value);
+      const s = Math.pow(2, +document.getElementById("mem-seq").value);
+      const b = +document.getElementById("mem-mb").value;
+      const ckpt = document.getElementById("mem-ckpt").checked;
+      const params = 2 * N / (z >= 3 ? n : 1);
+      const grads = 2 * N / (z >= 2 ? n : 1);
+      const opt = 12 * N / (z >= 1 ? n : 1);
+      // flash-attention era: ~34·s·b·h bytes/layer; checkpointing stores ~2·s·b·h (layer inputs)
+      const act = (ckpt ? 2 : 34) * s * b * h * L;
+      return { N, L, h, z, n, s, b, ckpt, params, grads, opt, act };
+    }
+    function draw() {
+      const st = state();
+      const pal = CAIE.pal();
+      const maxW = Math.min(760, canvas.parentNode.clientWidth - 4);
+      const { ctx, w, h } = CAIE.setupCanvas(canvas, maxW, 240);
+      ctx.clearRect(0, 0, w, h);
+      const segs = [
+        ["Weights (BF16)", st.params, pal.s[0]],
+        ["Gradients (BF16)", st.grads, pal.s[1]],
+        ["Adam states (FP32×3)", st.opt, pal.s[2]],
+        ["Activations", st.act, pal.s[3]],
+        ["Overhead", OVERHEAD, pal.muted]
+      ];
+      const total = segs.reduce((a, s2) => a + s2[1], 0);
+      const capGB = [24, 40, 80];
+      const scaleMax = Math.max(total, 88 * 1024 ** 3) * 1.04;
+      const padL = 12, padR = 16, barY = 58, barH = 46;
+      const bw = w - padL - padR;
+      const X = v => padL + v / scaleMax * bw;
+      // stacked bar
+      let x = padL;
+      ctx.font = "600 11px " + CAIE.css("--sans");
+      for (const [, bytes, color] of segs) {
+        const wpx = bytes / scaleMax * bw;
+        ctx.fillStyle = color;
+        ctx.fillRect(x, barY, Math.max(wpx, bytes > 0 ? 1 : 0), barH);
+        x += wpx;
+      }
+      ctx.strokeStyle = pal.baseline;
+      ctx.strokeRect(padL, barY, bw, barH);
+      // GPU capacity lines
+      for (const g of capGB) {
+        const gx = X(g * 1024 ** 3);
+        ctx.strokeStyle = pal.ink2; ctx.setLineDash([4, 4]);
+        ctx.beginPath(); ctx.moveTo(gx, barY - 22); ctx.lineTo(gx, barY + barH + 10); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = pal.ink2; ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+        ctx.fillText(g + " GB", gx, barY - 26);
+      }
+      // total marker
+      ctx.fillStyle = pal.ink; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.font = "700 13px " + CAIE.css("--sans");
+      ctx.fillText("Per-GPU total: " + CAIE.fmt.bytes(total), padL, 8);
+      // legend
+      let lx = padL, ly = barY + barH + 28;
+      ctx.font = "11px " + CAIE.css("--sans");
+      for (const [name, bytes, color] of segs) {
+        ctx.fillStyle = color; ctx.fillRect(lx, ly, 10, 10);
+        ctx.fillStyle = pal.ink2; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+        const t = name + " " + CAIE.fmt.bytes(bytes);
+        ctx.fillText(t, lx + 14, ly + 5);
+        lx += 22 + ctx.measureText(t).width;
+        if (lx > w - 140) { lx = padL; ly += 20; }
+      }
+      const fits = capGB.filter(g => total <= g * 1024 ** 3);
+      readout.innerHTML =
+        "model <strong>" + CAIE.fmt.si(st.N) + "</strong> · ZeRO-" + st.z + " over <strong>" +
+        st.n + "</strong> GPUs · seq " + st.s + " × micro-batch " + st.b +
+        (st.ckpt ? " · checkpointing (+~33% compute)" : "") +
+        " → per-GPU <strong>" + CAIE.fmt.bytes(total) + "</strong> — " +
+        (fits.length ? "fits on a <strong>" + fits[0] + " GB</strong> GPU" :
+          "<strong>does not fit on 80 GB</strong> — raise ZeRO stage/GPUs, checkpoint, or shrink micro-batch");
+    }
+    for (const id of ["mem-model", "mem-zero"])
+      document.getElementById(id).addEventListener("change", draw);
+    document.getElementById("mem-ckpt").addEventListener("change", draw);
+    CAIE.bindQuiet("mem-gpus", draw, v => Math.pow(2, v));
+    CAIE.bindQuiet("mem-seq", draw, v => Math.pow(2, v));
+    CAIE.bindQuiet("mem-mb", draw, v => v);
+    CAIE.onTheme(draw);
+    window.addEventListener("resize", draw);
+    draw();
+  })();
+
+  // ================== parallelism explorer ==================
+  (function () {
+    const canvas = document.getElementById("par-canvas");
+    const readout = document.getElementById("par-readout");
+    const NG = 8, NL = 8;
+    let mode = "dp";
+    const INFO = {
+      dp: {
+        name: "Data parallel",
+        mem: "100% of model + 16 B/param state on every GPU",
+        comm: "one gradient all-reduce per step (≈ 2× params in bytes) — inter-node OK",
+        use: "default whenever the model fits on one GPU; scales throughput, not model size"
+      },
+      z3: {
+        name: "ZeRO-3 / FSDP",
+        mem: "1/8 of params + grads + optimizer per GPU (16 B/param ÷ n)",
+        comm: "all-gather each layer's weights fwd+bwd, reduce-scatter grads (≈ 1.5× DP traffic)",
+        use: "model state too big for one GPU but single layers still fit; the workhorse ≥ 7B"
+      },
+      tp: {
+        name: "Tensor parallel",
+        mem: "1/8 of every layer's weights per GPU; activations also split",
+        comm: "all-reduce of activations per layer per micro-batch — needs NVLink; intra-node only",
+        use: "single layers / working sets too large for one GPU; frontier-scale training and serving"
+      },
+      pp: {
+        name: "Pipeline parallel",
+        mem: "1/8 of the layers (full layers) per GPU",
+        comm: "point-to-point boundary activations only — cheapest; crosses nodes happily",
+        use: "very deep models across nodes; costs a fill/drain bubble — feed many micro-batches"
+      }
+    };
+    function draw() {
+      const pal = CAIE.pal();
+      const maxW = Math.min(760, canvas.parentNode.clientWidth - 4);
+      const { ctx, w, h } = CAIE.setupCanvas(canvas, maxW, 300);
+      ctx.clearRect(0, 0, w, h);
+      const padL = 64, padT = 34, padB = 14, padR = 12;
+      const gw = (w - padL - padR) / NG, gh = (h - padT - padB) / NL;
+      ctx.font = "600 11px " + CAIE.css("--sans");
+      // column headers
+      for (let g = 0; g < NG; g++) {
+        ctx.fillStyle = pal.ink2; ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+        ctx.fillText("GPU " + g, padL + (g + 0.5) * gw, padT - 6);
+      }
+      // row labels
+      for (let l = 0; l < NL; l++) {
+        ctx.fillStyle = pal.muted; ctx.textAlign = "right"; ctx.textBaseline = "middle";
+        ctx.fillText("layer " + (l + 1), padL - 8, padT + (l + 0.5) * gh);
+      }
+      // node divider (GPUs 0-3 node A, 4-7 node B)
+      const nx = padL + 4 * gw;
+      ctx.strokeStyle = pal.baseline; ctx.setLineDash([2, 4]);
+      ctx.beginPath(); ctx.moveTo(nx, padT - 22); ctx.lineTo(nx, h - padB); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = pal.muted; ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+      ctx.fillText("node A (NVLink)", padL + 2 * gw, padT - 20);
+      ctx.fillText("node B (NVLink)", padL + 6 * gw, padT - 20);
+      const layerColor = l => CAIE.seq(0.25 + 0.65 * l / (NL - 1));
+      for (let g = 0; g < NG; g++) {
+        for (let l = 0; l < NL; l++) {
+          const x = padL + g * gw + 2, y = padT + l * gh + 2;
+          const cw = gw - 4, ch = gh - 4;
+          const color = layerColor(l);
+          ctx.strokeStyle = pal.grid;
+          ctx.strokeRect(x, y, cw, ch);
+          if (mode === "dp") {
+            ctx.fillStyle = color; ctx.fillRect(x, y, cw, ch);
+          } else if (mode === "z3" || mode === "tp") {
+            // 1/8 slice stored; rest ghost
+            ctx.fillStyle = CAIE.alpha(pal.seqHi, 0.10);
+            ctx.fillRect(x, y, cw, ch);
+            ctx.fillStyle = color;
+            ctx.fillRect(x + g * (cw / NG), y, cw / NG, ch);
+          } else if (mode === "pp") {
+            if (l === g) { ctx.fillStyle = color; ctx.fillRect(x, y, cw, ch); }
+          }
+        }
+      }
+      // annotations per mode
+      ctx.font = "600 11px " + CAIE.css("--sans");
+      ctx.fillStyle = pal.ink2;
+      if (mode === "dp") {
+        for (let g = 0; g < NG; g++) {
+          ctx.textAlign = "center"; ctx.textBaseline = "top";
+          ctx.fillStyle = pal.surface;
+          ctx.fillText("batch " + g, padL + (g + 0.5) * gw, padT + 6);
+        }
+      }
+      if (mode === "pp") {
+        ctx.fillStyle = pal.ink2; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        for (let g = 0; g < NG - 1; g++) {
+          ctx.fillText("→", padL + (g + 1) * gw, padT + (g + 0.7) * gh);
+        }
+      }
+      readoutUpdate();
+    }
+    function readoutUpdate() {
+      const i = INFO[mode];
+      let extra = "";
+      if (mode === "pp") {
+        const m = +document.getElementById("par-mb").value;
+        const bub = (NG - 1) / (m + NG - 1);
+        extra = " · bubble with m=" + m + " micro-batches: <strong>" + (100 * bub).toFixed(0) + "% idle</strong>";
+      }
+      readout.innerHTML = "<strong>" + i.name + "</strong> — memory: " + i.mem +
+        " · comm: " + i.comm + "<br>when: " + i.use + extra;
+    }
+    document.querySelectorAll('[data-tabgroup="par"] button').forEach(b => {
+      b.addEventListener("click", () => { mode = b.dataset.tab; draw(); });
+    });
+    CAIE.bindQuiet("par-mb", readoutUpdate, v => v);
+    CAIE.onTheme(draw);
+    window.addEventListener("resize", draw);
+    draw();
+  })();
+
+  // ================== cluster planner ==================
+  (function () {
+    const canvas = document.getElementById("cl-canvas");
+    const tiles = document.getElementById("cl-tiles");
+    const readout = document.getElementById("cl-readout");
+    const GPUS = [
+      { name: "A100-80GB", tf: 312e12, usd: 1.80 },
+      { name: "H100", tf: 990e12, usd: 2.50 }
+    ];
+    // sliders are log-spaced: N = 0.5B·2^(v/2) ... simpler: N over [1e8, 1e12] in 30 steps
+    const nOf = v => 1e8 * Math.pow(1e12 / 1e8, v / 30);
+    const dOf = v => 1e9 * Math.pow(2e13 / 1e9, v / 32);
+    function state() {
+      const N = nOf(+document.getElementById("cl-n").value);
+      const D = dOf(+document.getElementById("cl-d").value);
+      const gpu = GPUS[+document.getElementById("cl-gpu").value];
+      const mfu = +document.getElementById("cl-mfu").value;
+      const n = Math.pow(2, +document.getElementById("cl-g").value);
+      return { N, D, gpu, mfu, n };
+    }
+    // toy comm-overhead model: efficiency = 1 / (1 + n/n_half), n_half grows with model size
+    function eff(n, N) {
+      const nHalf = 2048 * Math.max(0.25, Math.min(4, N / 30e9));
+      return 1 / (1 + n / nHalf);
+    }
+    function daysFor(n, st) {
+      const flops = 6 * st.N * st.D;
+      const rate = n * st.gpu.tf * st.mfu * eff(n, st.N);
+      return flops / rate / 86400;
+    }
+    function draw() {
+      const st = state();
+      const flops = 6 * st.N * st.D;
+      const gpuHours = flops / (st.gpu.tf * st.mfu) / 3600;
+      const gpuHoursReal = gpuHours / eff(st.n, st.N);
+      const days = daysFor(st.n, st);
+      const cost = gpuHoursReal * st.gpu.usd;
+      const ratio = st.D / st.N;
+      tiles.innerHTML =
+        tile("Total compute", CAIE.fmt.si(flops) + " FLOPs") +
+        tile("GPU-hours (ideal)", CAIE.fmt.si(gpuHours)) +
+        tile("Wall-clock", days >= 1 ? days.toFixed(1) + " days" : (days * 24).toFixed(1) + " h") +
+        tile("Cost", CAIE.fmt.usd(cost));
+      const chin = ratio < 5 ? "under-trained (Chinchilla says D ≈ 20N — buy data, not params)" :
+        ratio > 80 ? "heavily over-trained (fine for deployment-optimized small models)" :
+        ratio >= 15 && ratio <= 30 ? "≈ compute-optimal (Chinchilla D ≈ 20N)" : "reasonable";
+      readout.innerHTML =
+        "N = <strong>" + CAIE.fmt.si(st.N) + "</strong> params · D = <strong>" + CAIE.fmt.si(st.D) +
+        "</strong> tokens · D/N = <strong>" + ratio.toFixed(0) + "</strong> tokens/param — " + chin +
+        " · scaling efficiency at " + st.n + " GPUs: <strong>" +
+        (100 * eff(st.n, st.N)).toFixed(0) + "%</strong>";
+      // plot: days vs GPUs, log-log
+      const pal = CAIE.pal();
+      const maxW = Math.min(760, canvas.parentNode.clientWidth - 4);
+      const P = CAIE.plot(canvas, {
+        w: maxW, h: 260, xmin: 3, xmax: 14,
+        ymin: Math.log10(Math.max(daysFor(16384, st) * 0.5, 1e-3)),
+        ymax: Math.log10(daysFor(8, st) * 2)
+      });
+      P.clear();
+      P.axes("GPUs (log₂)", "wall-clock days (log₁₀)", {
+        xticks: 11, xfmt: v => CAIE.fmt.si(Math.pow(2, v)),
+        yticks: 4, yfmt: v => {
+          const d = Math.pow(10, v);
+          return d >= 1 ? d.toPrecision(2) + "d" : (d * 24).toPrecision(2) + "h";
+        }
+      });
+      const ideal = [], real = [];
+      for (let v = 3; v <= 14; v += 0.25) {
+        const n = Math.pow(2, v);
+        const idl = flops / (n * st.gpu.tf * st.mfu) / 86400;
+        ideal.push([v, Math.log10(idl)]);
+        real.push([v, Math.log10(daysFor(n, st))]);
+      }
+      P.line(ideal, pal.muted, 1.5);
+      P.line(real, pal.s[0], 2.5);
+      P.dot(Math.log2(st.n), Math.log10(days), 5, pal.s[1], true);
+      P.label(3.3, ideal[2][1], "ideal 1/n", pal.muted);
+      P.label(Math.log2(st.n), Math.log10(days), st.n + " GPUs · " +
+        (days >= 1 ? days.toFixed(1) + "d" : (days * 24).toFixed(1) + "h"), pal.s[1]);
+    }
+    function tile(k, v) {
+      return '<div class="tile"><div class="tv">' + v + '</div><div class="tl">' + k + "</div></div>";
+    }
+    document.getElementById("cl-gpu").addEventListener("change", draw);
+    CAIE.bindQuiet("cl-n", draw, v => CAIE.fmt.si(nOf(v)));
+    CAIE.bindQuiet("cl-d", draw, v => CAIE.fmt.si(dOf(v)));
+    CAIE.bindQuiet("cl-mfu", draw, v => (100 * v).toFixed(0) + "%");
+    CAIE.bindQuiet("cl-g", draw, v => CAIE.fmt.si(Math.pow(2, v)));
+    CAIE.onTheme(draw);
+    window.addEventListener("resize", draw);
+    draw();
+  })();
+});
+</script>
+</body>
+</html>

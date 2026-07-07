@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Topic 1 — Mathematical Foundations · CAIE Course</title>
+<link rel="stylesheet" href="../assets/course.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<script defer src="../assets/course.js"></script>
+</head>
+<body data-page="t01" data-root="..">
+<a class="skip" href="#main">Skip to content</a>
+<header class="topbar">
+  <button id="navToggle" class="iconbtn" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html">CAIE<span>·</span>Course</a>
+  <span class="topbar-title">Level I · Topic 1 · Mathematical Foundations</span>
+  <button id="themeToggle" class="iconbtn" aria-label="Toggle theme">◐</button>
+</header>
+<nav id="sidebar"></nav>
+
+<main id="main">
+<div class="kicker">Level I · Topic 1 · Exam weight 20%</div>
+<h1>Mathematical Foundations</h1>
+<p class="lead">
+  The single heaviest topic in Level I, and deliberately so: every model you will ever train is a
+  pile of linear algebra pushed downhill by calculus, running on hardware that only approximates real
+  numbers. As a physics graduate you own most of this already — the goal here is to reconnect it to
+  the specific places it appears inside machine learning.
+</p>
+
+<div class="box los">
+  <div class="box-title">Learning outcomes (know these cold)</div>
+  <ul>
+    <li>Define vector spaces, basis, rank, span, linear independence; compute products, inverses, determinants, traces by hand for small matrices.</li>
+    <li>Compute eigenvalues/eigenvectors; explain the SVD and its relationship to PCA and low-rank approximation; interpret matrices geometrically.</li>
+    <li>Explain positive-definite matrices and the Gram matrix.</li>
+    <li>Compute gradients, Jacobians, Hessians; apply the chain rule (the core of backprop); define convexity.</li>
+    <li>Derive gradient descent from a Taylor expansion; compare GD, SGD, momentum, RMSProp, Adam (including Adam's bias correction); explain why Newton's method is rarely used at scale.</li>
+    <li>Describe floating point, machine epsilon, catastrophic cancellation, log-sum-exp, condition number, and vanishing/exploding gradients.</li>
+  </ul>
+</div>
+
+<h2 id="linalg">1.1 Linear algebra — matrices as machines that move space</h2>
+<p>
+  A <strong>vector space</strong> is any set closed under addition and scalar multiplication — you've
+  used them since first-year mechanics. The ML-relevant vocabulary: the <strong>span</strong> of a set
+  of vectors is everything you can reach by linear combination; vectors are
+  <strong>linearly independent</strong> if none lies in the span of the others; a
+  <strong>basis</strong> is an independent set that spans the space; and the <strong>rank</strong> of a
+  matrix is the dimension of the image of the map it represents — how many directions survive the
+  transformation. A rank-deficient weight matrix is throwing information away; a
+  <em>deliberately</em> low-rank matrix is the idea behind LoRA fine-tuning (Topic 9).
+</p>
+<div class="box bridge">
+  <div class="box-title">⚛ Physics bridge</div>
+  <p>
+    Eigenvectors are <em>normal modes</em>. Diagonalizing a symmetric matrix is exactly what you did to
+    the moment-of-inertia tensor or a coupled-oscillator system: find the axes where the dynamics
+    decouple. PCA (Topic 4) is diagonalizing the covariance matrix — finding the principal axes of a
+    data cloud, precisely like principal axes of inertia. And the determinant is the Jacobian volume
+    factor from coordinate changes in statistical mechanics integrals.
+  </p>
+</div>
+<p>
+  For a square matrix \(A\), an <strong>eigenvector</strong> \(v\) satisfies \(Av = \lambda v\): a
+  direction the map only stretches. The <strong>eigendecomposition</strong> \(A = Q \Lambda Q^{-1}\)
+  exists when there are enough independent eigenvectors; for symmetric matrices \(Q\) is orthogonal
+  (the spectral theorem — the workhorse of everything from PCA to analyzing the Hessian of a loss).
+</p>
+<p>
+  The <strong>Singular Value Decomposition</strong> works for <em>any</em> matrix, even rectangular:
+  $$A = U \Sigma V^{\top}$$
+  rotate (\(V^\top\)), scale along axes (\(\Sigma\), the non-negative <em>singular values</em>),
+  rotate again (\(U\)). Every linear map, no exceptions, is rotation–stretch–rotation. Keeping only
+  the top-\(k\) singular values gives the best rank-\(k\) approximation of \(A\) (Eckart–Young
+  theorem) — that is <strong>low-rank approximation</strong>, and PCA is exactly the SVD applied to a
+  mean-centered data matrix: the right singular vectors are the principal components, and
+  \(\sigma_i^2/(n-1)\) are the variances along them.
+</p>
+<p>
+  A symmetric matrix \(M\) is <strong>positive definite</strong> if \(x^\top M x &gt; 0\) for all
+  \(x \neq 0\) — all eigenvalues positive, a bowl with no downhill escape. Covariance matrices and
+  Gram matrices \(G_{ij} = \langle x_i, x_j\rangle\) (the matrix of all pairwise inner products —
+  the object at the heart of kernels, Topic 4, and attention scores, Topic 8) are always positive
+  <em>semi</em>-definite. A positive-definite Hessian certifies a local minimum.
+</p>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Interactive — the matrix as a geometric machine</div>
+    <div class="wsub">Drag the four entries of \(A=\begin{pmatrix}a&b\\c&d\end{pmatrix}\). Watch the grid deform, the unit circle become an ellipse (semi-axes = singular values), and the eigenvector directions that only stretch.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label>preset
+        <select id="m-preset">
+          <option value="id">identity</option>
+          <option value="rot">rotation 45°</option>
+          <option value="shear" selected>shear</option>
+          <option value="scale">anisotropic scale</option>
+          <option value="sym">symmetric (PSD)</option>
+          <option value="sing">singular (rank 1)</option>
+          <option value="refl">reflection</option>
+        </select>
+      </label>
+      <label>a <input type="range" id="m-a" min="-2" max="2" step="0.05" value="1"><span class="val" id="m-a-v"></span></label>
+      <label>b <input type="range" id="m-b" min="-2" max="2" step="0.05" value="1"><span class="val" id="m-b-v"></span></label>
+      <label>c <input type="range" id="m-c" min="-2" max="2" step="0.05" value="0"><span class="val" id="m-c-v"></span></label>
+      <label>d <input type="range" id="m-d" min="-2" max="2" step="0.05" value="1"><span class="val" id="m-d-v"></span></label>
+    </div>
+    <canvas id="m-canvas" width="640" height="400"></canvas>
+    <div class="legend">
+      <span><i style="background:var(--s1)"></i>Ae₁ (first column)</span>
+      <span><i style="background:var(--s3)"></i>Ae₂ (second column)</span>
+      <span><i style="background:var(--s6)"></i>eigenvector directions</span>
+      <span><i style="background:var(--s2)"></i>image of unit circle</span>
+    </div>
+    <div class="readout" id="m-readout"></div>
+    <p class="wcaption">
+      Things to try: make the determinant negative (space flips — orientation reverses); make it zero
+      (space collapses to a line — rank 1, no inverse); pick the symmetric preset and notice the
+      eigenvectors become orthogonal and align with the ellipse axes (spectral theorem: for symmetric
+      matrices, eigendecomposition <em>is</em> the SVD). For rotation, eigenvalues go complex — no real
+      direction is preserved.
+    </p>
+  </div>
+</div>
+
+<h2 id="calc">1.2 Calculus &amp; optimization — rolling downhill, carefully</h2>
+<p>
+  For a scalar loss \(L(\theta)\) over parameters \(\theta \in \mathbb{R}^n\), the
+  <strong>gradient</strong> \(\nabla L\) is the direction of steepest ascent. For a vector-valued
+  function \(f:\mathbb{R}^n \to \mathbb{R}^m\), the matrix of all partials is the
+  <strong>Jacobian</strong> \(J_{ij} = \partial f_i / \partial x_j\); the matrix of second
+  derivatives of a scalar function is the <strong>Hessian</strong> \(H_{ij} = \partial^2 L /
+  \partial \theta_i \partial \theta_j\), whose eigenvalues are the local curvatures.
+</p>
+<p>
+  The <strong>chain rule</strong> for compositions is the entire mathematical content of
+  backpropagation (derived fully in Topic 5): for \(L = f_3(f_2(f_1(x)))\),
+  $$\frac{\partial L}{\partial x} = J_{f_1}^{\top} J_{f_2}^{\top} \nabla f_3 ,$$
+  a product of Jacobians. Backprop is just evaluating this product right-to-left (vector–Jacobian
+  products) so you never materialize a full Jacobian — that ordering is why training is affordable.
+</p>
+<p>
+  <strong>Where gradient descent comes from.</strong> Taylor-expand the loss around the current point:
+  $$L(\theta + \delta) \approx L(\theta) + \nabla L^{\top}\delta + \tfrac{1}{2}\,\delta^{\top} H\, \delta .$$
+  Ignore the quadratic term, constrain \(\|\delta\|\) small, and the \(\delta\) that most decreases
+  the linear term is \(\delta = -\eta \nabla L\): the gradient-descent update
+  \(\theta \leftarrow \theta - \eta\,\nabla L(\theta)\). Keep the quadratic term and minimize exactly
+  and you get <strong>Newton's method</strong>, \(\delta = -H^{-1}\nabla L\) — one step to the minimum
+  of a quadratic. Newton is rarely used at scale because \(H\) has \(n^2\) entries and inverting it
+  costs \(O(n^3)\): for a 7-billion-parameter model that's a \(7{\times}10^9\)-square matrix. Quasi-Newton
+  methods (L-BFGS) approximate it; deep learning mostly settles for cheap first-order methods with
+  clever per-coordinate scaling.
+</p>
+<p>
+  A function is <strong>convex</strong> if every chord lies above the graph — equivalently
+  \(H \succeq 0\) everywhere. Convexity is the regime of guarantees: any local minimum is global, and
+  gradient descent with a sane step size converges. Linear regression, logistic regression, and SVMs
+  (Topic 4) are convex; deep networks are emphatically not, and the surprise of the last decade is
+  how well first-order methods do anyway.
+</p>
+<p>
+  <strong>The optimizer family tree.</strong> <em>SGD</em> replaces the full gradient with a
+  minibatch estimate — an unbiased but noisy gradient, which is both cheaper and (the noise) a
+  regularizer. <em>Momentum</em> accumulates a velocity
+  \(v \leftarrow \beta v + \nabla L\), \(\theta \leftarrow \theta - \eta v\): it averages out
+  oscillation across a ravine while accelerating along it. <em>RMSProp</em> keeps a running mean of
+  squared gradients and divides by its square root, giving each coordinate its own effective step
+  size. <em>Adam</em> combines both:
+  $$m_t = \beta_1 m_{t-1} + (1-\beta_1) g_t, \quad v_t = \beta_2 v_{t-1} + (1-\beta_2) g_t^2,$$
+  $$\hat m_t = \frac{m_t}{1-\beta_1^t}, \quad \hat v_t = \frac{v_t}{1-\beta_2^t}, \quad
+  \theta_{t+1} = \theta_t - \eta\, \frac{\hat m_t}{\sqrt{\hat v_t} + \epsilon}.$$
+  The hats are the <strong>bias correction</strong>: \(m\) and \(v\) start at zero, so early estimates
+  are biased toward zero by exactly a factor \((1-\beta^t)\); dividing it out prevents absurdly small
+  effective steps in the first few hundred iterations.
+</p>
+<div class="box bridge">
+  <div class="box-title">⚛ Physics bridge</div>
+  <p>
+    Vanilla GD is the overdamped limit of a particle in potential \(L(\theta)\):
+    \(\dot\theta = -\nabla L / \gamma\). Momentum restores the inertial term — it is literally the
+    discretized dynamics of a massive ball rolling with friction \( (1-\beta) \). SGD's minibatch
+    noise plays the role of a thermal bath, so SGD ≈ Langevin dynamics at a temperature set by
+    learning rate ÷ batch size — which is why it can hop out of sharp minima that full-batch GD
+    would sit in. The ill-conditioned ravine below is a stiff system: the ratio of largest to
+    smallest Hessian eigenvalue (the condition number) forces vanilla GD's step size down to the
+    fastest mode's stability limit while the slow mode crawls.
+  </p>
+</div>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Interactive — optimizer race</div>
+    <div class="wsub">Four optimizers descend the same loss surface from the same start. Contours shaded light→dark by loss. Change the surface and learning rate; watch who oscillates, who accelerates, who adapts.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label>surface
+        <select id="o-surface">
+          <option value="bowl">round bowl (well-conditioned)</option>
+          <option value="ravine" selected>ravine (condition № = 25)</option>
+          <option value="rosen">curved valley (Rosenbrock)</option>
+        </select>
+      </label>
+      <label>log₁₀ learning rate <input type="range" id="o-lr" min="-3" max="-0.4" step="0.05" value="-1.5"><span class="val" id="o-lr-v"></span></label>
+      <button class="btn" id="o-run">Run</button>
+      <button class="btn ghost" id="o-reset">Reset</button>
+    </div>
+    <canvas id="o-canvas" width="640" height="400"></canvas>
+    <div class="legend">
+      <span><i style="background:var(--s1)"></i>GD</span>
+      <span><i style="background:var(--s3)"></i>Momentum (β=0.9)</span>
+      <span><i style="background:var(--s5)"></i>RMSProp</span>
+      <span><i style="background:var(--s6)"></i>Adam</span>
+      <span>★ = minimum</span>
+    </div>
+    <div class="readout" id="o-readout"></div>
+    <p class="wcaption">
+      Things to try: on the ravine, raise the learning rate until GD starts ricocheting between the
+      walls while momentum still glides — that's the condition-number story. On the curved valley,
+      note how the adaptive methods (RMSProp/Adam) handle the changing curvature. Push the learning
+      rate to the maximum on any surface and watch divergence — a NaN loss in real training is this
+      exact picture.
+    </p>
+  </div>
+</div>
+
+<h2 id="numerics">1.3 Numerical methods — your computer lies about real numbers</h2>
+<p>
+  Floating-point numbers are scientific notation in base 2 with a fixed budget:
+  1 sign bit, some exponent bits (range) and mantissa bits (precision). Float64 has ~16 significant
+  decimal digits; float32 ~7; the half-precision formats used in deep learning (Topic 12) as few as
+  3. <strong>Machine epsilon</strong> is the largest \(\varepsilon\) with
+  \(1 + \varepsilon = 1\) in floating point (~\(2.2 \times 10^{-16}\) for float64). Two consequences
+  you must recognize on sight:
+</p>
+<ul>
+  <li><strong>Absorption:</strong> adding a small number to a huge one does nothing —
+  \(10^{16} + 1 - 10^{16} = 0\). This is why summing many small gradients in low precision loses mass, and why loss scaling exists (Topic 12).</li>
+  <li><strong>Catastrophic cancellation:</strong> subtracting two nearly equal numbers annihilates
+  the leading digits and leaves you with amplified rounding noise — the reason
+  \(\mathrm{var}(x) = E[x^2] - E[x]^2\) is a numerically terrible formula.</li>
+</ul>
+<p>
+  The classic ML instance: <strong>softmax</strong>. Computing
+  \(e^{z_i} / \sum_j e^{z_j}\) naively overflows the moment any logit exceeds ~709 (float64) or ~88
+  (float32), because \(e^{z}\) exceeds the largest representable number. The fix exploits an exact
+  invariance — shifting all logits by a constant doesn't change softmax:
+  $$\mathrm{softmax}(z)_i = \frac{e^{z_i - M}}{\sum_j e^{z_j - M}}, \qquad M = \max_j z_j,$$
+  so the largest exponent is exactly \(e^0 = 1\). The same trick computes
+  \(\log \sum_j e^{z_j} = M + \log \sum_j e^{z_j - M}\) — the <strong>log-sum-exp</strong> function —
+  which is why every serious library computes log-probabilities, never raw probabilities.
+</p>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Interactive — watch naive softmax explode</div>
+    <div class="wsub">Logits (2.0, 1.0, 0.5) scaled by a factor you control. The naive computation overflows; the max-shifted (log-sum-exp) version never does.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label>logit scale <input type="range" id="n-scale" min="0" max="3" step="0.02" value="0.5"><span class="val" id="n-scale-v"></span></label>
+    </div>
+    <div class="tablewrap"><table id="n-table"></table></div>
+    <div class="readout" id="n-eps"></div>
+    <p class="wcaption">
+      Drag past scale ≈ 350: \(e^{z}\) overflows to <code>Infinity</code>, the ratio becomes
+      <code>NaN</code>, and — in real training — your loss curve dies. The shifted version is
+      bit-for-bit stable at any scale. (These are float64 limits; in float32 training the cliff is at
+      logits ≈ 88, which is why attention and losses run their softmaxes in float32 even in
+      mixed-precision training.)
+    </p>
+  </div>
+</div>
+
+<p>
+  The <strong>condition number</strong> \(\kappa(A) = \sigma_{\max}/\sigma_{\min}\) measures how much
+  a matrix (or, for optimization, the Hessian) amplifies relative error — and how anisotropic the
+  loss landscape is. Large \(\kappa\): gradient descent zigzags (you saw it above), matrix solves
+  lose digits, small input changes cause large output changes.
+  <strong>Vanishing/exploding gradients</strong> are the deep-network version of the same numerics:
+  backprop multiplies ~\(N\) Jacobians, so gradient norms scale like \(\prod_i \|J_i\|\) — geometric
+  in depth. If typical Jacobian norms are 0.9 per layer, a 100-layer gradient is
+  \(0.9^{100} \approx 3\times10^{-5}\); if 1.1, it's \(1.4\times10^{4}\). Everything in Topic 5 about
+  initialization, normalization, and residual connections is engineering to hold that product near 1.
+</p>
+
+<div class="box jargon">
+  <div class="box-title">Jargon decoder</div>
+  <dl>
+    <dt>logit</dt><dd>An unnormalized score that becomes a probability after softmax/sigmoid. Named from the inverse of the logistic function.</dd>
+    <dt>rank</dt><dd>Number of linearly independent rows/columns — the dimensionality that survives the linear map.</dd>
+    <dt>Gram matrix</dt><dd>All pairwise inner products \(G_{ij}=\langle x_i,x_j\rangle\). Symmetric, positive semi-definite; the object kernels and attention scores are built from.</dd>
+    <dt>positive definite</dt><dd>\(x^\top M x &gt; 0\) for all nonzero \(x\); all eigenvalues &gt; 0; geometrically a bowl.</dd>
+    <dt>condition number</dt><dd>\(\sigma_{\max}/\sigma_{\min}\); error-amplification factor of a linear system; anisotropy of a loss surface.</dd>
+    <dt>machine epsilon</dt><dd>Spacing of floating-point numbers near 1; the resolution limit of arithmetic (~1.2×10⁻⁷ in float32).</dd>
+    <dt>first-order / second-order method</dt><dd>Uses gradients only / also uses curvature (Hessian). Adam is first-order with a crude diagonal curvature proxy.</dd>
+  </dl>
+</div>
+
+<h2>Self-check</h2>
+<div class="quiz" data-answer="c">
+  <p class="quiz-q">1. A weight matrix \(W \in \mathbb{R}^{512\times512}\) has 30 non-negligible singular values. The best mental model of what \(W\) does is:</p>
+  <div class="opts">
+    <button data-opt="a">It rotates 512-dimensional space without distortion</button>
+    <button data-opt="b">It is nearly the identity map</button>
+    <button data-opt="c">It projects inputs onto a ~30-dimensional subspace, scales there, and embeds back — it is effectively rank 30</button>
+    <button data-opt="d">It is not invertible, so the layer destroys all information</button>
+  </div>
+  <div class="quiz-exp"><strong>c.</strong> Small singular values ≈ discarded directions; the map factors through a ~30-dim bottleneck (SVD/Eckart–Young). This observation — that fine-tuning updates have low intrinsic rank — is the entire premise of LoRA.</div>
+</div>
+<div class="quiz" data-answer="b">
+  <p class="quiz-q">2. Adam's bias-correction terms \(1/(1-\beta^t)\) exist because:</p>
+  <div class="opts">
+    <button data-opt="a">gradients are biased estimators of the true gradient</button>
+    <button data-opt="b">the moment estimates are initialized at zero, so early running averages underestimate the true moments by a known factor</button>
+    <button data-opt="c">the learning rate must decay as \(1/t\) for convergence</button>
+    <button data-opt="d">they prevent division by zero when gradients vanish</button>
+  </div>
+  <div class="quiz-exp"><strong>b.</strong> \(m_t\) is a geometric average of \(t\) terms but was seeded with 0; unrolling shows \(E[m_t] = (1-\beta_1^t)\,E[g]\). Dividing by \((1-\beta_1^t)\) removes exactly that factor. (ε in the denominator handles the division-by-zero concern.)</div>
+</div>
+<div class="quiz" data-answer="d">
+  <p class="quiz-q">3. Training loss suddenly becomes NaN at iteration 12,400. Which is the <em>least</em> plausible cause?</p>
+  <div class="opts">
+    <button data-opt="a">learning rate too high → divergent updates → overflow</button>
+    <button data-opt="b">an exponent overflow in an unshifted softmax/exp somewhere</button>
+    <button data-opt="c">catastrophic cancellation in a hand-rolled variance computation</button>
+    <button data-opt="d">the Hessian of the loss became positive definite</button>
+  </div>
+  <div class="quiz-exp"><strong>d.</strong> A positive-definite Hessian just means you're locally in a bowl — that's the <em>good</em> case, not a failure. The other three are the classic NaN factories.</div>
+</div>
+<div class="quiz" data-answer="a">
+  <p class="quiz-q">4. On a loss surface whose Hessian has eigenvalues 1 and 25, plain gradient descent with the largest stable step size will:</p>
+  <div class="opts">
+    <button data-opt="a">oscillate across the stiff direction while creeping along the shallow one — ~25× more steps than a well-conditioned bowl</button>
+    <button data-opt="b">converge at the same rate as on a round bowl, since GD is rotation-invariant</button>
+    <button data-opt="c">diverge for any step size</button>
+    <button data-opt="d">converge in one step</button>
+  </div>
+  <div class="quiz-exp"><strong>a.</strong> Stability requires \(\eta &lt; 2/\lambda_{\max}\); progress along the shallow mode scales with \(\eta\lambda_{\min}\). The iteration count scales with the condition number \(\kappa=25\). Momentum improves this to \(\sqrt{\kappa}\); Newton's method makes it 1 step (at \(O(n^3)\) cost).</div>
+</div>
+
+<h2>Go deeper</h2>
+<ul class="resources">
+  <li><a href="https://mml-book.github.io/">Mathematics for Machine Learning — Deisenroth, Faisal, Ong (free PDF)</a><div class="rwhat">Ch. 2–4 (linear algebra, analytic geometry, matrix decompositions), Ch. 5 (vector calculus), Ch. 7 (optimization). Written exactly for this syllabus topic.</div></li>
+  <li><a href="https://www.youtube.com/playlist?list=PLZHQObOWTQDPD3MizzM2xVFitgF8hE_ab">3Blue1Brown — Essence of Linear Algebra</a><div class="rwhat">The geometric intuition behind the matrix widget above, animated. Watch episodes on linear transformations, determinant, and eigenvectors.</div></li>
+  <li><a href="https://www.deeplearningbook.org/contents/numerical.html">Deep Learning (Goodfellow et al.), Ch. 4 — Numerical Computation (free online)</a><div class="rwhat">Overflow/underflow, conditioning, and gradient-based optimization in ML context.</div></li>
+  <li><a href="https://distill.pub/2017/momentum/">Distill — Why Momentum Really Works</a><div class="rwhat">Interactive article deriving the √κ speedup; the best single read on the optimizer race you just ran.</div></li>
+  <li><a href="https://arxiv.org/abs/1412.6980">Adam: A Method for Stochastic Optimization (Kingma &amp; Ba, 2014)</a><div class="rwhat">§2 for the algorithm and §3 for the bias-correction derivation the exam asks about.</div></li>
+  <li><a href="https://www.matrixcookbook.com/">The Matrix Cookbook</a><div class="rwhat">Free reference for every matrix-derivative identity you'll ever need. Keep it bookmarked.</div></li>
+  <li><a href="https://arxiv.org/abs/2106.10165">The Principles of Deep Learning Theory — Roberts &amp; Yaida (free on arXiv)</a><div class="rwhat">Deep learning built with effective-field-theory tools. Written by physicists, for physicists; ambitious but uniquely suited to your background.</div></li>
+</ul>
+
+<div class="page-footer"></div>
+</main>
+
+<script>
+document.addEventListener("caie:ready", () => {
+  // ============ Widget 1: matrix transformation ============
+  (function () {
+    const canvas = document.getElementById("m-canvas");
+    let A = { a: 1, b: 1, c: 0, d: 1 };
+    const presets = {
+      id: [1, 0, 0, 1], rot: [0.7, -0.7, 0.7, 0.7], shear: [1, 1, 0, 1],
+      scale: [1.8, 0, 0, 0.5], sym: [1.4, 0.6, 0.6, 0.9], sing: [1, 0.5, 1, 0.5], refl: [-1, 0, 0, 1]
+    };
+    const S = 62; // px per unit
+    function draw() {
+      const { ctx, w, h } = CAIE.setupCanvas(canvas, Math.min(640, canvas.parentNode.clientWidth - 4), 400);
+      const pal = CAIE.pal();
+      const cx = w / 2, cy = h / 2;
+      const T = (x, y) => [cx + (A.a * x + A.b * y) * S, cy - (A.c * x + A.d * y) * S];
+      const O = (x, y) => [cx + x * S, cy - y * S];
+      ctx.clearRect(0, 0, w, h);
+      // original grid (faint)
+      ctx.strokeStyle = pal.grid; ctx.lineWidth = 1;
+      for (let i = -6; i <= 6; i++) {
+        ctx.beginPath(); ctx.moveTo(...O(i, -4)); ctx.lineTo(...O(i, 4)); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(...O(-6, i)); ctx.lineTo(...O(6, i)); ctx.stroke();
+      }
+      // transformed grid
+      ctx.strokeStyle = CAIE.alpha(pal.s[0], 0.45); ctx.lineWidth = 1;
+      for (let i = -6; i <= 6; i++) {
+        ctx.beginPath(); ctx.moveTo(...T(i, -6)); ctx.lineTo(...T(i, 6)); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(...T(-6, i)); ctx.lineTo(...T(6, i)); ctx.stroke();
+      }
+      // unit circle image (ellipse)
+      ctx.strokeStyle = pal.s[1]; ctx.lineWidth = 2; ctx.beginPath();
+      for (let t = 0; t <= 128; t++) {
+        const th = t / 128 * 2 * Math.PI;
+        const p = T(Math.cos(th), Math.sin(th));
+        if (t === 0) ctx.moveTo(...p); else ctx.lineTo(...p);
+      }
+      ctx.stroke();
+      // arrows helper
+      function arrow(from, to, color, wd) {
+        ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = wd || 2.5;
+        const dx = to[0] - from[0], dy = to[1] - from[1], L = Math.hypot(dx, dy);
+        if (L < 1) return;
+        ctx.beginPath(); ctx.moveTo(...from); ctx.lineTo(...to); ctx.stroke();
+        const ux = dx / L, uy = dy / L;
+        ctx.beginPath();
+        ctx.moveTo(...to);
+        ctx.lineTo(to[0] - 9 * ux + 4.5 * uy, to[1] - 9 * uy - 4.5 * ux);
+        ctx.lineTo(to[0] - 9 * ux - 4.5 * uy, to[1] - 9 * uy + 4.5 * ux);
+        ctx.fill();
+      }
+      // eigen directions
+      const tr = A.a + A.d, det = A.a * A.d - A.b * A.c;
+      const disc = tr * tr - 4 * det;
+      let eigText;
+      if (disc >= 0) {
+        const l1 = (tr + Math.sqrt(disc)) / 2, l2 = (tr - Math.sqrt(disc)) / 2;
+        eigText = "λ = " + l1.toFixed(2) + ", " + l2.toFixed(2);
+        for (const lam of [l1, l2]) {
+          let vx, vy;
+          if (Math.abs(A.b) > 1e-9) { vx = A.b; vy = lam - A.a; }
+          else if (Math.abs(A.c) > 1e-9) { vx = lam - A.d; vy = A.c; }
+          else { vx = (Math.abs(A.a - lam) < 1e-9) ? 1 : 0; vy = 1 - vx; }
+          const n = Math.hypot(vx, vy) || 1; vx /= n; vy /= n;
+          ctx.setLineDash([5, 4]);
+          ctx.strokeStyle = CAIE.alpha(pal.s[5], 0.5); ctx.lineWidth = 1.5;
+          ctx.beginPath(); ctx.moveTo(...O(-3.2 * vx, -3.2 * vy)); ctx.lineTo(...O(3.2 * vx, 3.2 * vy)); ctx.stroke();
+          ctx.setLineDash([]);
+          arrow(O(0, 0), O(lam * vx, lam * vy), pal.s[5], 2.5);
+        }
+      } else {
+        const re = tr / 2, im = Math.sqrt(-disc) / 2;
+        eigText = "λ = " + re.toFixed(2) + " ± " + im.toFixed(2) + "i (complex — rotation component, no real invariant direction)";
+      }
+      // basis vector images
+      arrow(O(0, 0), T(1, 0), pal.s[0], 3);
+      arrow(O(0, 0), T(0, 1), pal.s[2], 3);
+      // singular values
+      const q = A.a * A.a + A.b * A.b + A.c * A.c + A.d * A.d;
+      const r = Math.sqrt(Math.max(0, q * q - 4 * det * det));
+      const s1v = Math.sqrt((q + r) / 2), s2v = Math.sqrt(Math.max(0, (q - r) / 2));
+      document.getElementById("m-readout").innerHTML =
+        "det(A) = <b>" + det.toFixed(2) + "</b> (area scale" + (det < 0 ? ", orientation flipped" : "") + ")" +
+        "<span>trace = <b>" + tr.toFixed(2) + "</b></span>" +
+        "<span>" + eigText + "</span>" +
+        "<span>singular values σ = <b>" + s1v.toFixed(2) + ", " + s2v.toFixed(2) + "</b> (ellipse semi-axes)</span>" +
+        "<span>rank = <b>" + (s2v < 0.02 ? (s1v < 0.02 ? 0 : 1) : 2) + "</b></span>";
+    }
+    for (const k of ["a", "b", "c", "d"]) {
+      CAIE.bind("m-" + k, v => { A[k] = v; draw(); }, v => v.toFixed(2));
+    }
+    document.getElementById("m-preset").addEventListener("change", e => {
+      const p = presets[e.target.value];
+      ["a", "b", "c", "d"].forEach((k, i) => {
+        A[k] = p[i];
+        const el = document.getElementById("m-" + k);
+        el.value = p[i];
+        document.getElementById("m-" + k + "-v").textContent = p[i].toFixed(2);
+      });
+      draw();
+    });
+    CAIE.onTheme(draw);
+    window.addEventListener("resize", draw);
+    draw();
+  })();
+
+  // ============ Widget 2: optimizer race ============
+  (function () {
+    const canvas = document.getElementById("o-canvas");
+    let surface = "ravine", lr = Math.pow(10, -1.5), anim = null;
+    const surfaces = {
+      bowl: {
+        f: (x, y) => 0.5 * (x * x + y * y),
+        g: (x, y) => [x, y],
+        xr: [-2.4, 2.4], yr: [-1.6, 1.6], start: [-2.0, 1.3], min: [0, 0]
+      },
+      ravine: {
+        f: (x, y) => 0.5 * (x * x + 25 * y * y),
+        g: (x, y) => [x, 25 * y],
+        xr: [-2.4, 2.4], yr: [-1.6, 1.6], start: [-2.0, 1.3], min: [0, 0]
+      },
+      rosen: {
+        f: (x, y) => Math.pow(1 - x, 2) + 8 * Math.pow(y - x * x, 2),
+        g: (x, y) => [-2 * (1 - x) - 32 * x * (y - x * x), 16 * (y - x * x)],
+        xr: [-2.0, 2.0], yr: [-1.0, 2.2], start: [-1.6, 1.9], min: [1, 1]
+      }
+    };
+    function makeOpts() {
+      return [
+        { name: "GD", color: 0, state: {}, step: (p, g) => [p[0] - lr * g[0], p[1] - lr * g[1]] },
+        { name: "Momentum", color: 2, state: { vx: 0, vy: 0 }, step: function (p, g) {
+            this.state.vx = 0.9 * this.state.vx + g[0]; this.state.vy = 0.9 * this.state.vy + g[1];
+            return [p[0] - lr * this.state.vx, p[1] - lr * this.state.vy]; } },
+        { name: "RMSProp", color: 4, state: { sx: 0, sy: 0 }, step: function (p, g) {
+            this.state.sx = 0.99 * this.state.sx + 0.01 * g[0] * g[0];
+            this.state.sy = 0.99 * this.state.sy + 0.01 * g[1] * g[1];
+            return [p[0] - lr * g[0] / (Math.sqrt(this.state.sx) + 1e-8),
+                    p[1] - lr * g[1] / (Math.sqrt(this.state.sy) + 1e-8)]; } },
+        { name: "Adam", color: 5, state: { mx: 0, my: 0, vx: 0, vy: 0, t: 0 }, step: function (p, g) {
+            const s = this.state; s.t++;
+            s.mx = 0.9 * s.mx + 0.1 * g[0]; s.my = 0.9 * s.my + 0.1 * g[1];
+            s.vx = 0.999 * s.vx + 0.001 * g[0] * g[0]; s.vy = 0.999 * s.vy + 0.001 * g[1] * g[1];
+            const bc1 = 1 - Math.pow(0.9, s.t), bc2 = 1 - Math.pow(0.999, s.t);
+            return [p[0] - lr * (s.mx / bc1) / (Math.sqrt(s.vx / bc2) + 1e-8),
+                    p[1] - lr * (s.my / bc1) / (Math.sqrt(s.vy / bc2) + 1e-8)]; } }
+      ];
+    }
+    let opts = makeOpts(), paths = [];
+    function resetPaths() {
+      opts = makeOpts();
+      const s = surfaces[surface];
+      paths = opts.map(() => [s.start.slice()]);
+    }
+    function drawBase() {
+      const s = surfaces[surface];
+      const { ctx, w, h } = CAIE.setupCanvas(canvas, Math.min(640, canvas.parentNode.clientWidth - 4), 400);
+      const X = x => (x - s.xr[0]) / (s.xr[1] - s.xr[0]) * w;
+      const Y = y => h - (y - s.yr[0]) / (s.yr[1] - s.yr[0]) * h;
+      // shade loss field
+      const nx = 128, ny = 80;
+      let fmax = 0;
+      const vals = [];
+      for (let j = 0; j < ny; j++) {
+        for (let i = 0; i < nx; i++) {
+          const x = s.xr[0] + (i + 0.5) / nx * (s.xr[1] - s.xr[0]);
+          const y = s.yr[0] + (j + 0.5) / ny * (s.yr[1] - s.yr[0]);
+          const v = s.f(x, y); vals.push(v); if (v > fmax) fmax = v;
+        }
+      }
+      const cw = w / nx, chh = h / ny;
+      for (let j = 0; j < ny; j++) {
+        for (let i = 0; i < nx; i++) {
+          const t = Math.sqrt(vals[j * nx + i] / fmax); // sqrt for contrast near min
+          ctx.fillStyle = CAIE.lerpHex(CAIE.css("--seq-lo"), CAIE.css("--seq-hi"), 0.05 + 0.75 * t);
+          ctx.fillRect(i * cw, h - (j + 1) * chh, cw + 0.5, chh + 0.5);
+        }
+      }
+      // minimum
+      const pal = CAIE.pal();
+      ctx.fillStyle = "#ffffff"; ctx.font = "700 15px " + CAIE.css("--sans");
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText("★", X(s.min[0]), Y(s.min[1]));
+      // paths
+      const palS = pal.s;
+      opts.forEach((o2, k) => {
+        const p = paths[k];
+        ctx.strokeStyle = palS[o2.color]; ctx.lineWidth = 2; ctx.lineJoin = "round";
+        ctx.beginPath();
+        let ok = false;
+        for (const pt of p) {
+          if (!isFinite(pt[0]) || !isFinite(pt[1])) break;
+          const px = X(pt[0]), py = Y(pt[1]);
+          if (px < -500 || px > w + 500 || py < -500 || py > h + 500) break;
+          if (!ok) { ctx.moveTo(px, py); ok = true; } else ctx.lineTo(px, py);
+        }
+        ctx.stroke();
+        const last = p[p.length - 1];
+        if (isFinite(last[0]) && isFinite(last[1])) {
+          ctx.fillStyle = palS[o2.color];
+          ctx.beginPath(); ctx.arc(X(last[0]), Y(last[1]), 5, 0, 7); ctx.fill();
+          ctx.strokeStyle = pal.surface; ctx.lineWidth = 2; ctx.stroke();
+        }
+      });
+      // readout: final losses
+      const ro = opts.map((o2, k) => {
+        const last = paths[k][paths[k].length - 1];
+        const L = s.f(last[0], last[1]);
+        return o2.name + " loss: <b>" + (isFinite(L) ? L.toExponential(1) : "diverged") + "</b>";
+      }).join("<span></span>");
+      document.getElementById("o-readout").innerHTML = "steps: <b>" + (paths[0].length - 1) + "</b><span></span>" + ro;
+    }
+    function run() {
+      if (anim) cancelAnimationFrame(anim);
+      resetPaths();
+      const s = surfaces[surface];
+      let step = 0;
+      function frame() {
+        for (let r = 0; r < 3; r++) {
+          step++;
+          opts.forEach((o2, k) => {
+            const p = paths[k];
+            const last = p[p.length - 1];
+            if (!isFinite(last[0]) || Math.abs(last[0]) > 50 || Math.abs(last[1]) > 50) return;
+            const g = s.g(last[0], last[1]);
+            p.push(o2.step(last, g));
+          });
+        }
+        drawBase();
+        if (step < 400) anim = requestAnimationFrame(frame);
+      }
+      frame();
+    }
+    document.getElementById("o-run").addEventListener("click", run);
+    document.getElementById("o-reset").addEventListener("click", () => { if (anim) cancelAnimationFrame(anim); resetPaths(); drawBase(); });
+    document.getElementById("o-surface").addEventListener("change", e => { surface = e.target.value; if (anim) cancelAnimationFrame(anim); resetPaths(); drawBase(); });
+    CAIE.bind("o-lr", v => { lr = Math.pow(10, v); }, v => "η=" + Math.pow(10, v).toPrecision(2));
+    CAIE.onTheme(drawBase);
+    window.addEventListener("resize", drawBase);
+    resetPaths(); drawBase();
+  })();
+
+  // ============ Widget 3: softmax stability ============
+  (function () {
+    const base = [2.0, 1.0, 0.5];
+    function render(logScale) {
+      const scale = Math.pow(10, logScale);
+      const z = base.map(v => v * scale);
+      const naiveExp = z.map(Math.exp);
+      const naiveSum = naiveExp.reduce((a, b) => a + b, 0);
+      const naive = naiveExp.map(e => e / naiveSum);
+      const M = Math.max(...z);
+      const shifted = z.map(v => Math.exp(v - M));
+      const shSum = shifted.reduce((a, b) => a + b, 0);
+      const stable = shifted.map(e => e / shSum);
+      const fmt = v => !isFinite(v) ? '<span style="color:var(--critical);font-weight:700">' + v + "</span>"
+        : (isNaN(v) ? '<span style="color:var(--critical);font-weight:700">NaN</span>' : v.toPrecision(4));
+      let html = "<tr><th>logit z</th><th>naive e^z</th><th>naive softmax</th><th>stable e^(z−max)</th><th>stable softmax</th></tr>";
+      for (let i = 0; i < 3; i++) {
+        html += "<tr><td>" + z[i].toPrecision(4) + "</td><td>" + fmt(naiveExp[i]) + "</td><td>" + fmt(naive[i]) +
+          "</td><td>" + shifted[i].toPrecision(4) + "</td><td>" + fmt(stable[i]) + "</td></tr>";
+      }
+      document.getElementById("n-table").innerHTML = html;
+      document.getElementById("n-eps").innerHTML =
+        "float64 overflow threshold: e^709 · largest logit now: <b>" + z[0].toPrecision(3) + "</b>" +
+        "<span>bonus — absorption: 10¹⁶ + 1 − 10¹⁶ = <b>" + (1e16 + 1 - 1e16) + "</b>, and 0.1 + 0.2 = <b>" + (0.1 + 0.2).toPrecision(17) + "</b></span>";
+    }
+    CAIE.bind("n-scale", render, v => "×" + Math.pow(10, v).toPrecision(2));
+  })();
+});
+</script>
+</body>
+</html>

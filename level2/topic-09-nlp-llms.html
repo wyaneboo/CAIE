@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Topic 9 — NLP &amp; Large Language Models · CAIE Course</title>
+<link rel="stylesheet" href="../assets/course.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<script defer src="../assets/course.js"></script>
+</head>
+<body data-page="t09" data-root="..">
+<a class="skip" href="#main">Skip to content</a>
+<header class="topbar">
+  <button id="navToggle" class="iconbtn" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html">CAIE<span>·</span>Course</a>
+  <span class="topbar-title">Level II · Topic 9 · NLP &amp; Large Language Models</span>
+  <button id="themeToggle" class="iconbtn" aria-label="Toggle theme">◐</button>
+</header>
+<nav id="sidebar"></nav>
+
+<main id="main">
+<div class="kicker">Level II · Topic 9 · Exam weight 16%</div>
+<h1>NLP &amp; Large Language Models</h1>
+<p class="lead">
+  A language model is a probability distribution over the next token — nothing more. Everything
+  that looks like intelligence emerges from making that one prediction extraordinarily well at
+  extraordinary scale. This topic covers the full pipeline: how text becomes tokens, what
+  pretraining actually optimizes, how base models get adapted, and how anyone can tell whether the
+  result is any good.
+</p>
+
+<div class="box los">
+  <div class="box-title">Learning outcomes</div>
+  <ul>
+    <li>Describe BPE, WordPiece, SentencePiece, Unigram tokenization and their tradeoffs.</li>
+    <li>Explain next-token prediction and its emergent consequences; compare encoder-only (BERT), decoder-only (GPT), encoder-decoder (T5); contrast contextual vs static embeddings.</li>
+    <li>Explain in-context learning and few-shot prompting; compare full fine-tuning, LoRA/QLoRA, adapters, prefix-tuning by cost and effect; describe instruction tuning.</li>
+    <li>Explain decoding strategies (greedy, beam, top-k, top-p, temperature); describe hallucination's mechanistic causes and mitigations.</li>
+    <li>Apply evaluation methods (perplexity, benchmarks, LLM-as-judge) and their limits; diagnose contamination and benchmark gaming.</li>
+  </ul>
+</div>
+
+<h2>9.1 Tokenization — the compromise everything else stands on</h2>
+<p>
+  Models operate on integers, so text must be chopped into vocabulary units. Whole words fail
+  (millions of words, and "unhappiness" shares nothing with "happy"); raw characters work but make
+  sequences 4–5× longer — and attention is quadratic. The industry compromise is
+  <strong>subwords</strong>: frequent words stay whole, rare words split into meaningful pieces.
+</p>
+<p>
+  <strong>BPE (Byte-Pair Encoding)</strong>: start from characters (or bytes), count the most
+  frequent adjacent pair, merge it into a new token, repeat for N merges. The merge list <em>is</em>
+  the tokenizer. <strong>WordPiece</strong> (BERT) picks merges by likelihood gain rather than raw
+  frequency. <strong>Unigram</strong> (used via <strong>SentencePiece</strong>) goes top-down:
+  start with a huge candidate vocabulary and prune tokens whose removal least hurts corpus
+  likelihood — SentencePiece also treats the input as raw bytes/text including spaces, so it needs
+  no language-specific pre-splitting (crucial for Japanese, Chinese, code). GPT-class models use
+  <em>byte-level</em> BPE: the base alphabet is 256 bytes, so <em>any</em> string is tokenizable —
+  no unknown-token failures, ever.
+</p>
+<p>
+  Tokenization explains a family of famous LLM quirks: arithmetic is hard partly because "12345"
+  may split as "123", "45"; spelling questions are hard because the model never sees characters;
+  non-English text costs 2–4× more tokens (worse compression → shorter effective context and higher
+  API bills — an equity issue as much as an engineering one).
+</p>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Interactive — train a BPE tokenizer, watch it learn merges</div>
+    <div class="wsub">Real BPE running on a small corpus. Slide the number of merges and watch tokens grow from characters toward words; then tokenize your own sentence with the result.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label>merges <input type="range" id="bp-n" min="0" max="120" step="1" value="30"><span class="val" id="bp-n-v"></span></label>
+    </div>
+    <textarea id="bp-input" rows="2">the lower the loss the better the language model learns lower and lower</textarea>
+    <div style="margin:10px 0" id="bp-tokens"></div>
+    <div class="readout" id="bp-stats"></div>
+    <details style="font-size:0.85rem;color:var(--ink-2)"><summary>show learned merge list</summary><div id="bp-merges" style="font-family:var(--mono);font-size:0.78rem;line-height:1.9;margin-top:8px"></div></details>
+    <p class="wcaption">
+      At 0 merges you have characters; by ~40, common fragments ("th", "the ", "lo", "er") have
+      fused; frequent whole words become single tokens while rare ones stay split. Type a word the
+      corpus never saw — it still tokenizes (into smaller pieces): subword tokenization never fails,
+      it just gets expensive. Compression ratio = characters per token, the metric tokenizers are
+      tuned for.
+    </p>
+  </div>
+</div>
+
+<h2>9.2 Pretraining and the three architectures</h2>
+<p>
+  The pretraining objective is stark: maximize \(\sum_t \log p_\theta(x_t \mid x_{&lt;t})\) over
+  trillions of tokens — cross-entropy on next-token prediction (Topic 2's MLE, at planetary scale).
+  The <strong>emergent consequence</strong>: predicting the next token of <em>everything humans
+  write</em> requires implicitly modeling grammar, facts, style, sentiment, code semantics, and some
+  amount of reasoning — the loss function never mentions any of them. Skills appear as
+  <em>capabilities of compression</em>: the better the model compresses text (lower perplexity),
+  the more world-structure it has internalized. Whether specific abilities "emerge" suddenly at
+  scale or improve smoothly under better metrics is an active debate (see resources), but the
+  engineering fact stands: scale up, and qualitatively new behaviors become reliable.
+</p>
+<div class="tablewrap">
+<table>
+  <tr><th></th><th>Encoder-only (BERT)</th><th>Decoder-only (GPT)</th><th>Encoder-decoder (T5)</th></tr>
+  <tr><td>attention</td><td>bidirectional — every token sees all others</td><td>causal — tokens see only the past</td><td>bidirectional encoder + causal decoder w/ cross-attention</td></tr>
+  <tr><td>objective</td><td>masked-token prediction</td><td>next-token prediction</td><td>span corruption → reconstruct</td></tr>
+  <tr><td>natural use</td><td>understanding: classification, NER, retrieval embeddings</td><td>generation of any kind — the current default</td><td>seq→seq: translation, summarization</td></tr>
+  <tr><td>why it won/lost</td><td>can't generate; still rules embeddings (Topic 14)</td><td>one simple objective scales; generation subsumes understanding via prompting</td><td>elegant but heavier; niche today</td></tr>
+</table>
+</div>
+<p>
+  <strong>Embeddings, static vs contextual.</strong> word2vec/GloVe give each word <em>one</em>
+  vector regardless of context — "bank" is the same in "river bank" and "bank loan." Transformer
+  hidden states are <strong>contextual</strong>: the vector for "bank" is computed fresh from its
+  sentence, disambiguated by attention. Every modern embedding model (Topic 14) is a transformer
+  encoder pooled into one vector per text.
+</p>
+
+<h2>9.3 Adapting a base model</h2>
+<p>
+  <strong>In-context learning</strong> is the zero-gradient miracle: put examples in the prompt and
+  the model infers the pattern at inference time — "few-shot prompting." The model isn't updated;
+  the computation happens in its activations. For many tasks, 5 good examples in the prompt beat a
+  fine-tune you'd have spent a week on. Always try prompting first (this becomes a Level III
+  decision framework in Topic 17).
+</p>
+<p>
+  When you do need weights to change:
+</p>
+<ul>
+  <li><strong>Full fine-tuning</strong> updates every parameter. Highest ceiling; costs training-run
+  memory (Topic 12: ~16 bytes/param with Adam — 112 GB for a 7B model) and produces a full model
+  copy per task.</li>
+  <li><strong>LoRA</strong>: freeze the base weights; learn low-rank updates
+  \(\Delta W = BA\) (rank r = 8–64) beside attention/FFN matrices — Topic 1's low-rank insight
+  applied to fine-tuning. Trainable params drop ~100–1000×; the adapter is megabytes; you can serve
+  many adapters over one base model. <strong>QLoRA</strong>: additionally hold the frozen base in
+  4-bit — a 70B fine-tune fits on one 48 GB GPU.</li>
+  <li><strong>Adapters / prefix-tuning</strong>: small bottleneck layers inserted per block / learned
+  virtual tokens prepended to the KV cache. Historically important; LoRA largely won on
+  quality-per-parameter and zero inference latency (it merges into the weights).</li>
+</ul>
+<p>
+  <strong>Instruction tuning</strong> converts a raw text-completer into an assistant: supervised
+  fine-tuning on (instruction → good response) pairs, thousands to millions of them, spanning
+  formats and tasks. Data quality dominates data quantity (the LIMA result: 1k excellent examples
+  can beat 50k mediocre ones). What instruction data <em>can't</em> teach well — judgment among
+  many acceptable answers — is what preference optimization (RLHF/DPO) adds in Topics 11 and 17.
+</p>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Interactive — fine-tuning methods by the numbers</div>
+    <div class="wsub">Trainable parameters and training memory for each adaptation method, at your chosen model size.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label>model size <input type="range" id="ft-p" min="0" max="3" step="0.05" value="1.85"><span class="val" id="ft-p-v"></span></label>
+      <label>LoRA rank <input type="range" id="ft-r" min="4" max="64" step="4" value="16"><span class="val" id="ft-r-v"></span></label>
+    </div>
+    <canvas id="ft-canvas" width="640" height="230"></canvas>
+    <div class="readout" id="ft-readout"></div>
+    <p class="wcaption">
+      Memory bars assume Adam mixed-precision (≈16 B/param trainable) plus frozen weights at 2 B
+      (LoRA) or 0.5 B (QLoRA 4-bit). The punchline: at 70B, full fine-tuning needs a multi-node
+      cluster; QLoRA needs one workstation GPU. That asymmetry reshaped the entire open-model
+      ecosystem after 2023.
+    </p>
+  </div>
+</div>
+
+<h2>9.4 Decoding — how a distribution becomes text</h2>
+<p>
+  Each step, the model emits a distribution over ~100k tokens. What you do with it changes
+  everything: <strong>greedy</strong> (argmax) is deterministic and gets trapped in repetition
+  loops; <strong>beam search</strong> keeps the B most probable prefixes — right for translation
+  (one correct answer), catastrophically dull for open generation;
+  <strong>temperature</strong> rescales logits \(z/T\) before softmax — the Boltzmann knob:
+  T→0 greedy, T=1 the model's honest distribution, T&gt;1 adventurous;
+  <strong>top-k</strong> keeps only the k most probable tokens; <strong>top-p</strong> (nucleus)
+  keeps the smallest set whose mass exceeds p — adaptive where top-k is rigid: 3 candidates when
+  the model is sure, 300 when it isn't.
+</p>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Interactive — decoding playground</div>
+    <div class="wsub">Left: the true next-token distribution of a small Markov language model (built live from a corpus) for a chosen context, and what your temperature/top-k/top-p do to it. Right: text generated with those settings.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label>temperature <input type="range" id="sm-t" min="0.1" max="2.5" step="0.05" value="1"><span class="val" id="sm-t-v"></span></label>
+      <label>top-k <input type="range" id="sm-k" min="1" max="30" step="1" value="30"><span class="val" id="sm-k-v"></span></label>
+      <label>top-p <input type="range" id="sm-p" min="0.1" max="1" step="0.02" value="1"><span class="val" id="sm-p-v"></span></label>
+      <button class="btn" id="sm-gen">Generate</button>
+    </div>
+    <canvas id="sm-canvas" width="640" height="210"></canvas>
+    <div class="box note" style="margin-top:10px"><div class="box-title">Generated (40 tokens)</div><p id="sm-out" style="font-family:var(--mono);font-size:0.85rem">press Generate</p></div>
+    <p class="wcaption">
+      Bars: the distribution after your settings (dimmed bars = truncated by top-k/top-p). At T=0.1
+      generation loops on high-probability phrases; at T=2.5 it's word salad; top-p=0.9, T≈0.8 is
+      the familiar "sensible but varied" production setting. This tiny Markov model shows the exact
+      dynamics — an LLM just has a much better distribution.
+    </p>
+  </div>
+</div>
+
+<p>
+  <strong>Hallucination — mechanism, not mystery.</strong> A language model is trained to produce
+  <em>plausible continuations</em>, and plausibility is not truth. Mechanistic causes: (1) the
+  objective rewards fluent guesses — there is no "I don't know" gradient signal in next-token
+  prediction; (2) facts seen once during training are stored weakly — retrieval from weights is
+  lossy interpolation; (3) sampling adds randomness by design; (4) instruction tuning teaches the
+  <em>form</em> of confident answers, which the model produces even when content is absent
+  (sycophancy's cousin); (5) exposure bias — one bad sampled token conditions everything after it.
+  Mitigations, in rough order of leverage: ground answers in retrieved documents (RAG, Topic 14);
+  train/tune for calibrated refusals; decode conservatively for factual tasks; verify claims with a
+  second pass or external tools; and design the product so unverified output is labeled as such.
+  No known mitigation reaches zero; Level III treats hallucination as a risk to be budgeted, not
+  eliminated.
+</p>
+
+<h2>9.5 Evaluation — the hardest problem in the room</h2>
+<p>
+  <strong>Perplexity</strong> \(= e^{\text{cross-entropy}}\) measures raw prediction quality —
+  ideal for comparing base models on identical data, meaningless across different tokenizers
+  (per-token loss depends on how big tokens are!) and uninformative about instruction-following.
+  <strong>Benchmark suites</strong> (MMLU for knowledge, GSM8K/MATH for math, HumanEval for code,
+  etc.) provide standardized scores — but public benchmarks leak into training data
+  (<strong>contamination</strong>), and models can be tuned to the test's format rather than its
+  substance (<strong>benchmark gaming</strong>). Contamination symptoms: implausibly high scores
+  on old public sets, big drops on freshly-written variants of the same difficulty, verbatim
+  regurgitation of test items. <strong>LLM-as-judge</strong> — a strong model grading another's
+  outputs — scales human-like evaluation cheaply but carries biases you must control:
+  position bias (prefers the first answer — randomize order), length bias (prefers longer),
+  self-preference (prefers its own family's style), and rubric drift. The professional stack:
+  automatic metrics for regression testing, LLM-judge with bias controls for breadth, small
+  human evaluations for calibration, and — above all — an eval set <em>built from your actual
+  task</em>, refreshed often enough that it can't be memorized.
+</p>
+
+<div class="box jargon">
+  <div class="box-title">Jargon decoder</div>
+  <dl>
+    <dt>vocab size</dt><dd>Number of distinct tokens (typically 32k–256k). Bigger = better compression but a larger embedding/unembedding matrix.</dd>
+    <dt>base model / chat model</dt><dd>Raw next-token predictor vs the instruction-tuned + preference-tuned assistant built on it.</dd>
+    <dt>zero/few-shot</dt><dd>Task described with no examples / with a handful of examples, all in the prompt.</dd>
+    <dt>chain-of-thought</dt><dd>Prompting the model to reason step-by-step before answering; buys accuracy on multi-step problems at token cost.</dd>
+    <dt>logprobs</dt><dd>Per-token log-probabilities exposed by APIs — the raw material for perplexity and confidence heuristics.</dd>
+    <dt>exposure bias</dt><dd>Train on gold prefixes, generate on own (possibly wrong) prefixes — errors compound.</dd>
+    <dt>MMLU / GSM8K / HumanEval</dt><dd>Standard benchmarks: 57-subject multiple choice / grade-school math word problems / Python function completion.</dd>
+    <dt>system prompt</dt><dd>Privileged instructions prepended to a conversation, setting role and rules for the assistant.</dd>
+  </dl>
+</div>
+
+<h2>Self-check</h2>
+<div class="quiz" data-answer="c">
+  <p class="quiz-q">1. Model A (32k vocab) reports perplexity 8; Model B (128k vocab) reports 11 on the same raw text. Which conclusion is sound?</p>
+  <div class="opts">
+    <button data-opt="a">A is the better language model</button>
+    <button data-opt="b">B is the better language model</button>
+    <button data-opt="c">the comparison is invalid — per-token perplexity isn't comparable across tokenizers; compare bits-per-byte on the raw text instead</button>
+    <button data-opt="d">perplexity can't be computed for 128k vocabularies</button>
+  </div>
+  <div class="quiz-exp"><strong>c.</strong> B's bigger tokens each carry more information, so higher per-token perplexity may still mean better compression per character. Normalize per byte/character to compare. A classic exam trap.</div>
+</div>
+<div class="quiz" data-answer="b">
+  <p class="quiz-q">2. You need 50 lightly-customized variants of a 13B model (one per client's tone). The economical architecture:</p>
+  <div class="opts">
+    <button data-opt="a">50 full fine-tunes, 50 deployments</button>
+    <button data-opt="b">one frozen base model + 50 LoRA adapters (~tens of MB each) hot-swapped at inference</button>
+    <button data-opt="c">50 separate pretraining runs</button>
+    <button data-opt="d">one model with all 50 tones merged into the same weights</button>
+  </div>
+  <div class="quiz-exp"><strong>b.</strong> Adapter-per-tenant over a shared base is the standard multi-tenant pattern — 50 fine-tunes' storage and serving cost collapse to one model plus megabytes. (Modern servers batch requests across different LoRAs.)</div>
+</div>
+<div class="quiz" data-answer="d">
+  <p class="quiz-q">3. Your summarizer occasionally invents statistics. Which change attacks the mechanism most directly?</p>
+  <div class="opts">
+    <button data-opt="a">raise temperature so it explores less common phrasings</button>
+    <button data-opt="b">increase beam width</button>
+    <button data-opt="c">make the model larger</button>
+    <button data-opt="d">require every numeric claim to be grounded in retrieved source spans, with low-temperature decoding and a verification pass</button>
+  </div>
+  <div class="quiz-exp"><strong>d.</strong> Numbers are exactly what parametric memory interpolates worst. Grounding + conservative decoding + claim checking targets the cause. (a) increases hallucination; (c) helps but doesn't fix the objective mismatch.</div>
+</div>
+<div class="quiz" data-answer="a">
+  <p class="quiz-q">4. A new model beats every 2-year-old public benchmark yet underperforms rivals on your fresh in-house tasks. First hypothesis:</p>
+  <div class="opts">
+    <button data-opt="a">contamination/benchmark tuning — the public sets leaked into its training data; trust the private eval</button>
+    <button data-opt="b">your tasks are unrepresentative; trust the benchmarks</button>
+    <button data-opt="c">the model needs higher temperature</button>
+    <button data-opt="d">your eval harness must be buggy</button>
+  </div>
+  <div class="quiz-exp"><strong>a.</strong> Public-high/private-low is contamination's signature. Fresh, task-specific, held-private evals are the only numbers you should let drive decisions.</div>
+</div>
+
+<h2>Go deeper</h2>
+<ul class="resources">
+  <li><a href="https://www.youtube.com/watch?v=zduSFxRajkE">Karpathy — Let's build the GPT Tokenizer (2h13m)</a><div class="rwhat">Builds byte-level BPE from scratch and explains every LLM tokenization quirk. The definitive treatment.</div></li>
+  <li><a href="https://arxiv.org/abs/2005.14165">GPT-3 paper — Language Models are Few-Shot Learners</a><div class="rwhat">§1–3: the discovery of in-context learning. Skim the task figures.</div></li>
+  <li><a href="https://arxiv.org/abs/2106.09685">LoRA (Hu et al., 2021)</a> and <a href="https://arxiv.org/abs/2305.14314">QLoRA (Dettmers et al., 2023)</a><div class="rwhat">LoRA §4 for the low-rank hypothesis; QLoRA for 4-bit NormalFloat and paged optimizers.</div></li>
+  <li><a href="https://arxiv.org/abs/1904.09751">The Curious Case of Neural Text Degeneration (Holtzman et al., 2019)</a><div class="rwhat">Why greedy/beam decoding loops and why nucleus (top-p) sampling exists — the primary source for §9.4.</div></li>
+  <li><a href="https://huggingface.co/learn/nlp-course">Hugging Face NLP Course (free)</a><div class="rwhat">Hands-on: tokenizers (Ch. 6), fine-tuning (Ch. 3), the full practical stack.</div></li>
+  <li><a href="https://arxiv.org/abs/2211.09110">HELM — Holistic Evaluation of Language Models</a> and <a href="https://arxiv.org/abs/2306.05685">LLM-as-a-Judge (Zheng et al., 2023)</a><div class="rwhat">Evaluation methodology and judge biases (position, verbosity, self-preference) with measurements.</div></li>
+  <li><a href="https://arxiv.org/abs/2304.15004">Are Emergent Abilities a Mirage? (Schaeffer et al., 2023)</a><div class="rwhat">The counterpoint on emergence — sharp thresholds may be artifacts of discontinuous metrics. Read against the original emergence paper (Wei et al., 2022).</div></li>
+</ul>
+
+<div class="page-footer"></div>
+</main>
+
+<script>
+document.addEventListener("caie:ready", () => {
+  // ---------- BPE ----------
+  (function () {
+    const corpus = "the lower the loss the better the model the model learns and the loss lowers the learner learns to lower the loss better and better the language model learns language";
+    function trainBPE(nMerges) {
+      // words -> symbol sequences (with end-of-word marker)
+      const words = {};
+      for (const w of corpus.split(/\s+/)) {
+        const key = w.split("").join(" ") + " </w>";
+        words[key] = (words[key] || 0) + 1;
+      }
+      const merges = [];
+      let vocab = { ...words };
+      for (let m = 0; m < nMerges; m++) {
+        const pairs = {};
+        for (const [w, c] of Object.entries(vocab)) {
+          const syms = w.split(" ");
+          for (let i = 0; i < syms.length - 1; i++) {
+            const p = syms[i] + "" + syms[i + 1];
+            pairs[p] = (pairs[p] || 0) + c;
+          }
+        }
+        let best = null;
+        for (const [p, c] of Object.entries(pairs)) if (!best || c > best[1]) best = [p, c];
+        if (!best || best[1] < 2) break;
+        const [a, b] = best[0].split("");
+        merges.push([a, b, best[1]]);
+        const merged = {};
+        const re = new RegExp("(^| )" + a.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + " " + b.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?= |$)", "g");
+        for (const [w, c] of Object.entries(vocab)) merged[w.replace(re, (mm, pre) => pre + a + b)] = c;
+        vocab = merged;
+      }
+      return merges;
+    }
+    function tokenize(text, merges) {
+      const out = [];
+      for (const w of text.trim().split(/\s+/)) {
+        let syms = w.split("").concat(["</w>"]);
+        for (const [a, b] of merges) {
+          const next = [];
+          let i = 0;
+          while (i < syms.length) {
+            if (i < syms.length - 1 && syms[i] === a && syms[i + 1] === b) { next.push(a + b); i += 2; }
+            else { next.push(syms[i]); i++; }
+          }
+          syms = next;
+        }
+        out.push(syms);
+      }
+      return out;
+    }
+    function render() {
+      const n = +document.getElementById("bp-n").value;
+      document.getElementById("bp-n-v").textContent = n;
+      const merges = trainBPE(n);
+      const text = document.getElementById("bp-input").value || " ";
+      const toks = tokenize(text, merges);
+      const pal = ["--s1", "--s2", "--s3", "--s5", "--s7", "--s8"];
+      let html = "", count = 0, chars = 0, ci = 0;
+      for (const word of toks) {
+        for (const t of word) {
+          const disp = t.replace("</w>", "·");
+          html += '<span style="background:' + "color-mix(in srgb, var(" + pal[ci % 6] + ") 22%, transparent)" +
+            ';border:1px solid var(' + pal[ci % 6] + ');border-radius:5px;padding:1px 5px;margin:2px;display:inline-block;font-family:var(--mono);font-size:0.82rem">' + disp + "</span>";
+          count++; ci++;
+        }
+        chars += word.join("").replace("</w>", "").length;
+      }
+      document.getElementById("bp-tokens").innerHTML = html;
+      document.getElementById("bp-stats").innerHTML =
+        "tokens: <b>" + count + "</b><span>chars/token (compression): <b>" + (chars / Math.max(1, count)).toFixed(2) + "</b></span><span>merges learned: <b>" + merges.length + "</b></span>";
+      document.getElementById("bp-merges").innerHTML = merges.map((m, i) =>
+        (i + 1) + ". “" + m[0].replace("</w>", "·") + "” + “" + m[1].replace("</w>", "·") + "” (count " + m[2] + ")").join("<br>");
+    }
+    document.getElementById("bp-n").addEventListener("input", render);
+    document.getElementById("bp-input").addEventListener("input", render);
+    render();
+  })();
+
+  // ---------- sampling ----------
+  (function () {
+    const corpus = ("the model predicts the next token and the next token follows the last token " +
+      "a good model gives high probability to the true next word and low probability to the rest " +
+      "sampling with high temperature makes the text random and strange while low temperature makes the text repeat " +
+      "the loss goes down as the model learns and the text gets better and better " +
+      "language models learn patterns from data and generate new text from the patterns they learn").split(/\s+/);
+    // bigram counts
+    const bigrams = {}, unigrams = {};
+    for (let i = 0; i < corpus.length; i++) {
+      unigrams[corpus[i]] = (unigrams[corpus[i]] || 0) + 1;
+      if (i < corpus.length - 1) {
+        const k = corpus[i];
+        bigrams[k] = bigrams[k] || {};
+        bigrams[k][corpus[i + 1]] = (bigrams[k][corpus[i + 1]] || 0) + 1;
+      }
+    }
+    const canvas = document.getElementById("sm-canvas");
+    const CONTEXT = "the";
+    function adjusted(context) {
+      const T = +document.getElementById("sm-t").value;
+      const K = +document.getElementById("sm-k").value;
+      const Pp = +document.getElementById("sm-p").value;
+      const counts = bigrams[context] || unigrams;
+      let items = Object.entries(counts).map(([w, c]) => [w, c]);
+      items.sort((a, b) => b[1] - a[1]);
+      // temperature on log-counts
+      let probs = items.map(([w, c]) => [w, Math.exp(Math.log(c) / T)]);
+      let Z = probs.reduce((s, p) => s + p[1], 0);
+      probs = probs.map(([w, v]) => [w, v / Z]);
+      // top-k / top-p truncation flags
+      let mass = 0;
+      const kept = probs.map(([w, p], i) => {
+        const inK = i < K;
+        const inP = mass < Pp;
+        mass += p;
+        return [w, p, inK && inP];
+      });
+      const zk = kept.filter(k => k[2]).reduce((s, k) => s + k[1], 0);
+      return kept.map(([w, p, ok]) => [w, p, ok, ok ? p / zk : 0]);
+    }
+    function draw() {
+      document.getElementById("sm-t-v").textContent = (+document.getElementById("sm-t").value).toFixed(2);
+      document.getElementById("sm-k-v").textContent = document.getElementById("sm-k").value;
+      document.getElementById("sm-p-v").textContent = (+document.getElementById("sm-p").value).toFixed(2);
+      const dist = adjusted(CONTEXT).slice(0, 14);
+      const pal = CAIE.pal();
+      const W = Math.min(640, canvas.parentNode.clientWidth - 4);
+      const { ctx, w, h } = CAIE.setupCanvas(canvas, W, 210);
+      ctx.clearRect(0, 0, w, h);
+      ctx.font = "600 12px " + CAIE.css("--sans");
+      ctx.fillStyle = pal.ink2;
+      ctx.fillText('next-token distribution after context "…' + CONTEXT + '":', 6, 14);
+      const maxP = Math.max(...dist.map(d => d[3] || d[1]));
+      const bw = Math.min(42, (w - 20) / dist.length);
+      dist.forEach((d, i) => {
+        const p = d[2] ? d[3] : d[1];
+        const bh = (h - 60) * p / Math.max(1e-9, maxP);
+        ctx.fillStyle = d[2] ? pal.s[0] : CAIE.alpha(pal.muted, 0.35);
+        ctx.beginPath(); ctx.roundRect(10 + i * bw, h - 32 - bh, bw - 5, bh, [4, 4, 0, 0]); ctx.fill();
+        ctx.save();
+        ctx.translate(10 + i * bw + bw / 2, h - 24);
+        ctx.rotate(0.5);
+        ctx.fillStyle = d[2] ? pal.ink : pal.muted;
+        ctx.font = "10px " + CAIE.css("--mono"); ctx.textAlign = "left";
+        ctx.fillText(d[0], 0, 0);
+        ctx.restore();
+      });
+    }
+    function generate() {
+      let cur = CONTEXT, out = [cur];
+      for (let i = 0; i < 40; i++) {
+        const dist = adjusted(cur).filter(d => d[2]);
+        let r = Math.random(), pick = dist[dist.length - 1][0];
+        for (const [w2, , , pr] of dist) { r -= pr; if (r <= 0) { pick = w2; break; } }
+        out.push(pick);
+        cur = bigrams[pick] ? pick : "the";
+      }
+      document.getElementById("sm-out").textContent = out.join(" ") + " …";
+    }
+    ["sm-t", "sm-k", "sm-p"].forEach(id => document.getElementById(id).addEventListener("input", draw));
+    document.getElementById("sm-gen").addEventListener("click", generate);
+    CAIE.onTheme(draw); window.addEventListener("resize", draw);
+    draw();
+  })();
+
+  // ---------- PEFT ----------
+  (function () {
+    const canvas = document.getElementById("ft-canvas");
+    function draw() {
+      const logP = +document.getElementById("ft-p").value;
+      const P = Math.pow(10, logP) * 1e9; // 1B..1000B range: slider 0..3 -> 1..1000? use 10^v
+      const Pb = Math.pow(10, logP);
+      document.getElementById("ft-p-v").textContent = Pb.toFixed(1) + "B";
+      const r = +document.getElementById("ft-r").value;
+      document.getElementById("ft-r-v").textContent = r;
+      // rough: LoRA on attn+ffn ~ trainable = 2 * r * d * nMatrices*L ≈ P * (r / d_model) * c; use empirical ~0.1-1%
+      const dModel = 4096 * Math.sqrt(Pb / 7); // rough scaling
+      const loraFrac = Math.min(0.05, 8 * r / dModel * 0.6);
+      const rows = [
+        { name: "full fine-tune", train: P, mem: P * 16, c: 5 },
+        { name: "LoRA (r=" + r + ")", train: P * loraFrac, mem: P * 2 + P * loraFrac * 16, c: 0 },
+        { name: "QLoRA (r=" + r + ", 4-bit base)", train: P * loraFrac, mem: P * 0.55 + P * loraFrac * 16, c: 1 }
+      ];
+      const pal = CAIE.pal();
+      const W = Math.min(640, canvas.parentNode.clientWidth - 4);
+      const { ctx, w, h } = CAIE.setupCanvas(canvas, W, 230);
+      ctx.clearRect(0, 0, w, h);
+      const maxMem = rows[0].mem * 1.05;
+      rows.forEach((row, i) => {
+        const y = 24 + i * 62;
+        ctx.fillStyle = pal.s[row.c];
+        const bw = Math.max(3, (w - 260) * row.mem / maxMem);
+        ctx.beginPath(); ctx.roundRect(180, y, bw, 30, 4); ctx.fill();
+        ctx.fillStyle = pal.ink; ctx.font = "600 12px " + CAIE.css("--sans");
+        ctx.textAlign = "right"; ctx.fillText(row.name, 172, y + 15);
+        ctx.textAlign = "left";
+        ctx.fillText(CAIE.fmt.bytes(row.mem) + " · trainable " + CAIE.fmt.si(row.train), 188 + bw, y + 15);
+        ctx.fillStyle = pal.muted; ctx.font = "10px " + CAIE.css("--sans");
+        ctx.textAlign = "right";
+        ctx.fillText(i === 0 ? "every weight updates" : (100 * row.train / P).toFixed(2) + "% of params update", 172, y + 28);
+      });
+      const gpus80 = Math.ceil(rows[0].mem / (80 * 1024 ** 3));
+      document.getElementById("ft-readout").innerHTML =
+        "full FT needs ≈ <b>" + gpus80 + "× 80GB GPUs</b> (weights+optimizer only — activations extra, see Topic 12)" +
+        "<span>QLoRA total: <b>" + CAIE.fmt.bytes(rows[2].mem) + "</b> → " + (rows[2].mem < 48 * 1024 ** 3 ? "fits one 48 GB workstation card" : Math.ceil(rows[2].mem / (80 * 1024 ** 3)) + "× 80GB") + "</span>";
+    }
+    ["ft-p", "ft-r"].forEach(id => document.getElementById(id).addEventListener("input", draw));
+    CAIE.onTheme(draw); window.addEventListener("resize", draw);
+    draw();
+  })();
+});
+</script>
+</body>
+</html>

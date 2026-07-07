@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CAIE Course — From Physicist to Senior AI Engineer</title>
+<link rel="stylesheet" href="assets/course.css">
+<script defer src="assets/course.js"></script>
+</head>
+<body data-page="home" data-root=".">
+<a class="skip" href="#main">Skip to content</a>
+<header class="topbar">
+  <button id="navToggle" class="iconbtn" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html">CAIE<span>·</span>Course</a>
+  <span class="topbar-title">Chartered AI Engineer — interactive course</span>
+  <button id="themeToggle" class="iconbtn" aria-label="Toggle theme" title="Theme: auto">◐</button>
+</header>
+<nav id="sidebar"></nav>
+
+<main id="main">
+  <div class="hero">
+    <div class="kicker">Chartered AI Engineer · Interactive Study Course</div>
+    <h1>From physicist to senior AI engineer,<br>one interactive concept at a time.</h1>
+    <p class="lead">
+      This course teaches every Learning Outcome Statement in the
+      <a href="CAIE_Syllabus.md">CAIE syllabus</a> — three levels, 22 topics, ~900–1,000 hours —
+      through explanations written for someone with a <strong>bachelor's degree in physics but no
+      computer-science background</strong>. You already know calculus, linear algebra, and statistical
+      mechanics; we lean on that hard. What you don't yet know — software engineering, distributed
+      systems, the entire vocabulary of production ML — we build from zero, with an
+      <em>interactive visualization for almost every core idea</em>.
+    </p>
+
+    <div class="box note">
+      <div class="box-title">How to use this course</div>
+      <ul>
+        <li><strong>Go in order.</strong> Each level assumes the previous one. Inside a level, topics are sequenced so jargon is defined before it's used.</li>
+        <li><strong>Play with every widget.</strong> The interactive demos are not decorations — each one is built around a specific exam-style intuition. Drag the sliders until the behavior stops surprising you.</li>
+        <li><strong>Treat each LOS box as an exam question.</strong> If you can't answer it cold, you haven't learned it. Every topic ends with a self-check quiz.</li>
+        <li><strong>Follow the "Go deeper" links.</strong> Each page cites specific chapters of free textbooks and primary papers. The course is the map; those are the territory.</li>
+        <li><strong>Track progress.</strong> Mark topics complete at the bottom of each page (stored locally in your browser).</li>
+      </ul>
+    </div>
+
+    <div class="box bridge">
+      <div class="box-title">⚛ Why physicists make good AI engineers</div>
+      <p>
+        Machine learning is applied statistical mechanics with a job title. Gradient descent is
+        overdamped motion in a potential; softmax is a Boltzmann distribution; cross-entropy loss is
+        free energy; diffusion models literally run Langevin dynamics in reverse. Throughout the course,
+        boxes like this one map new concepts onto physics you already own. The genuinely new material —
+        and the part that separates seniors from juniors — is the <em>engineering</em>: how real systems
+        are built, shipped, monitored, and kept safe. That's where levels II and III live.
+      </p>
+    </div>
+
+    <div class="box warn">
+      <div class="box-title">Note on equations</div>
+      <p>
+        Math is rendered with KaTeX from a CDN. If you're offline, you'll see raw
+        LaTeX — which, as a physics graduate, you can read anyway. To serve the course locally, run
+        <code>python -m http.server</code> in the repo folder and open
+        <code>http://localhost:8000</code> (opening files directly also works in most browsers).
+      </p>
+    </div>
+  </div>
+
+  <div id="levels"></div>
+
+  <div class="hero">
+    <h2>The path from beginner to senior</h2>
+    <p>
+      The three levels mirror a real career arc. <strong>Level I</strong> is what a strong junior knows:
+      the math, the statistics, the classical models, enough software engineering not to be dangerous.
+      <strong>Level II</strong> is what a mid-level engineer does: build, train, deploy, and debug real
+      systems — transformers, RAG pipelines, distributed training, production monitoring.
+      <strong>Level III</strong> is what makes someone senior: judgment. Scaling-law arithmetic, alignment
+      tradeoffs, agent reliability, inference economics, and the ability to defend — in writing — a
+      decision made under uncertainty, including the decision <em>not</em> to build.
+    </p>
+    <p>
+      Total honest effort: about a thousand hours. There is no shortcut, but there is a well-lit path.
+      Start with <a href="level1/topic-01-mathematical-foundations.html">Topic 1</a>.
+    </p>
+  </div>
+</main>
+
+<script>
+document.addEventListener("caie:ready", () => {
+  const box = document.getElementById("levels");
+  const p = CAIE.progress.all();
+  let html = "";
+  for (const lv of [1, 2, 3]) {
+    const topics = CAIE.COURSE.filter(c => c.level === lv);
+    const done = topics.filter(t => p[t.id]).length;
+    html += '<div class="level-block"><div class="level-head"><h2>' + CAIE.LEVELS[lv].name +
+      '</h2><span class="lmeta">' + CAIE.LEVELS[lv].meta + " · " + done + "/" + topics.length + " topics complete</span></div>" +
+      '<div class="pbar"><i style="width:' + (100 * done / topics.length) + '%"></i></div><div class="cards">';
+    for (const t of topics) {
+      html += '<a class="card" href="' + t.file + '"><div class="cnum"><span>TOPIC ' + t.num +
+        " · " + t.weight + " weight</span>" + (p[t.id] ? '<span class="cdone">✓ done</span>' : "") +
+        '</div><div class="ctitle">' + t.title + '</div><div class="cdesc">' + t.desc + "</div></a>";
+    }
+    html += "</div></div>";
+  }
+  box.innerHTML = html;
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Topic 15 — Responsible AI II · CAIE Course</title>
+<link rel="stylesheet" href="../assets/course.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<script defer src="../assets/course.js"></script>
+</head>
+<body data-page="t15" data-root="..">
+<a class="skip" href="#main">Skip to content</a>
+<header class="topbar">
+  <button id="navToggle" class="iconbtn" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html">CAIE<span>·</span>Course</a>
+  <span class="topbar-title">Level II · Topic 15 · Responsible AI II</span>
+  <button id="themeToggle" class="iconbtn" aria-label="Toggle theme">◐</button>
+</header>
+<nav id="sidebar"></nav>
+
+<main id="main">
+<div class="kicker">Level II · Topic 15 · Exam weight 8%</div>
+<h1>Responsible AI II — Evaluation, Fairness &amp; Interpretability</h1>
+<p class="lead">
+  Level I asked <em>whether</em> a model is fair; Level II asks how you would <em>know</em>, in
+  technical detail. This topic is the toolbox: attribution methods that assign credit to inputs,
+  mechanistic interpretability that reads a model's internals, the adversarial attacks that expose
+  how brittle "accuracy" can be, and the privacy techniques whose guarantees you must be able to
+  state precisely. The unifying theme — and the reason each tool comes with a warning label — is
+  that every one of these methods is an <em>approximation</em>, and using it as if it were ground
+  truth is its own failure mode.
+</p>
+
+<div class="box los">
+  <div class="box-title">Learning outcomes</div>
+  <ul>
+    <li>Apply SHAP and LIME; state their assumptions and limits; read attention analysis skeptically.</li>
+    <li>Describe mechanistic interpretability: features, circuits, probing, superposition.</li>
+    <li>Audit a model for subgroup bias and reason about remediation tradeoffs.</li>
+    <li>Describe adversarial attacks — evasion, poisoning, prompt injection, jailbreaks — and defenses.</li>
+    <li>Explain model cards and datasheets and what belongs in them.</li>
+    <li>Evaluate differential privacy and federated learning by their actual guarantees and costs.</li>
+  </ul>
+</div>
+
+<h2>15.1 Post-hoc attribution — SHAP and LIME</h2>
+<p>
+  A trained model is a function \(f(x)\); attribution asks <em>which inputs drove this particular
+  prediction</em>. Two dominant methods, both model-agnostic (they probe \(f\) from outside):
+</p>
+<p>
+  <strong>LIME</strong> (Local Interpretable Model-agnostic Explanations): to explain one point,
+  sample perturbations around it, label them with \(f\), and fit a simple <em>linear</em> model in
+  that neighborhood, weighted toward the point. The linear coefficients are the explanation. It is
+  a local Taylor expansion by sampling — trustworthy only within the neighborhood, and sensitive to
+  how you sample and how big the neighborhood is.
+</p>
+<p>
+  <strong>SHAP</strong> (SHapley Additive exPlanations) borrows the unique fair credit-allocation
+  from cooperative game theory. Treat features as players and the prediction as a payout; a
+  feature's Shapley value is its average marginal contribution over all orderings of adding
+  features to the "coalition":
+  $$\phi_i = \sum_{S\subseteq F\setminus\{i\}} \frac{|S|!\,(|F|-|S|-1)!}{|F|!}\big[f(S\cup\{i\}) - f(S)\big].$$
+  Its defining property is <strong>local accuracy</strong>: the attributions <em>sum exactly</em>
+  to the prediction minus a baseline, \(f(x) = \phi_0 + \sum_i \phi_i\) — every unit of output is
+  accounted for. The cost is combinatorial (\(2^{|F|}\) coalitions), so practical SHAP uses
+  approximations (KernelSHAP, or exact TreeSHAP for tree ensembles — Topic 4).
+</p>
+<div class="box bridge">
+  <div class="box-title">⚛ Physics bridge</div>
+  <p>
+    The Shapley value is a symmetry-and-conservation argument. Demand four axioms — efficiency
+    (contributions sum to the total, a conservation law), symmetry (identical players get identical
+    credit), null-player (a feature that never changes the output gets zero), and additivity — and
+    a <em>unique</em> allocation is forced, exactly as demanding Lorentz invariance plus a few
+    axioms forces the form of a physical law. The combinatorial average over feature orderings is
+    a sum over microstates; SHAP is the ensemble average of a feature's marginal effect.
+  </p>
+</div>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Interactive — attribution explorer (loan approval)</div>
+    <div class="wsub">A transparent scoring model. Set an applicant, and watch SHAP values decompose the prediction as a waterfall from the population baseline — the bars sum exactly to the score. Compare with a LIME local-linear estimate.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label>Income <input type="range" id="sh-inc" min="20" max="200" step="5" value="70"><span class="val" id="sh-inc-v"></span></label>
+      <label>Credit score <input type="range" id="sh-cs" min="300" max="850" step="10" value="620"><span class="val" id="sh-cs-v"></span></label>
+      <label>Debt-to-income <input type="range" id="sh-dti" min="0" max="0.6" step="0.02" value="0.38"><span class="val" id="sh-dti-v"></span></label>
+      <label>Years employed <input type="range" id="sh-emp" min="0" max="20" step="1" value="3"><span class="val" id="sh-emp-v"></span></label>
+    </div>
+    <canvas id="sh-canvas" width="700" height="260"></canvas>
+    <div class="readout" id="sh-readout"></div>
+    <p class="wcaption">
+      Things to try: (1) The bars always land exactly on the final score — that's SHAP's local
+      accuracy (efficiency axiom), and why it's audit-grade where LIME is only indicative.
+      (2) Push credit score across ~640: its SHAP bar flips from red (pushing toward denial) to
+      blue (toward approval) — attribution is <em>local</em>, so the same feature helps some
+      applicants and hurts others. (3) Watch LIME's estimate track SHAP near typical inputs but
+      drift at the extremes, where the local linear fit breaks — the neighborhood assumption
+      failing in real time.
+    </p>
+  </div>
+</div>
+<p>
+  Both methods share a warning the exam wants stated: an explanation of a biased model is a
+  faithful explanation of a biased model. Attribution tells you <em>what the model did</em>, never
+  whether it <em>should</em> — and a plausible-looking explanation can lull reviewers into trusting
+  a bad model (the "interpretability theater" critique).
+</p>
+
+<h2>15.2 Attention is not explanation; mechanistic interpretability</h2>
+<p>
+  A tempting shortcut for transformers: read the attention weights and call the high-attention
+  tokens the "explanation." Resist it. Attention weights are one factor multiplied by value
+  vectors, competing with residual streams and later layers; you can often <em>change</em> the
+  attention map substantially without changing the prediction, or hold the prediction while
+  permuting attention. Attention is a component of the computation, not a certified account of it —
+  the "Attention is not Explanation" literature is a favorite exam citation.
+</p>
+<p>
+  <strong>Mechanistic interpretability</strong> is the more ambitious program: reverse-engineer the
+  learned algorithm from the weights, as you would decompile a binary. Its vocabulary:
+</p>
+<ul>
+  <li><strong>Features:</strong> directions in activation space that represent human-meaningful
+  concepts ("this text is in French," "the Golden Gate Bridge").</li>
+  <li><strong>Circuits:</strong> connected subgraphs of attention heads and MLP neurons that
+  implement a specific behavior — e.g., <em>induction heads</em>, which copy repeated sequences and
+  underlie much of in-context learning.</li>
+  <li><strong>Probing:</strong> train a small classifier on a layer's activations to test whether a
+  property is linearly present — with the caveat that a probe can succeed because the <em>probe</em>
+  learned the property, not because the model <em>uses</em> it.</li>
+  <li><strong>Superposition:</strong> networks pack more features than they have neurons by encoding
+  them as overlapping directions — which is why single neurons are usually polysemantic (firing for
+  unrelated concepts), and why <em>sparse autoencoders</em> are used to tease the overlapping
+  features apart.</li>
+</ul>
+<div class="box bridge">
+  <div class="box-title">⚛ Physics bridge</div>
+  <p>
+    Superposition is an under-determined basis problem. With \(n\) neurons but \(m \gg n\) sparse
+    features, the network stores them as near-orthogonal directions in an \(n\)-dimensional space —
+    possible only because the features rarely co-activate (sparsity), the same reason compressed
+    sensing recovers a sparse signal from far fewer measurements than dimensions. A sparse
+    autoencoder is the recovery algorithm: find the overcomplete dictionary of directions whose
+    sparse combinations reconstruct the activations — dictionary learning, straight out of signal
+    processing.
+  </p>
+</div>
+
+<h2>15.3 Adversarial machine learning</h2>
+<p>
+  Standard accuracy measures performance on <em>natural</em> inputs. Adversarial ML studies inputs
+  chosen by an <em>adversary</em>, and the gap is alarming. The canonical result: a model with 99%
+  test accuracy can be driven to near-0% by perturbations too small for a human to see. The attack
+  taxonomy by <em>when</em> and <em>how</em> it strikes:
+</p>
+<ul>
+  <li><strong>Evasion</strong> (test-time): perturb an input to flip the prediction.
+  <strong>FGSM</strong> takes one step along the gradient of the loss with respect to the
+  <em>input</em>: \(x' = x + \varepsilon\,\text{sign}(\nabla_x L)\). The genius and the horror is
+  that it moves every pixel by a tiny \(\varepsilon\), and the \(d\) tiny nudges <em>sum</em> in
+  high dimension to a large change in the model's score while barely denting the image.</li>
+  <li><strong>Poisoning</strong> (train-time): inject crafted examples into the training set to
+  install a <em>backdoor</em> (a trigger pattern that forces a chosen output) or degrade accuracy.
+  The supply-chain risk of scraped data and third-party datasets.</li>
+  <li><strong>Prompt injection</strong> (LLM-specific): untrusted content in the model's context
+  (a web page, a retrieved document, an email) carries instructions the model follows as if they
+  were the user's — the confused-deputy problem, and the central security issue of agentic systems
+  (Topic 18). <strong>Jailbreaks</strong> are the adjacent class: prompts that bypass safety
+  training.</li>
+</ul>
+<p>
+  Defenses are partial and costly. <strong>Adversarial training</strong> (train on attacked
+  examples) is the strongest evasion defense and typically <em>lowers clean accuracy</em> — a real
+  robustness/accuracy tradeoff, not a bug. Input sanitization, ensembles, and detection help but are
+  routinely broken by adaptive attacks; <em>gradient masking</em> defenses that merely hide the
+  gradient give false security. For prompt injection the durable pattern is architectural, not a
+  filter: never let untrusted text carry privileges — separate data from instructions, sandbox
+  tools, require confirmation for consequential actions (Topics 18 and 19).
+</p>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Interactive — FGSM: how a tiny nudge flips a classifier</div>
+    <div class="wsub">A linear classifier on a 400-pixel image (two classes). Increase the attack budget ε and watch the perturbation — invisibly small per pixel — accumulate across dimensions until the decision flips, while the image barely changes.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label>Attack budget ε <input type="range" id="fg-eps" min="0" max="0.3" step="0.005" value="0"><span class="val" id="fg-eps-v"></span></label>
+      <label>Dimensions <input type="range" id="fg-d" min="16" max="784" step="16" value="400"><span class="val" id="fg-d-v"></span></label>
+      <button class="btn" id="fg-new">New example</button>
+    </div>
+    <canvas id="fg-canvas" width="700" height="230"></canvas>
+    <div class="readout" id="fg-readout"></div>
+    <p class="wcaption">
+      Things to try: (1) At ε just past the flip point, the two images look identical — that's the
+      whole threat. (2) Slide dimensions from 16 to 784 at fixed ε: the same per-pixel budget flips
+      the label far more easily in high dimension, because the score change grows like ε·d while the
+      visible change per pixel stays ε. Adversarial fragility is largely a high-dimensional
+      phenomenon. (3) The perturbation isn't noise — it's the sign of the gradient, a structured
+      image aimed straight at the decision boundary.
+    </p>
+  </div>
+</div>
+
+<h2>15.4 Privacy — differential privacy and federated learning</h2>
+<p>
+  Models memorize. Membership-inference and extraction attacks can recover whether — and sometimes
+  <em>what</em> — a specific record was in the training set (a direct GDPR problem, Topic 7).
+  <strong>Differential privacy (DP)</strong> is the rigorous defense, and its guarantee is worth
+  stating exactly: a randomized algorithm \(M\) is \((\varepsilon,\delta)\)-DP if for any two
+  datasets differing in one record and any outcome set \(S\),
+  $$P[M(D)\in S] \le e^{\varepsilon}\,P[M(D')\in S] + \delta.$$
+  In words: <em>any one person's presence changes the output distribution by at most a factor
+  \(e^{\varepsilon}\)</em> — so no output can be strong evidence that you were in the data. It is a
+  worst-case, mathematically provable guarantee, not a heuristic. Achieved by adding calibrated
+  noise (Laplace or Gaussian, scaled to the query's <em>sensitivity</em> — how much one record can
+  move it); in deep learning, <strong>DP-SGD</strong> clips per-example gradients and adds Gaussian
+  noise each step. Smaller \(\varepsilon\) = more privacy = more noise = lower accuracy: a dial you
+  set, not a box you check. The <em>composition</em> theorem is the catch that trips people —
+  privacy loss <em>accumulates</em> across queries/epochs, so you spend from a finite budget.
+</p>
+<p>
+  <strong>Federated learning (FL)</strong> answers a different question — <em>data locality</em>,
+  not anonymity. Raw data never leaves the device; each client trains locally and sends only model
+  updates, which a server aggregates (FedAvg). It reduces central data collection, but the updates
+  themselves leak information (gradients can be inverted to reconstruct inputs), so FL is
+  <em>combined</em> with DP and secure aggregation for a real privacy guarantee. The common exam
+  trap: treating FL as automatically private. It is not — it is a data-governance architecture that
+  needs DP bolted on to make a formal claim.
+</p>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Interactive — the differential-privacy dial</div>
+    <div class="wsub">Release a private statistic (mean income of a group) with Laplace noise calibrated to ε. See the privacy–utility tradeoff, and how a change in one person's record hides inside the noise as ε shrinks.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label>Privacy budget ε <input type="range" id="dp-eps" min="0.05" max="5" step="0.05" value="1"><span class="val" id="dp-eps-v"></span></label>
+      <label>Group size n <input type="range" id="dp-n" min="20" max="2000" step="20" value="200"><span class="val" id="dp-n-v"></span></label>
+    </div>
+    <canvas id="dp-canvas" width="700" height="250"></canvas>
+    <div class="readout" id="dp-readout"></div>
+    <p class="wcaption">
+      Things to try: (1) The two curves are the output distributions with and without one specific
+      high earner in the group. At small ε they overlap almost completely — an attacker seeing the
+      release can't tell which world they're in; that indistinguishability <em>is</em> the DP
+      guarantee. (2) Raise ε toward 5: the curves separate and the noise shrinks — accurate release,
+      weak privacy. There is no free lunch. (3) Grow n: the same person moves the true mean less, so
+      the same privacy needs less noise — privacy is cheaper in crowds.
+    </p>
+  </div>
+</div>
+
+<h2>15.5 Documentation as accountability — model cards and datasheets</h2>
+<p>
+  The last defense is written, not computed. <strong>Model cards</strong> (Mitchell et al.)
+  document a model's intended use, out-of-scope uses, training data, and — crucially —
+  <em>disaggregated evaluation</em>: performance broken out by subgroup, so a headline accuracy
+  can't hide a failure on a minority (the audit of §15's opening, made routine). <strong>Datasheets
+  for datasets</strong> (Gebru et al.) do the same upstream: motivation, collection process,
+  consent, known biases, maintenance. Both exist because harms are usually knowable in advance and
+  omitted only for lack of a required place to write them down — the AI analog of a materials safety
+  data sheet. Under emerging regulation (Topic 7's EU AI Act) this documentation is moving from best
+  practice to legal obligation.
+</p>
+
+<div class="box jargon">
+  <div class="box-title">Jargon decoder</div>
+  <dl>
+    <dt>SHAP / Shapley value</dt><dd>Game-theoretic feature attribution; contributions sum exactly to the prediction (local accuracy). TreeSHAP is the exact, fast version for tree models.</dd>
+    <dt>LIME</dt><dd>Local surrogate: fit a linear model on perturbations around one point; indicative, neighborhood-dependent.</dd>
+    <dt>circuit / induction head</dt><dd>A subnetwork implementing a behavior; induction heads copy repeated patterns and drive in-context learning.</dd>
+    <dt>superposition</dt><dd>More features than neurons, stored as overlapping directions; why neurons are polysemantic. Sparse autoencoders disentangle them.</dd>
+    <dt>probing</dt><dd>Training a classifier on activations to test if a property is present — but probe success ≠ model use.</dd>
+    <dt>FGSM / evasion</dt><dd>One-step gradient attack that flips a test-time prediction with an imperceptible perturbation.</dd>
+    <dt>poisoning / backdoor</dt><dd>Corrupting training data to degrade accuracy or install a trigger→target behavior.</dd>
+    <dt>prompt injection</dt><dd>Untrusted context text hijacking an LLM's instructions — the confused-deputy attack of agentic systems.</dd>
+    <dt>(ε,δ)-differential privacy</dt><dd>One record changes the output distribution by at most e^ε (plus slack δ); smaller ε = more noise = more privacy.</dd>
+    <dt>DP-SGD</dt><dd>Differentially private training: clip per-example gradients, add Gaussian noise, track the spent privacy budget.</dd>
+    <dt>federated learning</dt><dd>Train on-device, share updates not data; a locality architecture, private only when combined with DP + secure aggregation.</dd>
+    <dt>model card / datasheet</dt><dd>Standardized documentation of a model's / dataset's intended use, data, and disaggregated performance and limits.</dd>
+  </dl>
+</div>
+
+<h2>Self-check</h2>
+<div class="quiz" data-answer="c">
+  <p class="quiz-q">1. A regulator asks you to prove that your explanation attributes credit consistently and that the attributions fully account for each decision. Between LIME and SHAP:</p>
+  <div class="opts">
+    <button data-opt="a">LIME — it fits an interpretable linear model directly</button>
+    <button data-opt="b">either; they give identical results</button>
+    <button data-opt="c">SHAP — its efficiency axiom guarantees the attributions sum exactly to the prediction minus baseline, and its axioms fix a unique, consistent allocation</button>
+    <button data-opt="d">neither can be used for audits</button>
+  </div>
+  <div class="quiz-exp"><strong>c.</strong> Local accuracy/efficiency is precisely the "fully account for" property; symmetry and consistency are the others. LIME's local linear fit has no such guarantee — its coefficients don't sum to the output and shift with the sampling neighborhood. Both still explain the model, not its correctness.</div>
+</div>
+<div class="quiz" data-answer="b">
+  <p class="quiz-q">2. An engineer says "the model attends 80% to the word 'refund', so that word explains the classification." The correct pushback:</p>
+  <div class="opts">
+    <button data-opt="a">attention should sum to 100%, so the number is wrong</button>
+    <button data-opt="b">attention weights are one factor in a larger computation; you can often alter the attention map without changing the output, so high attention is not a certified explanation</button>
+    <button data-opt="c">only the last layer's attention counts</button>
+    <button data-opt="d">nothing — attention weights are ground-truth explanations</button>
+  </div>
+  <div class="quiz-exp"><strong>b.</strong> The "Attention is not Explanation" result. Attention interacts with value vectors, residual streams, and downstream layers; correlation with importance is weak and manipulable. Use it as a hint, corroborate with attribution or ablation.</div>
+</div>
+<div class="quiz" data-answer="d">
+  <p class="quiz-q">3. Why are imperceptible adversarial perturbations so effective on high-dimensional inputs?</p>
+  <div class="opts">
+    <button data-opt="a">high-dimensional models are always undertrained</button>
+    <button data-opt="b">the perturbation adds visible noise that confuses the model</button>
+    <button data-opt="c">it exploits floating-point rounding errors</button>
+    <button data-opt="d">a per-pixel change bounded by ε changes each of d pixels a little, but the effects sum along the gradient to a score change ~ε·d — large even when ε is invisible</button>
+  </div>
+  <div class="quiz-exp"><strong>d.</strong> FGSM's linear view: the dot product of the weight vector with an ε·sign(gradient) perturbation grows with dimension. The visible change stays ε per pixel while the decision-relevant change scales with d — which the widget lets you watch directly.</div>
+</div>
+<div class="quiz" data-answer="a">
+  <p class="quiz-q">4. A vendor pitches federated learning as making your system "automatically GDPR-compliant because raw data never leaves the user's phone." The accurate assessment:</p>
+  <div class="opts">
+    <button data-opt="a">FL is a data-locality architecture, not a privacy guarantee — model updates can be inverted to reconstruct inputs; a formal claim needs DP and/or secure aggregation on top</button>
+    <button data-opt="b">correct — if data doesn't move, there's no privacy risk</button>
+    <button data-opt="c">FL provides (ε,δ)-differential privacy by construction</button>
+    <button data-opt="d">FL is strictly more private than differential privacy</button>
+  </div>
+  <div class="quiz-exp"><strong>a.</strong> The standard trap. FL reduces central collection but leaks through shared gradients (gradient-inversion attacks reconstruct training images). Differential privacy is the mechanism with the provable bound; FL and DP are complementary, not substitutes.</div>
+</div>
+
+<h2>Go deeper</h2>
+<ul class="resources">
+  <li><a href="https://christophm.github.io/interpretable-ml-book/">Molnar — Interpretable Machine Learning (free online book)</a><div class="rwhat">The reference for §15.1–15.2: SHAP, LIME, permutation importance, with honest limitations chapters. Read the SHAP and LIME sections in full.</div></li>
+  <li><a href="https://transformer-circuits.pub/">Anthropic — Transformer Circuits Thread</a><div class="rwhat">Mechanistic interpretability from the source: induction heads, superposition, "Toy Models of Superposition", and sparse-autoencoder feature extraction.</div></li>
+  <li><a href="https://distill.pub/2020/circuits/">Distill — Circuits (Olah et al.)</a><div class="rwhat">The original vision-model circuits, gorgeously visualized; the clearest on-ramp to features and circuits.</div></li>
+  <li><a href="https://arxiv.org/abs/1902.10186">Jain &amp; Wallace — Attention is not Explanation (2019)</a><div class="rwhat">The experiments behind §15.2's warning; pair with Wiegreffe &amp; Pinter's "Attention is not not Explanation" for the debate.</div></li>
+  <li><a href="https://arxiv.org/abs/1412.6572">Goodfellow et al. — Explaining and Harnessing Adversarial Examples (FGSM, 2014)</a><div class="rwhat">§2–3: the linear explanation of adversarial examples the widget animates. Short and foundational.</div></li>
+  <li><a href="https://www.cis.upenn.edu/~aaroth/Papers/privacybook.pdf">Dwork &amp; Roth — The Algorithmic Foundations of Differential Privacy (free PDF)</a><div class="rwhat">The definitive DP text; Ch. 2–3 for the definition, the Laplace mechanism, and composition — everything behind §15.4.</div></li>
+  <li><a href="https://arxiv.org/abs/1810.03993">Mitchell et al. — Model Cards for Model Reporting (2018)</a><div class="rwhat">The template itself; §3–4 is what a good model card contains. Pair with Gebru et al., "Datasheets for Datasets" (arXiv 1803.09010).</div></li>
+</ul>
+
+<div class="page-footer"></div>
+</main>
+
+<script>
+document.addEventListener("caie:ready", () => {
+  // ================== attribution explorer ==================
+  (function () {
+    const canvas = document.getElementById("sh-canvas");
+    const readout = document.getElementById("sh-readout");
+    // transparent additive-ish model on 4 features; baseline = population mean applicant
+    const BASE = { inc: 70, cs: 620, dti: 0.35, emp: 4 };
+    // contribution of each feature given its value (logit units), designed to be nonlinear
+    function contrib(name, v) {
+      if (name === "inc") return 0.010 * (v - BASE.inc);
+      if (name === "cs") return 0.9 * Math.tanh((v - 640) / 60);
+      if (name === "dti") return -6 * (v - BASE.dti);
+      if (name === "emp") return 0.5 * Math.tanh((v - 2) / 3);
+      return 0;
+    }
+    const base0 = -0.2; // baseline logit
+    function logit(x) { return base0 + contrib("inc", x.inc) + contrib("cs", x.cs) + contrib("dti", x.dti) + contrib("emp", x.emp); }
+    function sigmoid(z) { return 1 / (1 + Math.exp(-z)); }
+    function draw() {
+      const x = {
+        inc: +document.getElementById("sh-inc").value,
+        cs: +document.getElementById("sh-cs").value,
+        dti: +document.getElementById("sh-dti").value,
+        emp: +document.getElementById("sh-emp").value
+      };
+      // Because the model is additive in feature-wise contributions, exact SHAP φ_i = contrib_i(x_i) − E[contrib_i]
+      // baseline expectation of each contrib at BASE value is 0 by construction (contrib(name, BASE)=... not exactly 0) → compute
+      const feats = [
+        ["Income", contrib("inc", x.inc) - contrib("inc", BASE.inc), "$" + x.inc + "k"],
+        ["Credit score", contrib("cs", x.cs) - contrib("cs", BASE.cs), "" + x.cs],
+        ["Debt-to-income", contrib("dti", x.dti) - contrib("dti", BASE.dti), (100 * x.dti).toFixed(0) + "%"],
+        ["Years employed", contrib("emp", x.emp) - contrib("emp", BASE.emp), x.emp + "y"]
+      ];
+      const baseLogit = logit(BASE);
+      const finalLogit = logit(x);
+      const baseP = sigmoid(baseLogit), finalP = sigmoid(finalLogit);
+      const pal = CAIE.pal();
+      const maxW = Math.min(700, canvas.parentNode.clientWidth - 4);
+      const { ctx, w, h } = CAIE.setupCanvas(canvas, maxW, 260);
+      ctx.clearRect(0, 0, w, h);
+      // waterfall in probability space (approx: distribute logit contribs, map cumulatively)
+      const padL = 130, padR = 60, top = 24, rowH = 34;
+      const X = p => padL + p * (w - padL - padR);
+      ctx.font = "600 11px " + CAIE.css("--sans");
+      // baseline marker
+      let cumL = baseLogit;
+      ctx.fillStyle = pal.muted; ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      ctx.fillText("baseline " + (100 * baseP).toFixed(0) + "%", padL - 8, top);
+      ctx.strokeStyle = pal.baseline; ctx.setLineDash([3, 3]);
+      ctx.beginPath(); ctx.moveTo(X(baseP), top + 8); ctx.lineTo(X(baseP), top + 8 + feats.length * rowH); ctx.stroke();
+      ctx.setLineDash([]);
+      let y = top + 8 + rowH / 2;
+      feats.forEach(([name, phi, valStr]) => {
+        const pStart = sigmoid(cumL);
+        cumL += phi;
+        const pEnd = sigmoid(cumL);
+        const x0 = X(Math.min(pStart, pEnd)), x1 = X(Math.max(pStart, pEnd));
+        const up = pEnd >= pStart;
+        ctx.fillStyle = up ? pal.s[0] : pal.s[6];
+        ctx.fillRect(x0, y - 10, Math.max(2, x1 - x0), 20);
+        ctx.fillStyle = pal.ink2; ctx.textAlign = "right"; ctx.textBaseline = "middle";
+        ctx.fillText(name + " = " + valStr, padL - 8, y);
+        ctx.fillStyle = pal.ink; ctx.textAlign = "left";
+        ctx.fillText((phi >= 0 ? "+" : "") + (100 * (pEnd - pStart)).toFixed(1) + "%", x1 + 6, y);
+        y += rowH;
+      });
+      // final marker
+      ctx.strokeStyle = finalP >= 0.5 ? pal.good : pal.critical; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(X(finalP), top + 8); ctx.lineTo(X(finalP), y - rowH / 2 + 12); ctx.stroke();
+      ctx.fillStyle = pal.ink; ctx.textAlign = "center"; ctx.textBaseline = "top";
+      ctx.font = "700 12px " + CAIE.css("--sans");
+      ctx.fillText("score " + (100 * finalP).toFixed(0) + "%", X(finalP), y - rowH / 2 + 14);
+      // LIME estimate: local linear slope × Δfeature, in prob space at current point
+      const g = finalP * (1 - finalP);
+      const limeApprox = feats.reduce((a, [, phi]) => a + phi, 0) * g; // crude local-linear proxy
+      const decision = finalP >= 0.5 ? "APPROVE" : "DENY";
+      readout.innerHTML =
+        "decision: <strong style='color:" + (finalP >= 0.5 ? "var(--good)" : "var(--critical)") + "'>" + decision +
+        "</strong> at " + (100 * finalP).toFixed(1) + "% · SHAP bars sum to exactly " +
+        (100 * (finalP - baseP)).toFixed(1) + "% (final − baseline) — that's local accuracy · " +
+        "LIME's local-linear estimate of the same total: " + (100 * limeApprox).toFixed(1) +
+        "% (tracks SHAP near typical inputs, drifts where the linear fit breaks)";
+    }
+    ["sh-inc", "sh-cs", "sh-dti", "sh-emp"].forEach((id, k) => {
+      const fmts = [v => "$" + v + "k", v => "" + v, v => (100 * v).toFixed(0) + "%", v => v + " yr"];
+      CAIE.bindQuiet(id, draw, fmts[k]);
+    });
+    CAIE.onTheme(draw);
+    window.addEventListener("resize", draw);
+    draw();
+  })();
+
+  // ================== FGSM ==================
+  (function () {
+    const canvas = document.getElementById("fg-canvas");
+    const readout = document.getElementById("fg-readout");
+    let seed = 3;
+    function build(d) {
+      const rand = CAIE.rng(seed);
+      const side = Math.round(Math.sqrt(d));
+      const dd = side * side;
+      // weight vector w (the classifier), unit-ish; image x in [0,1]
+      const w = [], x = [];
+      for (let i = 0; i < dd; i++) { w.push(CAIE.gauss(rand)); x.push(0.35 + 0.3 * rand()); }
+      // normalize w
+      const wn = Math.hypot(...w);
+      for (let i = 0; i < dd; i++) w[i] /= wn;
+      // set bias so clean margin is modest positive (class +1)
+      let dot = 0; for (let i = 0; i < dd; i++) dot += w[i] * x[i];
+      const b = -dot + 0.12 * Math.sqrt(dd) / Math.sqrt(dd); // small positive margin
+      return { side, dd, w, x, b: -dot + 0.15 };
+    }
+    let M = build(400);
+    function draw() {
+      const eps = +document.getElementById("fg-eps").value;
+      const { side, dd, w, x, b } = M;
+      // FGSM: x' = clip(x + eps*sign(grad)). For score s=w·x+b, loss to reduce class +1 → move along -w?
+      // We want to flip +1 to -1: perturb to decrease score → delta = -eps*sign(w)
+      const adv = new Array(dd);
+      for (let i = 0; i < dd; i++) adv[i] = Math.min(1, Math.max(0, x[i] - eps * Math.sign(w[i])));
+      let sClean = b, sAdv = b;
+      for (let i = 0; i < dd; i++) { sClean += w[i] * x[i]; sAdv += w[i] * adv[i]; }
+      const pal = CAIE.pal();
+      const maxW = Math.min(700, canvas.parentNode.clientWidth - 4);
+      const { ctx, w: W, h: H } = CAIE.setupCanvas(canvas, maxW, 230);
+      ctx.clearRect(0, 0, W, H);
+      const panel = Math.min(150, (W - 60) / 3);
+      const px = panel / side;
+      const labels = ["original", "perturbation ×5", "adversarial"];
+      const imgs = [
+        i => x[i],
+        i => 0.5 - 2.5 * eps * Math.sign(w[i]),
+        i => adv[i]
+      ];
+      const gap = (W - 3 * panel) / 4;
+      for (let p = 0; p < 3; p++) {
+        const ox = gap + p * (panel + gap), oy = 20;
+        for (let i = 0; i < dd; i++) {
+          const r = Math.floor(i / side), c = i % side;
+          const v = Math.min(1, Math.max(0, imgs[p](i)));
+          const g = Math.round(255 * v);
+          ctx.fillStyle = "rgb(" + g + "," + g + "," + g + ")";
+          ctx.fillRect(ox + c * px, oy + r * px, Math.ceil(px), Math.ceil(px));
+        }
+        ctx.strokeStyle = pal.baseline; ctx.strokeRect(ox, oy, panel, panel);
+        ctx.fillStyle = pal.ink2; ctx.font = "600 11px " + CAIE.css("--sans");
+        ctx.textAlign = "center"; ctx.textBaseline = "top";
+        ctx.fillText(labels[p], ox + panel / 2, oy + panel + 6);
+      }
+      const flipped = (sClean > 0) !== (sAdv > 0);
+      // find flip epsilon: score crosses 0 when eps*sum|w| = sClean → eps* = sClean / sum|w|
+      let sumAbs = 0; for (let i = 0; i < dd; i++) sumAbs += Math.abs(w[i]);
+      const epsFlip = sClean / sumAbs;
+      const l2 = eps * Math.sqrt(dd); // rough perturbation L2
+      readout.innerHTML =
+        "clean score <strong>" + sClean.toFixed(2) + "</strong> (class " + (sClean > 0 ? "+1" : "−1") +
+        ") → adversarial score <strong>" + sAdv.toFixed(2) + "</strong> (class " + (sAdv > 0 ? "+1" : "−1") + ") · " +
+        (flipped ? '<strong style="color:var(--critical)">MISCLASSIFIED</strong>' : "still correct") +
+        " · flips at ε ≈ <strong>" + epsFlip.toFixed(3) + "</strong> · max per-pixel change: " + eps.toFixed(3) +
+        " (perturbation shown ×5 for visibility)";
+    }
+    document.getElementById("fg-new").addEventListener("click", () => { seed = (seed * 7 + 13) % 9973; M = build(M.dd); draw(); });
+    CAIE.bindQuiet("fg-eps", draw, v => v.toFixed(3));
+    CAIE.bindQuiet("fg-d", v => { const side = Math.round(Math.sqrt(v)); M = build(side * side); draw(); }, v => { const s = Math.round(Math.sqrt(v)); return s * s + " px"; });
+    CAIE.onTheme(draw);
+    window.addEventListener("resize", draw);
+    draw();
+  })();
+
+  // ================== differential privacy dial ==================
+  (function () {
+    const canvas = document.getElementById("dp-canvas");
+    const readout = document.getElementById("dp-readout");
+    function draw() {
+      const eps = +document.getElementById("dp-eps").value;
+      const n = +document.getElementById("dp-n").value;
+      // mean income query, incomes in [0, 200] → sensitivity of mean = range/n = 200/n
+      const range = 200;
+      const sens = range / n;
+      const bLap = sens / eps; // Laplace scale
+      const trueMean = 62;
+      // one high earner ($195k) presence shifts mean by (195 - meanWithout)/n ≈
+      const shift = (195 - trueMean) / n;
+      const meanWith = trueMean, meanWithout = trueMean - shift;
+      const pal = CAIE.pal();
+      const maxW = Math.min(700, canvas.parentNode.clientWidth - 4);
+      const span = Math.max(6 * bLap, shift * 4, 4);
+      const lo = trueMean - span, hi = trueMean + span;
+      const P = CAIE.plot(canvas, { w: maxW, h: 250, xmin: lo, xmax: hi, ymin: 0, ymax: 1.08 });
+      P.clear();
+      P.axes("released mean income ($k)", "density (scaled)", { xticks: 6, xfmt: v => v.toFixed(0), yticks: 4, yfmt: v => v.toFixed(1) });
+      const lap = (x, mu) => Math.exp(-Math.abs(x - mu) / bLap);
+      const c1 = [], c2 = [];
+      for (let i = 0; i <= 200; i++) {
+        const x = lo + (hi - lo) * i / 200;
+        c1.push([x, lap(x, meanWith)]);
+        c2.push([x, lap(x, meanWithout)]);
+      }
+      P.line(c1, pal.s[0], 2.5);
+      P.line(c2, pal.s[6], 2.5);
+      P.label(hi - (hi - lo) * 0.02, 1.0, "with high earner", pal.s[0], "right");
+      P.label(hi - (hi - lo) * 0.02, 0.88, "without", pal.s[6], "right");
+      // overlap coefficient of two Laplace(same scale): exp(-|Δ|/2b)
+      const overlap = Math.exp(-Math.abs(shift) / (2 * bLap));
+      const rmse = Math.SQRT2 * bLap; // std of Laplace = sqrt(2)*b
+      readout.innerHTML =
+        "ε = <strong>" + eps.toFixed(2) + "</strong>, n = <strong>" + n + "</strong> · noise scale b = " +
+        bLap.toFixed(2) + " ($k), typical error ±" + rmse.toFixed(2) + "k · distribution overlap with/without the one record: <strong>" +
+        (100 * overlap).toFixed(0) + "%</strong> — " +
+        (overlap > 0.7 ? "the record is well hidden (strong privacy)" :
+         overlap > 0.35 ? "partially distinguishable" :
+         "<strong style='color:var(--critical)'>the two worlds are easily told apart — weak privacy at this ε</strong>");
+    }
+    CAIE.bindQuiet("dp-eps", draw, v => v.toFixed(2));
+    CAIE.bindQuiet("dp-n", draw, v => v);
+    CAIE.onTheme(draw);
+    window.addEventListener("resize", draw);
+    draw();
+  })();
+});
+</script>
+</body>
+</html>

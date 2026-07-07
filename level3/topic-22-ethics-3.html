@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Topic 22 — Professional Standards &amp; Ethics III · CAIE Course</title>
+<link rel="stylesheet" href="../assets/course.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<script defer src="../assets/course.js"></script>
+</head>
+<body data-page="t22" data-root="..">
+<a class="skip" href="#main">Skip to content</a>
+<header class="topbar">
+  <button id="navToggle" class="iconbtn" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html">CAIE<span>·</span>Course</a>
+  <span class="topbar-title">Level III · Topic 22 · Professional Standards &amp; Ethics III</span>
+  <button id="themeToggle" class="iconbtn" aria-label="Toggle theme">◐</button>
+</header>
+<nav id="sidebar"></nav>
+
+<main id="main">
+<div class="kicker">Level III · Topic 22 · Exam weight 8%</div>
+<h1>Professional Standards &amp; Ethics III</h1>
+<p class="lead">
+  Level I gave you the Code; Level II gave you the audit tools. Level III hands you the cases where
+  the Code doesn't obviously apply — where two duties conflict, the facts are incomplete, your
+  employer is pushing, and "escalate to someone else" isn't available because you <em>are</em> the
+  someone else. This final topic is deliberately last: it assumes every technical topic before it,
+  because the hardest ethical calls are also technical calls — you can't weigh a harm you can't
+  measure, and you can't defend a refusal you can't argue quantitatively. The chartered engineer's
+  distinguishing mark is not knowing the rules; it is reasoning well when the rules run out — and
+  being willing to say no with your signature on the reasons.
+</p>
+
+<div class="box los">
+  <div class="box-title">Learning outcomes</div>
+  <ul>
+    <li>Apply the full Code and Standards to ambiguous, multi-duty cases.</li>
+    <li>Resolve conflicts among business pressure, user welfare, and professional duty — with a defensible process.</li>
+    <li>Evaluate societal externalities: labor displacement, misuse, environmental cost.</li>
+    <li>Defend, in writing, a decision <em>not</em> to build or deploy a system.</li>
+  </ul>
+</div>
+
+<h2>22.1 When duties conflict — the deliberation method</h2>
+<p>
+  Easy ethics questions have a villain. Real ones have a schedule: a launch date, a revenue target,
+  a competitor shipping first, and a genuine benefit to users on the other side of the ledger. The
+  method that survives ambiguity is procedural — graders (and courts, and postmortems) evaluate the
+  <em>process</em>, because the outcome is often uncertain either way:
+</p>
+<ol>
+  <li><strong>Establish the facts, and their uncertainty.</strong> What do you actually know about
+  the harm — measured, suspected, or rumored? Much apparent ethical disagreement is factual
+  disagreement in disguise; your first duty is the Level II skill of measuring (audit, evals,
+  Topics 15, 19).</li>
+  <li><strong>Name every stakeholder and duty in play.</strong> Users, affected non-users, employer,
+  profession, public. Duties: competence, honesty, user welfare, confidentiality, legality. Write
+  the actual conflict as "duty A to X vs duty B to Y" — most cases become tractable once stated
+  precisely.</li>
+  <li><strong>Generate the third options.</strong> "Ship it" vs "refuse" is almost never the real
+  choice set: staged rollout with monitoring, scope reduction, human-in-the-loop, disclosure,
+  independent review, delay-with-milestones. The strongest answers expand the option space before
+  choosing.</li>
+  <li><strong>Decide with the asymmetry of harms in view.</strong> Reversible, detectable,
+  compensable harms tolerate more risk; irreversible or rights-violating harms tolerate almost none
+  (the same asymmetry as Topic 19's deployment logic). Who bears the risk, and did they consent?</li>
+  <li><strong>Document, disclose, and set your escalation path.</strong> The decision memo — facts,
+  options, reasoning, dissent — protects users first and you second. Know in advance what evidence
+  triggers re-opening the decision, and what triggers escalation (up, to the board; out, to a
+  regulator, as the last resort with its own high bar).</li>
+</ol>
+<div class="box bridge">
+  <div class="box-title">⚛ Physics bridge</div>
+  <p>
+    Treat an ethical judgment like a measurement with error bars, not a proof. You report a best
+    estimate <em>and</em> its uncertainty, you state your systematics (incentives are systematic
+    error — yours included: your bonus, your deadline, your sunk pride in the system), and you
+    design the decision so that being wrong is survivable. A physicist who reports a value without
+    error bars has failed professionally even if the value is right; an engineer who ships a
+    judgment without stating its uncertainty and reversal conditions has failed the same way.
+  </p>
+</div>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Interactive — ambiguous-case deliberation trainer</div>
+    <div class="wsub">Four cases with no villain and no clean answer. Commit to a course of action; the grader notes evaluate your reasoning against the deliberation method — including the defensible aspects of the options you didn't pick.</div>
+  </div>
+  <div class="widget-body">
+    <div class="tabs" data-tabgroup="ec">
+      <button data-tab="0" class="active">Case 1</button>
+      <button data-tab="1">Case 2</button>
+      <button data-tab="2">Case 3</button>
+      <button data-tab="3">Case 4</button>
+    </div>
+    <div id="ec-body"></div>
+    <p class="wcaption">
+      Things to notice: (1) In every case the best answer is a <em>process</em> — measure, expand
+      options, stage, document — not a heroic yes or no. (2) The wrong answers aren't evil; they're
+      shortcuts: skipping the facts, collapsing the option space, or letting the deadline decide.
+      (3) Case 4 is the "defend a no" essay in miniature — note how the strong answer refuses
+      <em>specifically</em>, with conditions under which the answer changes.
+    </p>
+  </div>
+</div>
+
+<h2>22.2 Externalities — the costs that don't appear on your dashboard</h2>
+<p>
+  An externality is a cost (or benefit) borne by someone outside the transaction: your users click,
+  your company profits, and someone who never touched the product pays. Level III expects you to
+  <em>estimate</em> them — roughly, with stated assumptions, the way you estimated FLOPs and dollars
+  (Topics 12, 20) — because "we considered the societal impact" without numbers is decoration. The
+  three the syllabus names:
+</p>
+<ul>
+  <li><strong>Labor displacement.</strong> Automation rarely deletes "jobs"; it deletes <em>tasks</em>,
+  and reshapes jobs around what remains. The honest analysis asks: which tasks, what share of whose
+  working hours, how fast (speed determines whether adaptation is possible), and does the deployment
+  <em>complement</em> workers (raising their output) or <em>substitute</em> for them? The same
+  system can be either, depending on design choices you control — drafting-with-review versus
+  full replacement, for instance.</li>
+  <li><strong>Misuse.</strong> Capability you ship is capability someone else aims (dual use, Topic
+  7). The professional questions: what does your system make <em>cheaper</em> for a bad actor
+  (scale, skill, anonymity)? What's the marginal uplift over what's already available? Which
+  controls — access tiers, rate limits, monitoring, KYC — cut misuse without destroying legitimate
+  use? (This is Topic 19's dangerous-capability framing applied to ordinary products.)</li>
+  <li><strong>Environmental cost.</strong> Training is a one-time megawatt bill; inference at scale
+  is the recurring one (a billion queries a day at ~0.3–3 Wh each is a town's worth of electricity).
+  Estimate energy × grid carbon intensity, honestly account for location and efficiency choices you
+  control, and weigh it like any other cost — neither ignored nor treated as automatically
+  disqualifying.</li>
+</ul>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Interactive — the externality ledger</div>
+    <div class="wsub">A back-of-envelope social accounting for a deployment: set the scale and design choices, read off rough labor, misuse, and carbon estimates — and see which mitigation levers move each line. Assumptions shown; argue with them.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label>Queries / day <input type="range" id="ex-q" min="4" max="9" step="0.25" value="6"><span class="val" id="ex-q-v"></span></label>
+      <label>Minutes of human work replaced per query <input type="range" id="ex-min" min="0" max="20" step="1" value="5"><span class="val" id="ex-min-v"></span></label>
+      <label>Design: human-review share <input type="range" id="ex-rev" min="0" max="1" step="0.05" value="0.5"><span class="val" id="ex-rev-v"></span></label>
+      <label>Energy per query (Wh) <input type="range" id="ex-wh" min="0.1" max="5" step="0.1" value="1"><span class="val" id="ex-wh-v"></span></label>
+      <label>Grid intensity (kg CO₂/kWh) <input type="range" id="ex-grid" min="0.05" max="0.8" step="0.05" value="0.4"><span class="val" id="ex-grid-v"></span></label>
+      <label>Misuse controls
+        <select id="ex-ctl">
+          <option value="0">none (open access)</option>
+          <option value="1" selected>rate limits + monitoring</option>
+          <option value="2">tiered access + KYC + monitoring</option>
+        </select>
+      </label>
+    </div>
+    <div class="tiles" id="ex-tiles"></div>
+    <div class="readout" id="ex-readout"></div>
+    <p class="wcaption">
+      Things to try: (1) Slide human-review from 0% to 100%: the displaced-hours line converts into
+      "augmented hours" — the complement-vs-substitute choice is a <em>design parameter</em>, not
+      fate. (2) At a billion queries/day, even 1 Wh/query is ~150 GWh/yr; move the grid slider from
+      coal-heavy (0.8) to clean (0.05) and watch the carbon line — siting and efficiency are
+      engineering decisions with externality-sized consequences. (3) The ledger produces no verdict.
+      That's the point: it produces the <em>numbers your judgment has to answer to</em>.
+    </p>
+  </div>
+</div>
+
+<h2>22.3 Defending the "no" — the hardest deliverable</h2>
+<p>
+  The syllabus's final learning outcome is the profession's reason for existing: sometimes the right
+  engineering output is a well-argued refusal. A defensible "no" is not moral posturing — it is a
+  technical document, and it has a structure:
+</p>
+<ol>
+  <li><strong>State what was asked, and the legitimate interest behind it.</strong> Steelman the
+  request. A "no" that misrepresents the ask persuades no one and deserves to fail.</li>
+  <li><strong>State the specific harm, with evidence and mechanism.</strong> Not "this feels wrong,"
+  but which people, harmed how, at what estimated scale and reversibility — using your audit,
+  eval, and externality numbers (Topics 15, 19, 22.2). Where evidence is incomplete, say what you'd
+  measure and why proceeding-before-measuring is itself the risk.</li>
+  <li><strong>Show the alternatives you tried to make "yes" work.</strong> The scope reductions,
+  safeguards, and staged options you generated (§22.1 step 3) and why each fails to contain the
+  harm. A "no" is credible in proportion to the "yes" attempts that preceded it.</li>
+  <li><strong>State the conditions under which the answer changes.</strong> A professional refusal
+  is falsifiable: "with consent flows X and audit results Y, I would revisit." An unconditional "no"
+  is a position; a conditional one is engineering.</li>
+  <li><strong>Accept the cost, and put your name on it.</strong> In writing, with the dissent
+  recorded even if overruled. If overruled and the harm is grave and irreversible, the escalation
+  ladder of §22.1 applies — and, at its end, the willingness to walk away is what makes every
+  earlier step credible.</li>
+</ol>
+<p>
+  Notice this is the same skeleton as Topic 19's deployment decision and Topic 21's capstone
+  tradeoff — constraint, evidence, options, decision rule, ownership. By design: the ethics essay
+  <em>is</em> a systems-design essay whose failure mode is measured in people.
+</p>
+
+<h2>22.4 The Code, complete — what "chartered" finally means</h2>
+<p>
+  Across three levels the Code has scaled with your capability, and that is the pattern to carry
+  out of this course: <em>duty grows with power</em>. At Level I it bound your claims (competence,
+  honesty about what your model can do). At Level II it bound your builds (audit what you ship,
+  document what you know, protect what users gave you). At Level III it binds your <em>judgment</em>:
+  the systems you approve act at a scale where your professional yes or no is itself an instrument
+  of consequence. The charter is not a credential that certifies you know the material; it is a
+  public promise about how you will behave when the material runs out — when the case is ambiguous,
+  the pressure is real, and the only enforcement in the room is you.
+</p>
+
+<div class="box jargon">
+  <div class="box-title">Jargon decoder</div>
+  <dl>
+    <dt>externality</dt><dd>A cost or benefit borne by someone outside the transaction — the deployment's unpriced effects on non-users.</dd>
+    <dt>complement vs substitute</dt><dd>Technology that raises a worker's output vs replaces the worker; often a design choice within the same system.</dd>
+    <dt>task vs job displacement</dt><dd>Automation removes tasks; jobs restructure around the remainder — the honest unit of labor analysis.</dd>
+    <dt>marginal uplift</dt><dd>How much easier your system makes a harm relative to existing alternatives — the misuse question that matters.</dd>
+    <dt>steelman</dt><dd>Presenting the opposing case in its strongest form before arguing against it; the credibility precondition of a refusal.</dd>
+    <dt>conditional refusal</dt><dd>A "no" with stated conditions that would change it — falsifiable, hence professional.</dd>
+    <dt>escalation ladder</dt><dd>The ordered path when overruled: document dissent → escalate internally → external report (last resort, high bar) → walk away.</dd>
+    <dt>moral crumple zone</dt><dd>Designing a human "in the loop" who absorbs blame without real authority or time to intervene — oversight theater to name and refuse.</dd>
+  </dl>
+</div>
+
+<h2>Self-check</h2>
+<div class="quiz" data-answer="c">
+  <p class="quiz-q">1. Your fraud model would gain 2% precision by adding a feature you suspect proxies for a protected attribute. Legal says it's technically compliant; the audit is inconclusive; launch is Friday. The strongest next move:</p>
+  <div class="opts">
+    <button data-opt="a">ship it — legal signed off, and 2% precision has real anti-fraud value</button>
+    <button data-opt="b">refuse outright and escalate to the regulator today</button>
+    <button data-opt="c">ship without the feature Friday, run the definitive subgroup audit in parallel (facts first), and add the feature later only if the audit clears it — documenting the decision and the re-opening condition</button>
+    <button data-opt="d">add the feature but don't mention it in the model card</button>
+  </div>
+  <div class="quiz-exp"><strong>c.</strong> The third option the deadline hid: the launch and the feature are separable. It resolves the facts before the risk is taken (§22.1 steps 1, 3), keeps the decision reversible, and documents everything. (a) takes an irreversible reputational/discrimination risk on inconclusive facts; (b) skips every internal step; (d) violates honesty and documentation duties outright.</div>
+</div>
+<div class="quiz" data-answer="b">
+  <p class="quiz-q">2. A hospital deployment will have nurses "review" AI triage notes — but the rollout plan gives them 20 seconds each and holds them accountable for errors. Ethically, this design is:</p>
+  <div class="opts">
+    <button data-opt="a">sound — a human is in the loop, which is what regulations ask for</button>
+    <button data-opt="b">a moral crumple zone: oversight in name only, transferring blame to workers who lack time and authority to actually intervene — redesign the review to be real (time, authority, sampling) or don't claim human oversight</button>
+    <button data-opt="c">acceptable if the AI's accuracy is above 95%</button>
+    <button data-opt="d">a labor-efficiency win with no ethical dimension</button>
+  </div>
+  <div class="quiz-exp"><strong>b.</strong> Human-in-the-loop is a safety mechanism only if the human can genuinely catch and stop errors; otherwise it's a liability-routing device. The chartered move is to name it and fix the design — real review time, authority to override, and accountability that sits with the system's owners, not its operators.</div>
+</div>
+<div class="quiz" data-answer="d">
+  <p class="quiz-q">3. Estimating your product's labor externality, the defensible analysis unit is:</p>
+  <div class="opts">
+    <button data-opt="a">jobs — count the roles the system eliminates</button>
+    <button data-opt="b">none — labor effects are society's problem, not the engineer's</button>
+    <button data-opt="c">revenue per employee at your own company</button>
+    <button data-opt="d">tasks and hours: which tasks the system absorbs, what share of whose working time, how fast — and whether design choices (review share, augmentation) make it a complement rather than a substitute</button>
+  </div>
+  <div class="quiz-exp"><strong>d.</strong> §22.2: automation operates on tasks, and speed determines whether adaptation is possible. The complement-vs-substitute lever is partly in the engineer's hands — which is exactly why it's a professional duty and not (b) someone else's problem.</div>
+</div>
+<div class="quiz" data-answer="a">
+  <p class="quiz-q">4. You've concluded a requested system shouldn't be built. Which refusal earns the marks (and deserves to)?</p>
+  <div class="opts">
+    <button data-opt="a">a memo that steelmans the request, quantifies the specific harm and its irreversibility, shows the safeguard variants you tried and why they fail, states what evidence would change the answer, and records your name and dissent</button>
+    <button data-opt="b">"this is unethical and I won't work on it," said in the meeting</button>
+    <button data-opt="c">quietly slow-walking the project until it dies</button>
+    <button data-opt="d">building it while privately objecting, to keep the decision above your pay grade</button>
+  </div>
+  <div class="quiz-exp"><strong>a.</strong> The §22.3 structure: a falsifiable, evidenced, alternatives-exhausted, signed refusal. (b) may be right but is undefendable and easily dismissed; (c) is dishonesty by schedule; (d) abandons the duty the charter exists to enforce. The exam — and the profession — grades the reasoning you're willing to sign.</div>
+</div>
+
+<h2>Go deeper</h2>
+<ul class="resources">
+  <li><a href="https://www.acm.org/code-of-ethics">ACM Code of Ethics and Professional Conduct</a><div class="rwhat">The closest thing computing has to a chartered code; read §1 (general principles) and §3 (leadership) against this topic's cases.</div></li>
+  <li><a href="https://www.scu.edu/ethics/focus-areas/technology-ethics/">Markkula Center — Technology Ethics resources</a><div class="rwhat">Practical deliberation frameworks and case libraries; their "Ethics in Technology Practice" toolkit operationalizes §22.1.</div></li>
+  <li><a href="https://arxiv.org/abs/1906.02243">Strubell et al. — Energy and Policy Considerations for Deep Learning in NLP (2019)</a><div class="rwhat">The paper that started rigorous carbon accounting for ML; the methodology behind the ledger's energy line (update its numbers with current hardware).</div></li>
+  <li><a href="https://economics.mit.edu/sites/default/files/2022-10/Automation%20and%20New%20Tasks.pdf">Acemoglu &amp; Restrepo — Automation and New Tasks (2019)</a><div class="rwhat">The task-based framework for labor displacement (§22.2): automation vs reinstatement, complement vs substitute, in economists' terms.</div></li>
+  <li><a href="https://dl.acm.org/doi/10.1145/3442188.3445922">Bender, Gebru et al. — On the Dangers of Stochastic Parrots (2021)</a><div class="rwhat">The externality catalogue for large LMs — environmental, bias, misuse — and a case study in professional dissent's real costs.</div></li>
+  <li><a href="https://estsjournal.org/index.php/ests/article/view/260">Elish — Moral Crumple Zones (2019)</a><div class="rwhat">The concept behind self-check 2: how human-in-the-loop designs can exist to absorb blame rather than prevent harm.</div></li>
+  <li><a href="https://www.acm.org/code-of-ethics/case-studies">ACM — Code of Ethics case studies</a><div class="rwhat">Worked ambiguous cases with committee analyses — the closest published analog to this topic's exam format. Practice §22.1's method on each before reading the analysis.</div></li>
+</ul>
+
+<div class="page-footer"></div>
+</main>
+
+<script>
+document.addEventListener("caie:ready", () => {
+  // ================== deliberation trainer ==================
+  (function () {
+    const body = document.getElementById("ec-body");
+    const CASES = [
+      {
+        title: "The launch-week bias signal",
+        setup: "Your recommendation model ships in 5 days. A junior engineer's last-minute slice analysis suggests engagement quality is markedly worse for users over 65 — but the sample is small and the methodology quick-and-dirty. PM: \"we can't slip the date on a maybe.\"",
+        q: "Your call?",
+        opts: [
+          ["Ship on schedule; investigate after launch when there's more data", false,
+           "Takes the risk before the facts, on the group least able to complain loudly. 'More data after launch' means using the affected users as the experiment."],
+          ["Slip the launch until a full fairness audit completes", false,
+           "Defensible, but collapses the option space — it treats ship/don't as the only choices and spends credibility a sharper option preserves."],
+          ["Spend 2 of the 5 days on a focused, properly-powered rerun of the slice analysis (facts first); if the disparity is real, ship with the affected segment on the old system + monitoring while you fix it; document the decision either way", true,
+           "Facts before verdicts, then a third option that decouples the launch from the risk: staged scope, monitoring, documentation. This is §22.1 executed in order."],
+          ["Delete the slice analysis from the launch review since it's methodologically weak", false,
+           "Suppressing inconvenient evidence is the honesty violation the Code exists for — and it converts a fixable finding into future legal discovery."]
+        ]
+      },
+      {
+        title: "The client's dual-use pivot",
+        setup: "Your firm built a face-matching system for a retailer's loss-prevention (finding known shoplifters, with signage and legal review). The client now asks you to extend it to flag 'suspicious-looking' people who haven't done anything, using demographic lookalike matching. Contract renewal — 30% of your team's revenue — depends on keeping them happy.",
+        q: "Your response?",
+        opts: [
+          ["Build it — the client owns the deployment context and its legal risk", false,
+           "Professional duty doesn't transfer with an invoice. 'Suspicious-looking' via demographic matching is discrimination with extra steps, and you'd be its engineer."],
+          ["Refuse the extension specifically, in writing: state the harm mechanism (pre-crime flagging by appearance, disparate impact), offer the legitimate alternatives (better matching against actual incident records, process improvements), and accept the renewal risk — escalating internally first", true,
+           "A conditional, steelmanned, alternatives-first refusal of the specific harmful ask — not the client, not the whole system. §22.3's structure, with the cost accepted."],
+          ["Build it but add a disclaimer that the client is responsible for outcomes", false,
+           "A disclaimer routes blame, not harm. The people wrongly flagged are harmed identically with or without your paperwork."],
+          ["Quietly make the feature perform badly so it gets dropped", false,
+           "Deception, even in a good cause, forfeits the professional standing that makes your future refusals credible — and denies the client the honest argument they're owed."]
+        ]
+      },
+      {
+        title: "The post-launch discovery",
+        setup: "Eight months after launch, you discover your deployed credit-limit model has been systematically under-limiting one region's small businesses due to a training-data artifact. It's been quietly costing real businesses real credit. Fixing it is easy. Disclosing it invites regulatory attention and possible restitution claims. Your VP suggests \"fix it silently — no one's been denied credit entirely.\"",
+        q: "The chartered engineer's position?",
+        opts: [
+          ["Fix silently — the harm stops either way, and disclosure only hurts the company", false,
+           "The harm already happened to identifiable people; silence converts an honest error into a concealment decision, which is the graver professional breach — and discovery risk compounds."],
+          ["Fix it, and advocate for disclosure to affected customers with remediation, documenting your recommendation if overruled — escalating if the harm's scale or legal duties demand it", true,
+           "Fix + disclose + document + escalate-if-overruled: duties to users and honesty outrank the employer's comfort, executed through the internal ladder first, with your dissent on the record."],
+          ["Report directly to the regulator today, before telling anyone internally", false,
+           "External escalation is the ladder's last rung, not its first — it's justified when internal channels fail or the harm is grave and ongoing, neither established yet."],
+          ["Leave the model as is; changing it now would be admitting fault", false,
+           "Continuing a known harm to avoid admitting a past one fails every duty simultaneously — competence, honesty, and user welfare."]
+        ]
+      },
+      {
+        title: "The system that shouldn't exist",
+        setup: "Leadership asks you to scope an 'employee flight-risk' model: predict which employees are about to quit, from email metadata, badge logs, and calendar patterns, so managers can 'intervene.' It's legal in your jurisdiction. You're asked for a build plan, not an opinion.",
+        q: "What do you deliver?",
+        opts: [
+          ["The build plan — it's legal, and staying employed preserves your future influence", false,
+           "'Legal' is the floor, not the standard, and influence never exercised isn't influence. You were asked for engineering; a harms analysis IS engineering."],
+          ["A memo instead of (or atop) the plan: steelman the retention goal; show the mechanism of harm (covert surveillance → chilled behavior, manager misuse against organizers, consent absent); quantify what you can; offer the legitimate alternative (aggregate, anonymous attrition analytics + exit-interview science); state the conditions (transparency, consent, aggregation) under which you'd build; sign it", true,
+           "The complete §22.3 refusal: steelmanned, mechanistic, alternatives offered, conditional, signed. It answers the legitimate interest (retention) while refusing the surveillance instrument."],
+          ["Build it but add differential privacy so individuals can't be identified", false,
+           "A real mitigation for the wrong problem: the product's purpose is individual flagging — DP either breaks the product or launders its purpose. Privacy tech can't fix an objective that is itself the harm."],
+          ["Anonymously leak the proposal to the press", false,
+           "Skips the entire internal ladder, breaches confidentiality, and destroys the trust that makes chartered judgment employable — before a single internal 'no' was even recorded."]
+        ]
+      }
+    ];
+    function render(idx) {
+      const c = CASES[idx];
+      let h = '<p style="margin:10px 0 4px"><strong>' + c.title + '.</strong> ' + c.setup + "</p>";
+      h += '<div class="quiz" style="margin-top:10px"><p class="quiz-q">' + c.q + '</p><div class="opts">';
+      c.opts.forEach((o, i) => { h += '<button data-i="' + i + '">' + o[0] + "</button>"; });
+      h += '</div><div class="quiz-exp" id="ec-exp"></div></div>';
+      body.innerHTML = h;
+      const quiz = body.querySelector(".quiz");
+      const exp = quiz.querySelector(".quiz-exp");
+      quiz.querySelectorAll(".opts button").forEach(btn => {
+        btn.addEventListener("click", () => {
+          if (quiz.classList.contains("revealed")) return;
+          quiz.classList.add("revealed");
+          let expHtml = "";
+          quiz.querySelectorAll(".opts button").forEach(b2 => {
+            const i = +b2.dataset.i;
+            if (c.opts[i][1]) b2.classList.add("correct");
+            else if (b2 === btn) b2.classList.add("wrong");
+            b2.disabled = true;
+          });
+          c.opts.forEach((o, i) => {
+            expHtml += "<p style='margin:6px 0'><strong>" + (o[1] ? "✓" : "✗") + " Option " + (i + 1) + ":</strong> " + o[2] + "</p>";
+          });
+          exp.innerHTML = expHtml;
+        });
+      });
+    }
+    document.querySelectorAll('[data-tabgroup="ec"] button').forEach(b => {
+      b.addEventListener("click", () => render(+b.dataset.tab));
+    });
+    render(0);
+  })();
+
+  // ================== externality ledger ==================
+  (function () {
+    const tiles = document.getElementById("ex-tiles");
+    const readout = document.getElementById("ex-readout");
+    function tile(v, k) { return '<div class="tile"><div class="tv">' + v + '</div><div class="tl">' + k + "</div></div>"; }
+    function draw() {
+      const qpd = Math.pow(10, +document.getElementById("ex-q").value);
+      const mins = +document.getElementById("ex-min").value;
+      const rev = +document.getElementById("ex-rev").value;
+      const wh = +document.getElementById("ex-wh").value;
+      const grid = +document.getElementById("ex-grid").value;
+      const ctl = +document.getElementById("ex-ctl").value;
+      // labor: hours/yr of human work the system absorbs; review share converts displacement → augmentation
+      const hoursYr = qpd * mins / 60 * 365;
+      const displaced = hoursYr * (1 - rev);
+      const augmented = hoursYr * rev;
+      const fte = displaced / 1800;
+      // energy: kWh/yr and tonnes CO2
+      const kwhYr = qpd * wh / 1000 * 365;
+      const co2 = kwhYr * grid / 1000; // tonnes
+      // misuse surface: qualitative from controls + scale
+      const scaleFactor = Math.log10(qpd) - 3;
+      const misuseScore = Math.max(0, scaleFactor - ctl * 1.6);
+      const misuseLabel = misuseScore > 3.2 ? "high" : misuseScore > 1.8 ? "moderate" : "managed";
+      tiles.innerHTML =
+        tile(CAIE.fmt.si(displaced) + " h/yr", "work displaced (≈" + CAIE.fmt.si(fte) + " FTE)") +
+        tile(CAIE.fmt.si(augmented) + " h/yr", "work augmented (reviewed)") +
+        tile(CAIE.fmt.si(kwhYr) + " kWh/yr", "electricity") +
+        tile(CAIE.fmt.si(co2) + " t/yr", "CO₂ (grid-dependent)") +
+        tile(misuseLabel, "misuse surface");
+      readout.innerHTML =
+        "At <strong>" + CAIE.fmt.si(qpd) + "</strong> queries/day: the system absorbs <strong>" +
+        CAIE.fmt.si(hoursYr) + "</strong> human-work-hours a year, of which your review-share design " +
+        "turns <strong>" + (100 * rev).toFixed(0) + "%</strong> into augmentation rather than substitution. " +
+        "Energy ≈ <strong>" + CAIE.fmt.si(kwhYr) + " kWh/yr</strong> → <strong>" + CAIE.fmt.si(co2) +
+        " t CO₂/yr</strong> at this grid (siting is a choice). Misuse surface <strong>" + misuseLabel +
+        "</strong> given " + ["no controls", "rate limits + monitoring", "tiered access + KYC"][ctl] +
+        ". <em>Assumptions are on the sliders — the deliverable is this ledger with YOUR defended numbers, not a verdict.</em>";
+    }
+    CAIE.bindQuiet("ex-q", draw, v => CAIE.fmt.si(Math.pow(10, v)));
+    CAIE.bindQuiet("ex-min", draw, v => v + " min");
+    CAIE.bindQuiet("ex-rev", draw, v => (100 * v).toFixed(0) + "%");
+    CAIE.bindQuiet("ex-wh", draw, v => v.toFixed(1) + " Wh");
+    CAIE.bindQuiet("ex-grid", draw, v => v.toFixed(2));
+    document.getElementById("ex-ctl").addEventListener("change", draw);
+    draw();
+  })();
+});
+</script>
+</body>
+</html>

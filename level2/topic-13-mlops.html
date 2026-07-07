@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Topic 13 — MLOps &amp; Production Engineering · CAIE Course</title>
+<link rel="stylesheet" href="../assets/course.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<script defer src="../assets/course.js"></script>
+</head>
+<body data-page="t13" data-root="..">
+<a class="skip" href="#main">Skip to content</a>
+<header class="topbar">
+  <button id="navToggle" class="iconbtn" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html">CAIE<span>·</span>Course</a>
+  <span class="topbar-title">Level II · Topic 13 · MLOps &amp; Production Engineering</span>
+  <button id="themeToggle" class="iconbtn" aria-label="Toggle theme">◐</button>
+</header>
+<nav id="sidebar"></nav>
+
+<main id="main">
+<div class="kicker">Level II · Topic 13 · Exam weight 14%</div>
+<h1>MLOps &amp; Production Engineering</h1>
+<p class="lead">
+  A model in a notebook is a claim; a model in production is a promise. This topic is about keeping
+  that promise after the data shifts, the traffic spikes, and someone deploys a new tokenizer on a
+  Friday. The famous finding of Google's "Hidden Technical Debt" paper: the ML code is a small
+  black box in the middle of a sprawling system of pipelines, configuration, serving, and
+  monitoring — and the system, not the model, is where careers are made and incidents happen. The
+  exam tests this topic with vignettes: dashboards full of signals, and you diagnosing.
+</p>
+
+<div class="box los">
+  <div class="box-title">Learning outcomes</div>
+  <ul>
+    <li>Describe the ML lifecycle and diagnose training–serving skew.</li>
+    <li>Design CI/CD for models: tests, validation gates, registries, lineage, automated retraining.</li>
+    <li>Compare serving patterns (batch / real-time / streaming) and reason about the latency–throughput tradeoff.</li>
+    <li>Explain inference optimization: quantization, pruning, distillation, compilation.</li>
+    <li>Distinguish data drift, concept drift, and data-quality failures; design monitoring for each.</li>
+    <li>Compare shadow, canary, and A/B deployments; diagnose production incidents from signals.</li>
+  </ul>
+</div>
+
+<h2>13.1 The lifecycle, CI/CD, and the registry</h2>
+<p>
+  The ML lifecycle is a loop, not a line: <em>data → features → training → validation → deployment
+  → monitoring → (new data) → retraining</em>. Everything in this topic exists because the loop
+  never terminates — the world that generated your training data keeps moving after you ship.
+</p>
+<p>
+  <strong>Training–serving skew</strong> is the classic first failure: offline metrics are great,
+  online behavior is bad, and the cause is that the serving path computes features differently
+  from the training path. Typical culprits: a feature re-implemented in another language for
+  latency; a "last 30 days" aggregate that quietly used <em>future</em> data during training
+  (leakage — Topic 4); a library version bump that changes tokenization. The cures are
+  structural, not heroic: share one feature-computation code path (a feature store — Topic 6),
+  log the <em>serving-time</em> feature values and train on those logs, and pin every version.
+</p>
+<p>
+  <strong>CI/CD for models</strong> extends software CI/CD with two new test families. Alongside
+  unit tests you add <em>data tests</em> (schema, ranges, null rates, distribution checks on every
+  incoming batch) and <em>model tests</em> (quality on a golden holdout, slice metrics — Topic 7,
+  behavioral invariance checks, latency budget). The load-bearing component is the
+  <strong>validation gate</strong>: a candidate model is promoted only if it beats the incumbent
+  on held-out and slice metrics, and never automatically otherwise — including candidates produced
+  by <em>automated retraining</em> (on a schedule, or triggered by the drift monitors of §13.4).
+  A pipeline that retrains automatically but promotes through a gate is "MLOps level 2" in
+  Google's maturity model; a notebook and a prayer is level 0.
+</p>
+<p>
+  The <strong>model registry</strong> is the system of record: every model version with its
+  <strong>lineage</strong> — training-data snapshot/hash, code commit, hyperparameters, metrics,
+  and current stage (staging → production → archived). Lineage is what makes rollback trivial and
+  audits possible ("which data trained the model that made this decision?" — a regulatory
+  question, Topic 7 and Topic 20). Think of it as the lab notebook requirement: a result you
+  cannot reproduce is not a result, and a model you cannot trace is not deployable.
+</p>
+
+<h2>13.2 Serving — patterns and the latency–throughput tradeoff</h2>
+<p>
+  Three serving patterns, chosen by <em>when predictions are needed</em>:
+</p>
+<ul>
+  <li><strong>Batch:</strong> score everything on a schedule (nightly churn scores, weekly
+  recommendations), store results in a database, serve lookups. Cheapest, simplest, hardware fully
+  utilized; predictions can be stale by up to one period.</li>
+  <li><strong>Real-time (online):</strong> a request arrives, the model answers within a latency
+  SLO (tens of ms typically). Needed when the input only exists at request time (a search query,
+  a fraud check on this transaction). All the hard problems of this topic live here.</li>
+  <li><strong>Streaming:</strong> predictions ride an event stream (Kafka et al.) — fresher than
+  batch without request/response coupling; natural for pipelines of events (clickstreams, sensor
+  feeds).</li>
+</ul>
+<p>
+  Real-time serving lives on one tension: GPUs are throughput machines that love big batches, but
+  users wait one request at a time. <strong>Dynamic batching</strong> is the standard resolution —
+  the server holds arriving requests for up to a few milliseconds, groups them, and runs one
+  batched forward pass. Batch size raises throughput (the fixed kernel-launch and memory-movement
+  overhead amortizes) and raises latency (requests wait for the batch, then for a longer forward).
+  Every serving stack (Triton, TorchServe, vLLM) is tuned around this dial.
+</p>
+<div class="box bridge">
+  <div class="box-title">⚛ Physics bridge</div>
+  <p>
+    A serving system near capacity is a system near a critical point. In queueing theory the wait
+    scales like \(\rho/(1-\rho)\) where \(\rho\) = load/capacity — the same divergence you know
+    from critical slowing down: susceptibility blowing up as the control parameter approaches the
+    transition. The practical law: <em>tail latency diverges long before utilization reaches
+    100%</em>. Operators leave headroom (ρ ≈ 0.6–0.8) for exactly the reason you never run a
+    magnet at its quench current. Watch the hockey stick form in the widget.
+  </p>
+</div>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Interactive — dynamic batching &amp; the latency hockey stick</div>
+    <div class="wsub">A simulated GPU server: forward pass costs 6 ms + 1.2 ms per request in the batch. Requests arrive at random (Poisson). The curve shows p99 latency vs offered load for your batching config; the dashed line is theoretical capacity.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label>Arrival rate <input type="range" id="bt-lam" min="20" max="600" step="20" value="200"><span class="val" id="bt-lam-v"></span></label>
+      <label>Max batch size <input type="range" id="bt-b" min="0" max="5" step="1" value="3"><span class="val" id="bt-b-v"></span></label>
+      <label>Max wait <input type="range" id="bt-w" min="0" max="20" step="1" value="5"><span class="val" id="bt-w-v"></span></label>
+    </div>
+    <div class="tiles" id="bt-tiles"></div>
+    <canvas id="bt-canvas" width="760" height="260"></canvas>
+    <div class="readout" id="bt-readout"></div>
+    <p class="wcaption">
+      Things to try: (1) Batch size 1: capacity ≈ 1000/(6+1.2) ≈ 139 req/s — push arrivals past it
+      and p99 explodes; the system is <em>unstable</em>, queue growing without bound. (2) Raise max
+      batch to 8: capacity jumps ~4× because the 6 ms overhead is shared — for a few ms of added
+      latency at low load. That asymmetry is why batching is nearly free lunch. (3) Note p99 bends
+      upward well before the dashed capacity line — the critical-slowing-down region where retries
+      and timeouts start cascading. Production runs left of the bend, not left of the line.
+    </p>
+  </div>
+</div>
+
+<h2>13.3 Making inference cheap — quantization, pruning, distillation, compilation</h2>
+<p>
+  Training optimizes for learning; serving optimizes for cost and latency. Four standard
+  compressions, usually composed:
+</p>
+<div class="tablewrap"><table>
+  <thead><tr><th>Technique</th><th>What it does</th><th>Typical win</th><th>Cost / risk</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Quantization</strong></td><td>Store/compute weights (and maybe activations) in INT8/INT4 instead of FP16</td><td>2–4× memory &amp; throughput</td><td>Accuracy loss if done naively; outlier channels in LLMs need care</td></tr>
+    <tr><td><strong>Pruning</strong></td><td>Remove weights (unstructured) or whole neurons/heads (structured)</td><td>Sparsity 50–90%; real speedup only if structured or hardware-sparse</td><td>Accuracy cliff past a threshold; retraining usually required</td></tr>
+    <tr><td><strong>Distillation</strong></td><td>Train a small student to match a big teacher's output distribution (soft labels)</td><td>Order-of-magnitude smaller model at modest quality loss</td><td>A full training job; student inherits teacher's blind spots</td></tr>
+    <tr><td><strong>Compilation</strong></td><td>Fuse kernels, optimize the graph for target hardware (ONNX Runtime, TensorRT, torch.compile)</td><td>1.5–3× latency, no accuracy change</td><td>Engineering time; operator-coverage gaps</td></tr>
+  </tbody>
+</table></div>
+<p>
+  Quantization has two grades: <strong>post-training quantization (PTQ)</strong> — take the trained
+  model, measure activation ranges on a few hundred <em>calibration</em> examples, pick scale
+  factors, done in minutes; and <strong>quantization-aware training (QAT)</strong> — simulate the
+  rounding during fine-tuning so the weights learn to live with it. PTQ first; QAT when PTQ's
+  accuracy drop is unacceptable. The mechanics rhyme with Topic 12's precision story: quantizing
+  is choosing per-tensor (or per-channel) units so values fill the integer range — gain-staging
+  again, now at 8 bits. Distillation's soft labels work because the teacher's full distribution
+  ("this 7 looks 20% like a 1") carries more information per example than the hard label — the
+  dark knowledge argument of Hinton et al.
+</p>
+
+<h2>13.4 Monitoring — drift, label lag, and the metrics pyramid</h2>
+<p>
+  Production monitoring is layered, cheapest and fastest signals first:
+  <strong>system</strong> metrics (latency, error rate, saturation — seconds to detect),
+  <strong>data</strong> metrics (schema violations, null rates, per-feature distribution distance —
+  minutes), <strong>model</strong> metrics (prediction and confidence distributions — hours), and
+  <strong>business</strong> metrics (the thing you actually care about — often days, because of
+  <strong>label lag</strong>: you learn whether the loan defaulted months after you scored it).
+  The art is using the fast layers as proxies for the slow ones.
+</p>
+<p>
+  The drift taxonomy the exam expects — for input \(x\) and target \(y\):
+</p>
+<ul>
+  <li><strong>Data (covariate) drift:</strong> \(P(x)\) changes, \(P(y\mid x)\) doesn't. New user
+  demographics, a new device type. Detectable <em>without labels</em> by comparing feature
+  distributions.</li>
+  <li><strong>Concept drift:</strong> \(P(y \mid x)\) changes — the world's rule changed. Fraudsters
+  adapt, consumer taste shifts. <em>Invisible to input monitoring</em>; only labeled outcomes
+  reveal it, after the lag.</li>
+  <li><strong>Data-quality failure:</strong> not drift at all — a pipeline broke (nulls, unit
+  change, stuck sensor). The most common in practice, the most sudden, and the most fixable.</li>
+</ul>
+<p>
+  The workhorse distance is <strong>PSI</strong> (population stability index): bin the reference
+  (training) distribution, bin the live window, and compute
+  \(\sum_i (p_i - q_i)\ln(p_i/q_i)\) — a symmetrized KL divergence (Topic 2). Rules of thumb:
+  &lt; 0.1 stable, 0.1–0.25 watch, &gt; 0.25 investigate. Alternatives: Kolmogorov–Smirnov per
+  feature, classifier two-sample tests. Alert on <em>per-feature</em> PSI, not one global score —
+  localization is half the diagnosis.
+</p>
+<div class="box bridge">
+  <div class="box-title">⚛ Physics bridge</div>
+  <p>
+    This is detector calibration drift. The training distribution is your reference spectrum; PSI
+    compares today's spectrum against it, channel by channel — and a pipeline break looks exactly
+    like a dead channel: a spike concentrated in one bin, instantly recognizable. Concept drift is
+    nastier: the detector reads perfectly but the <em>physics changed</em> — no internal check can
+    catch it; you need ground truth, and ground truth arrives with the delay of offline
+    reconstruction. That's label lag.
+  </p>
+</div>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Interactive — drift monitor simulator</div>
+    <div class="wsub">300 days of production. Top: per-feature PSI against the training reference, with your alert threshold. Bottom: true model accuracy (thin) vs what your dashboard shows (thick) — delayed by label lag. Inject a failure and see which alarm fires first.</div>
+  </div>
+  <div class="widget-body">
+    <div class="tabs" data-tabgroup="dr">
+      <button data-tab="ok" class="active">Healthy</button>
+      <button data-tab="cov">Covariate drift (gradual)</button>
+      <button data-tab="con">Concept drift (sudden)</button>
+      <button data-tab="brk">Pipeline break</button>
+    </div>
+    <div class="controls">
+      <label>Label lag <input type="range" id="dr-lag" min="0" max="45" step="5" value="15"><span class="val" id="dr-lag-v"></span></label>
+      <label>PSI alert threshold <input type="range" id="dr-th" min="0.05" max="0.6" step="0.05" value="0.2"><span class="val" id="dr-th-v"></span></label>
+    </div>
+    <canvas id="dr-psi" width="760" height="170"></canvas>
+    <canvas id="dr-acc" width="760" height="180"></canvas>
+    <div class="readout" id="dr-readout"></div>
+    <p class="wcaption">
+      Things to try: (1) Covariate drift: PSI climbs as the feature distribution slides — the input
+      monitor fires days before any label arrives. This is why unlabeled monitoring exists.
+      (2) Concept drift: PSI stays flat <em>forever</em> — inputs never changed — while true
+      accuracy has already fallen; your dashboard finds out one label-lag later. Slide the lag to
+      45 days and feel the exposure. (3) Pipeline break: PSI leaps in a day (one bin swallows the
+      null-imputed values). Fast, loud, and the reason data tests run on every batch.
+    </p>
+  </div>
+</div>
+
+<h2>13.5 Progressive delivery — shadow, canary, A/B</h2>
+<p>
+  Never swap 100% of traffic to a new model. The standard ladder:
+</p>
+<ul>
+  <li><strong>Shadow (dark launch):</strong> the new model receives a copy of live traffic; its
+  answers are logged and <em>discarded</em>. Zero user risk. Validates latency, error rate, and
+  output distributions on real inputs — but can't measure anything requiring user reaction.</li>
+  <li><strong>Canary:</strong> route a small slice (1–10%) of real users to the new model, watch
+  <em>guardrail metrics</em> (errors, latency, complaint rate, prediction sanity), and auto-rollback
+  on breach. Catches what shadow can't: real feedback, real load interactions.</li>
+  <li><strong>A/B test:</strong> a controlled experiment (Topic 2's hypothesis testing, alive and
+  billing you): randomize users into arms, run to a pre-registered sample size, compare the
+  <em>business</em> metric. The only rung that answers "is the new model actually better for
+  users?" — noisier and slower than offline eval, and the final word.</li>
+</ul>
+<p>
+  The three answer different questions — <em>does it run</em> (shadow), <em>does it break anyone</em>
+  (canary), <em>does it win</em> (A/B) — and mature teams run all three in sequence. Rollback must
+  be one command, which is what the registry's version pinning bought you.
+</p>
+
+<h2>13.6 Incident triage — reading the dashboard</h2>
+<p>
+  The exam's favorite format for this topic: here are six signals, what broke? The method is
+  correlation-and-elimination: <em>what moved together, what stayed flat, and what changed at that
+  timestamp</em> (deploys are the prime suspect — check the deploy log first). Latency moving
+  without error/drift points at infrastructure; quality moving without latency points at data or
+  concept; everything moving at a timestamp points at a deploy. Practice below.
+</p>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Interactive — incident triage trainer</div>
+    <div class="wsub">Four real-world-shaped incidents. Read the dashboard, form a hypothesis, commit to a diagnosis. The explanation shows the reasoning chain a senior engineer would run.</div>
+  </div>
+  <div class="widget-body">
+    <div class="tabs" data-tabgroup="tr">
+      <button data-tab="0" class="active">Case 1</button>
+      <button data-tab="1">Case 2</button>
+      <button data-tab="2">Case 3</button>
+      <button data-tab="3">Case 4</button>
+    </div>
+    <div id="tr-body"></div>
+  </div>
+</div>
+
+<div class="box jargon">
+  <div class="box-title">Jargon decoder</div>
+  <dl>
+    <dt>training–serving skew</dt><dd>The serving path computes features/preprocessing differently from the training path; offline metrics stop predicting online behavior.</dd>
+    <dt>validation gate</dt><dd>Automated promotion criterion: candidate beats incumbent on holdout + slices + latency, or it doesn't ship.</dd>
+    <dt>model registry / lineage</dt><dd>Versioned catalog of models with their data hash, code commit, params, metrics, and stage — the audit trail and the rollback lever.</dd>
+    <dt>PSI</dt><dd>Population stability index — symmetrized-KL distance between training and live feature distributions; &gt;0.25 ≈ investigate.</dd>
+    <dt>label lag</dt><dd>Delay between a prediction and learning its true outcome; the blind window during which only proxy metrics exist.</dd>
+    <dt>shadow / canary</dt><dd>New model sees mirrored traffic, answers discarded / new model serves a small % of real users behind guardrail metrics.</dd>
+    <dt>PTQ / QAT</dt><dd>Post-training quantization (calibrate, convert) vs quantization-aware training (learn with simulated rounding).</dd>
+    <dt>dynamic batching</dt><dd>Serving trick: hold requests a few ms to batch them through the GPU; trades a little latency for a lot of throughput.</dd>
+    <dt>ONNX / TensorRT</dt><dd>A portable model-graph format / NVIDIA's compiler that fuses and optimizes it for specific GPUs.</dd>
+    <dt>guardrail metric</dt><dd>A metric a rollout must not damage (latency, errors, complaints) — monitored with auto-rollback during canary.</dd>
+  </dl>
+</div>
+
+<h2>Self-check</h2>
+<div class="quiz" data-answer="c">
+  <p class="quiz-q">1. A weekly automated retraining pipeline produces a candidate that scores worse than the production model on the golden holdout. A correctly designed system will:</p>
+  <div class="opts">
+    <button data-opt="a">deploy it anyway — fresher data always wins</button>
+    <button data-opt="b">page the on-call engineer to decide manually every week</button>
+    <button data-opt="c">block promotion at the validation gate, keep the incumbent serving, log the failure for investigation</button>
+    <button data-opt="d">average the two models' weights</button>
+  </div>
+  <div class="quiz-exp"><strong>c.</strong> Automation retrains; gates promote. A worse-than-incumbent candidate shipping automatically is the signature failure of "level 2 pipeline, level 0 governance." Repeated gate failures are themselves a signal — often upstream data drift.</div>
+</div>
+<div class="quiz" data-answer="b">
+  <p class="quiz-q">2. A fraud model's precision decays over three months. Per-feature PSI: all &lt; 0.08. Latency and error rates: flat. Most likely:</p>
+  <div class="opts">
+    <button data-opt="a">covariate drift — the inputs have shifted</button>
+    <button data-opt="b">concept drift — fraudsters changed tactics, so P(y|x) moved while P(x) didn't; only labeled outcomes can catch it</button>
+    <button data-opt="c">a data-quality failure in the feature pipeline</button>
+    <button data-opt="d">the monitoring system is broken</button>
+  </div>
+  <div class="quiz-exp"><strong>b.</strong> Flat PSI rules out (a) and (c) — those move input distributions. Adversarial domains are concept-drift machines: the opponents' whole job is changing P(y|x) while staying inside normal-looking P(x). Defense: short retraining cadence and fast label collection.</div>
+</div>
+<div class="quiz" data-answer="d">
+  <p class="quiz-q">3. Product wants personalized "weekly picks" emails, sent Mondays, for 40M users. The right serving pattern:</p>
+  <div class="opts">
+    <button data-opt="a">real-time GPU service with autoscaling for the Monday spike</button>
+    <button data-opt="b">streaming inference over the click event stream</button>
+    <button data-opt="c">an LLM agent that composes each email on demand</button>
+    <button data-opt="d">batch: score all users over the weekend on cheap capacity, store results, mail-merge Monday</button>
+  </div>
+  <div class="quiz-exp"><strong>d.</strong> Predictions are needed at a known time, inputs exist in advance, staleness of hours is irrelevant — the definition of a batch workload. Choosing real-time here burns 10–100× the cost for zero user benefit. Pattern-matching workload to serving mode is a straight exam points.</div>
+</div>
+<div class="quiz" data-answer="a">
+  <p class="quiz-q">4. INT8 post-training quantization drops your model's accuracy 4 points — too much. Reasonable next steps, in order:</p>
+  <div class="opts">
+    <button data-opt="a">better calibration data and per-channel scales; if still bad, quantization-aware training; if still bad, keep sensitive layers in FP16</button>
+    <button data-opt="b">abandon quantization — it never works for this architecture</button>
+    <button data-opt="c">quantize to INT4 instead, since more compression amortizes the loss</button>
+    <button data-opt="d">retrain the model from scratch at INT8 precision only</button>
+  </div>
+  <div class="quiz-exp"><strong>a.</strong> The escalation ladder: PTQ's failure is usually scale granularity (outlier channels — common in LLMs), fixed per-channel or by mixed-precision fallback for the worst layers; QAT is the heavier hammer. (c) increases the error; (b) and (d) are overreactions.</div>
+</div>
+
+<h2>Go deeper</h2>
+<ul class="resources">
+  <li><a href="https://papers.nips.cc/paper_files/paper/2015/hash/86df7dcfd896fcaf2674f757a2463eba-Abstract.html">Sculley et al. — Hidden Technical Debt in Machine Learning Systems (NeurIPS 2015)</a><div class="rwhat">The founding document of MLOps: boundary erosion, pipeline jungles, undeclared consumers. Ten pages, read all of them.</div></li>
+  <li><a href="https://research.google/pubs/the-ml-test-score-a-rubric-for-ml-production-readiness-and-technical-debt-reduction/">Breck et al. — The ML Test Score (Google)</a><div class="rwhat">28 concrete tests for production readiness — data, model, infra, monitoring. Use it as a checklist on your own project.</div></li>
+  <li><a href="https://huyenchip.com/2022/02/07/data-distribution-shifts-and-monitoring.html">Chip Huyen — Data Distribution Shifts and Monitoring (free chapter-length post)</a><div class="rwhat">The drift taxonomy of §13.4 in depth; her book <em>Designing Machine Learning Systems</em> (O'Reilly 2022), Ch. 7–9, is the best single text for this topic.</div></li>
+  <li><a href="https://cloud.google.com/architecture/mlops-continuous-delivery-and-automation-pipelines-in-machine-learning">Google Cloud — MLOps: Continuous delivery and automation pipelines</a><div class="rwhat">The MLOps maturity levels (0/1/2) and the reference pipeline diagram behind §13.1.</div></li>
+  <li><a href="https://www.evidentlyai.com/ml-in-production/data-drift">Evidently AI — data drift guides</a><div class="rwhat">Practical PSI/KS/drift-detection walkthroughs with an open-source tool you can run on the widget's scenarios for real.</div></li>
+  <li><a href="https://madewithml.com/">Made With ML (free course)</a><div class="rwhat">End-to-end MLOps with actual code — testing, serving, CI/CD, monitoring; the lab companion to this page.</div></li>
+  <li><a href="https://arxiv.org/abs/1503.02531">Hinton et al. — Distilling the Knowledge in a Neural Network (2015)</a><div class="rwhat">§1–2 for dark knowledge and soft-label temperature; the origin of distillation.</div></li>
+</ul>
+
+<div class="page-footer"></div>
+</main>
+
+<script>
+document.addEventListener("caie:ready", () => {
+  // ================== dynamic batching simulator ==================
+  (function () {
+    const canvas = document.getElementById("bt-canvas");
+    const tiles = document.getElementById("bt-tiles");
+    const readout = document.getElementById("bt-readout");
+    const A = 6, C = 1.2; // ms overhead, ms per request
+
+    function simulate(lam, B, W, durMs, seed) {
+      const rand = CAIE.rng(seed);
+      const arr = [];
+      let t = 0;
+      for (;;) {
+        t += -Math.log(1 - rand()) * 1000 / lam;
+        if (t > durMs) break;
+        arr.push(t);
+      }
+      if (!arr.length) return null;
+      const lat = [];
+      let free = 0, i = 0, busy = 0, lastEnd = 0;
+      while (i < arr.length) {
+        const first = Math.max(arr[i], free);
+        let start = first + W;
+        if (i + B - 1 < arr.length) start = Math.min(start, Math.max(free, arr[i + B - 1]));
+        start = Math.max(start, first);
+        let n = 0;
+        while (i + n < arr.length && arr[i + n] <= start && n < B) n++;
+        if (n === 0) { n = 1; start = Math.max(arr[i], free); }
+        const dur = A + C * n, end = start + dur;
+        for (let k = 0; k < n; k++) lat.push(end - arr[i + k]);
+        busy += dur; free = end; lastEnd = end; i += n;
+      }
+      lat.sort((x, y) => x - y);
+      const q = p => lat[Math.min(lat.length - 1, Math.floor(p * lat.length))];
+      return { p50: q(0.5), p99: q(0.99), thr: lat.length / (lastEnd / 1000), util: busy / lastEnd };
+    }
+
+    function tile(v, k) {
+      return '<div class="tile"><div class="tv">' + v + '</div><div class="tl">' + k + "</div></div>";
+    }
+    function ms(v) { return v >= 1000 ? (v / 1000).toFixed(1) + " s" : v.toFixed(1) + " ms"; }
+
+    function draw() {
+      const lam = +document.getElementById("bt-lam").value;
+      const B = Math.pow(2, +document.getElementById("bt-b").value);
+      const W = +document.getElementById("bt-w").value;
+      const cap = 1000 * B / (A + C * B);
+      const cur = simulate(lam, B, W, 20000, 11);
+      const unstable = lam > cap * 0.98;
+      tiles.innerHTML =
+        tile(ms(cur.p50), "p50 latency") +
+        tile(ms(cur.p99), "p99 latency") +
+        tile(cur.thr.toFixed(0) + "/s", "throughput") +
+        tile((100 * cur.util).toFixed(0) + "%", "GPU busy");
+      readout.innerHTML =
+        "capacity at batch " + B + ": <strong>" + cap.toFixed(0) + " req/s</strong> · load ρ = <strong>" +
+        (lam / cap).toFixed(2) + "</strong>" +
+        (unstable ? " — <strong>overloaded:</strong> the queue grows without bound; p99 is limited only by the simulation length"
+                  : lam / cap > 0.8 ? " — in the danger zone: tail latency is diverging" : " — stable");
+      // p99 vs offered load curve
+      const pal = CAIE.pal();
+      const maxW = Math.min(760, canvas.parentNode.clientWidth - 4);
+      const pts = [];
+      let ymaxv = 2;
+      for (let l = 25; l <= 600; l += 25) {
+        const s = simulate(l, B, W, 8000, 7);
+        const y = Math.log10(Math.max(s.p99, 1));
+        ymaxv = Math.max(ymaxv, y);
+        pts.push([l, y]);
+      }
+      const P = CAIE.plot(canvas, { w: maxW, h: 260, xmin: 0, xmax: 620, ymin: 0.6, ymax: ymaxv * 1.06 });
+      P.clear();
+      P.axes("offered load (req/s)", "p99 latency (log)", {
+        xticks: 6, xfmt: v => v.toFixed(0),
+        yticks: 4, yfmt: v => { const m = Math.pow(10, v); return m >= 1000 ? (m / 1000).toPrecision(2) + "s" : m.toPrecision(2) + "ms"; }
+      });
+      if (cap < 620) P.line([[cap, P.o.ymin], [cap, P.o.ymax]], pal.warning, 1.5);
+      P.line(pts, pal.s[0], 2.5);
+      P.dot(lam, Math.log10(Math.max(cur.p99, 1)), 5, pal.s[1], true);
+      if (cap < 560) P.label(cap, P.o.ymax - 0.12, "capacity", pal.warning, "left");
+    }
+    CAIE.bindQuiet("bt-lam", draw, v => v + " req/s");
+    CAIE.bindQuiet("bt-b", draw, v => Math.pow(2, v));
+    CAIE.bindQuiet("bt-w", draw, v => v + " ms");
+    CAIE.onTheme(draw);
+    window.addEventListener("resize", draw);
+    draw();
+  })();
+
+  // ================== drift monitor ==================
+  (function () {
+    const cPsi = document.getElementById("dr-psi");
+    const cAcc = document.getElementById("dr-acc");
+    const readout = document.getElementById("dr-readout");
+    const T = 300;
+    let scenario = "ok";
+
+    function erf(x) {
+      const s = x < 0 ? -1 : 1; x = Math.abs(x);
+      const t = 1 / (1 + 0.3275911 * x);
+      const y = 1 - ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x);
+      return s * y;
+    }
+    function cdf(x, mu, sg) {
+      if (x === Infinity) return 1;
+      if (x === -Infinity) return 0;
+      return 0.5 * (1 + erf((x - mu) / (sg * Math.SQRT2)));
+    }
+    const EDGES = [-Infinity, -3, -2.25, -1.5, -0.75, 0, 0.75, 1.5, 2.25, 3, Infinity];
+    const ZERO_BIN = 4; // (−0.75, 0]
+    function binProbs(mu, sg) {
+      const p = [];
+      for (let i = 0; i < EDGES.length - 1; i++) p.push(cdf(EDGES[i + 1], mu, sg) - cdf(EDGES[i], mu, sg));
+      return p;
+    }
+    const REF = binProbs(0, 1);
+    function psiOf(mu, sg, f) {
+      const base = binProbs(mu, sg);
+      let s = 0;
+      for (let i = 0; i < base.length; i++) {
+        const pa = Math.max((1 - f) * base[i] + (i === ZERO_BIN ? f : 0), 1e-4);
+        const pr = Math.max(REF[i], 1e-4);
+        s += (pa - pr) * Math.log(pa / pr);
+      }
+      return s;
+    }
+    // scenario → {mu(t), nullFrac(t), trueAcc(t), driftStart, story}
+    const SC = {
+      ok:  { mu: () => 0, f: () => 0, acc: () => 0.90, start: null },
+      cov: { mu: t => t < 120 ? 0 : Math.min(2.5, 2.5 * (t - 120) / 140), f: () => 0,
+             acc(t) { const m = this.mu(t); return 0.90 - 0.20 * Math.pow(m / 2.5, 1.5); }, start: 120 },
+      con: { mu: () => 0, f: () => 0, acc: t => t < 170 ? 0.90 : 0.62, start: 170 },
+      brk: { mu: () => 0, f: t => t < 200 ? 0 : 0.35, acc: t => t < 200 ? 0.90 : 0.70, start: 200 }
+    };
+
+    function draw() {
+      const sc = SC[scenario];
+      const lag = +document.getElementById("dr-lag").value;
+      const th = +document.getElementById("dr-th").value;
+      const rand = CAIE.rng(42);
+      const psi = [], accTrue = [], accMeas = [];
+      for (let t = 0; t < T; t++) {
+        psi.push(Math.max(0, psiOf(sc.mu(t), 1, sc.f(t)) + 0.012 * rand()));
+        accTrue.push(sc.acc(t) + 0.010 * CAIE.gauss(rand));
+      }
+      for (let t = 0; t < T; t++) accMeas.push(t < lag ? null : accTrue[t - lag]);
+      let psiDay = null, accDay = null;
+      for (let t = 0; t < T; t++) { if (psi[t] > th) { psiDay = t; break; } }
+      for (let t = 0; t < T; t++) { if (accMeas[t] !== null && accMeas[t] < 0.85) { accDay = t; break; } }
+
+      const pal = CAIE.pal();
+      const maxW = Math.min(760, cPsi.parentNode.clientWidth - 4);
+      const ymax = Math.max(0.7, Math.max(...psi) * 1.15, th * 1.3);
+      const P1 = CAIE.plot(cPsi, { w: maxW, h: 170, xmin: 0, xmax: T, ymin: 0, ymax: ymax, pad: { l: 46, r: 12, t: 14, b: 26 } });
+      P1.clear();
+      P1.axes("", "feature PSI", { xticks: 6, xfmt: v => "d" + v.toFixed(0), yticks: 3, yfmt: v => v.toFixed(2) });
+      P1.line([[0, th], [T, th]], pal.warning, 1.5);
+      P1.line(psi.map((v, t) => [t, Math.min(v, ymax)]), pal.s[0], 2);
+      if (psiDay !== null) {
+        P1.line([[psiDay, 0], [psiDay, ymax]], pal.critical, 1.5);
+        P1.label(Math.min(psiDay, T - 55), ymax * 0.92, "PSI alert d" + psiDay, pal.critical);
+      }
+      P1.label(2, th, "threshold", pal.warning);
+
+      const P2 = CAIE.plot(cAcc, { w: maxW, h: 180, xmin: 0, xmax: T, ymin: 0.5, ymax: 1.0, pad: { l: 46, r: 12, t: 14, b: 30 } });
+      P2.clear();
+      P2.axes("day", "accuracy", { xticks: 6, xfmt: v => "d" + v.toFixed(0), yticks: 5, yfmt: v => v.toFixed(1) });
+      P2.line(accTrue.map((v, t) => [t, v]), pal.muted, 1.2);
+      P2.line(accMeas.map((v, t) => v === null ? [t, NaN] : [t, v]), pal.s[1], 2.5);
+      P2.line([[0, 0.85], [T, 0.85]], pal.warning, 1);
+      if (accDay !== null) {
+        P2.line([[accDay, 0.5], [accDay, 1.0]], pal.critical, 1.5);
+        P2.label(Math.min(accDay, T - 70), 0.97, "quality alarm d" + accDay, pal.critical);
+      }
+      P2.label(2, 0.995, "thin = truth · thick = your dashboard (lag " + lag + "d)", pal.ink2);
+
+      let msg;
+      if (scenario === "ok") {
+        msg = "All quiet. Note the dashboard accuracy just trails truth by the label lag — in the healthy case, lag is invisible. It only bites when something moves.";
+      } else {
+        const start = sc.start;
+        msg = "Failure begins <strong>day " + start + "</strong> · PSI alert: <strong>" +
+          (psiDay === null ? "never fires" : "day " + psiDay + " (+" + (psiDay - start) + "d)") +
+          "</strong> · quality alarm: <strong>" +
+          (accDay === null ? "not yet" : "day " + accDay + " (+" + (accDay - start) + "d)") + "</strong>. ";
+        if (scenario === "con") msg += "Input monitoring is structurally blind here — P(x) never moved. Every day of label lag is a day of silent damage.";
+        if (scenario === "cov") msg += "The unlabeled monitor wins the race — that's its entire value proposition.";
+        if (scenario === "brk") msg += "A one-day spike concentrated in one bin: not drift, a broken pipeline. Data tests on every batch catch this before the model even sees it.";
+      }
+      readout.innerHTML = msg;
+    }
+    document.querySelectorAll('[data-tabgroup="dr"] button').forEach(b => {
+      b.addEventListener("click", () => { scenario = b.dataset.tab; draw(); });
+    });
+    CAIE.bindQuiet("dr-lag", draw, v => v + " days");
+    CAIE.bindQuiet("dr-th", draw, v => v.toFixed(2));
+    CAIE.onTheme(draw);
+    window.addEventListener("resize", draw);
+    draw();
+  })();
+
+  // ================== incident triage trainer ==================
+  (function () {
+    const body = document.getElementById("tr-body");
+    const CASES = [
+      {
+        title: "The overnight latency cliff",
+        deploy: "Deploy log: 22:40 — feature-service v2.14 rolled out. Model binary unchanged.",
+        signals: [
+          ["p99 latency", "380 ms", "was 90 ms"],
+          ["error rate", "0.2%", "flat"],
+          ["feature PSI", "0.04", "flat"],
+          ["traffic", "1.0×", "flat"],
+          ["GPU utilization", "99%", "was 55%"],
+          ["feature-cache hit rate", "31%", "was 89%"]
+        ],
+        q: "Most likely root cause?",
+        opts: [
+          ["Concept drift is degrading the model", false],
+          ["The 22:40 deploy invalidated the feature cache; misses force recomputation, saturating the GPU and inflating tail latency", true],
+          ["A DDoS attack", false],
+          ["Corrupted model weights", false]
+        ],
+        exp: "Chain: cache hit rate ↓ → recompute load ↑ → GPU util → p99. Drift and errors flat rule out model quality; traffic flat rules out DDoS. Latency without quality change = infrastructure. Fix: warm the cache or roll back v2.14; add cache hit rate to the deploy guardrails."
+      },
+      {
+        title: "The silent slide",
+        deploy: "Deploy log: no deploys for 6 weeks. Offline AUC at launch: 0.91.",
+        signals: [
+          ["conversions", "−18%", "over 6 weeks, gradual"],
+          ["PSI: feature 12/27/33", "0.31 / 0.28 / 0.44", "37 other features < 0.05"],
+          ["p99 latency", "88 ms", "flat"],
+          ["error rate", "0.1%", "flat"],
+          ["prediction mean", "0.42", "was 0.35"]
+        ],
+        q: "Best next action?",
+        opts: [
+          ["Roll back the model binary", false],
+          ["Scale out serving replicas", false],
+          ["Investigate the three drifted features' upstream sources; retrain on recent data once understood", true],
+          ["Declare concept drift and lower the decision threshold", false]
+        ],
+        exp: "Per-feature PSI has localized the problem to 3 of 40 features — likely an upstream product or logging change altering their distribution (covariate drift). Rollback fixes nothing: the old binary reads the same shifted inputs. Retraining without understanding the source risks baking a bug into the training set — investigate first, then retrain. This localization is why you alert per-feature, not globally."
+      },
+      {
+        title: "The 14:02 spike",
+        deploy: "Deploy log: 14:00 — serving image rebuilt; tokenizer library 4.44 → 4.51. Training environment unchanged.",
+        signals: [
+          ["error rate", "8%", "was 0.1%, step change at 14:02"],
+          ["p99 latency", "bimodal", "new slow mode"],
+          ["output quality (spot-check)", "garbled on some inputs", ""],
+          ["feature PSI", "n/a", "text model"],
+          ["traffic", "1.0×", "flat"]
+        ],
+        q: "Diagnosis and fix?",
+        opts: [
+          ["Concept drift — retrain immediately", false],
+          ["Training–serving skew: the serving tokenizer now splits text differently than the one the model was trained with; roll back the image and pin the version", true],
+          ["Under-provisioned GPUs — scale out", false],
+          ["Increase request timeouts to absorb the slow mode", false]
+        ],
+        exp: "A step change at deploy time is the deploy until proven otherwise. A tokenizer version bump in serving only means the model receives token sequences it never saw in training — the purest form of train/serve skew. Fix: rollback now, then pin preprocessing versions into the model's lineage so image rebuilds can't drift. Drift and scaling explanations can't produce a step function at 14:02."
+      },
+      {
+        title: "The canary that coughed",
+        deploy: "Rollout state: new model clean in shadow for 7 days; canary at 5% since yesterday.",
+        signals: [
+          ["canary quality metrics", "≈ control", "no regression"],
+          ["canary p99 latency", "+40 ms vs control", ""],
+          ["canary pod restarts", "6 OOM kills", "all on long-input requests"],
+          ["control pods", "0 restarts", ""],
+          ["shadow (last week)", "all green", ""]
+        ],
+        q: "Correct call?",
+        opts: [
+          ["Proceed to 50% — quality is fine and latency is only 40 ms", false],
+          ["Jump to 100% to gather more signal faster", false],
+          ["Disable the OOM alerts; restarts are handled by the orchestrator anyway", false],
+          ["Halt the rollout at 5%, keep 95% on the incumbent, fix the memory behavior on long inputs (length caps / batching config), then re-canary", true]
+        ],
+        exp: "Guardrails are not only quality: latency and stability breaches block promotion too. OOMs on a specific slice (long inputs) under real concurrency are exactly what canaries exist to catch — shadow missed it because its replicas didn't face the same batching/memory pressure profile. Rolling forward to \"get more signal\" converts a 5% incident into a 100% outage."
+      }
+    ];
+    function render(idx) {
+      const c = CASES[idx];
+      let h = '<p style="margin:10px 0 4px"><strong>' + c.title + '</strong> — ' + c.deploy + "</p>";
+      h += '<div class="tiles">';
+      for (const [k, v, note] of c.signals) {
+        h += '<div class="tile"><div class="tv">' + v + '</div><div class="tl">' + k + (note ? " · " + note : "") + "</div></div>";
+      }
+      h += "</div>";
+      h += '<div class="quiz" style="margin-top:10px"><p class="quiz-q">' + c.q + '</p><div class="opts">';
+      c.opts.forEach((o, i) => { h += '<button data-i="' + i + '">' + o[0] + "</button>"; });
+      h += '</div><div class="quiz-exp">' + c.exp + "</div></div>";
+      body.innerHTML = h;
+      const quiz = body.querySelector(".quiz");
+      quiz.querySelectorAll(".opts button").forEach(btn => {
+        btn.addEventListener("click", () => {
+          if (quiz.classList.contains("revealed")) return;
+          quiz.classList.add("revealed");
+          quiz.querySelectorAll(".opts button").forEach(b2 => {
+            const right = CASES[idx].opts[+b2.dataset.i][1];
+            if (right) b2.classList.add("correct");
+            else if (b2 === btn) b2.classList.add("wrong");
+            b2.disabled = true;
+          });
+        });
+      });
+    }
+    document.querySelectorAll('[data-tabgroup="tr"] button').forEach(b => {
+      b.addEventListener("click", () => render(+b.dataset.tab));
+    });
+    render(0);
+  })();
+});
+</script>
+</body>
+</html>

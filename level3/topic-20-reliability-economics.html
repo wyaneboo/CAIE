@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Topic 20 — Reliability, Governance &amp; Economics · CAIE Course</title>
+<link rel="stylesheet" href="../assets/course.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<script defer src="../assets/course.js"></script>
+</head>
+<body data-page="t20" data-root="..">
+<a class="skip" href="#main">Skip to content</a>
+<header class="topbar">
+  <button id="navToggle" class="iconbtn" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html">CAIE<span>·</span>Course</a>
+  <span class="topbar-title">Level III · Topic 20 · Reliability, Governance &amp; Economics</span>
+  <button id="themeToggle" class="iconbtn" aria-label="Toggle theme">◐</button>
+</header>
+<nav id="sidebar"></nav>
+
+<main id="main">
+<div class="kicker">Level III · Topic 20 · Exam weight 16%</div>
+<h1>Production Reliability, Governance &amp; Economics</h1>
+<p class="lead">
+  A model that is accurate, aligned, and fast is still a failure if it falls over under load, costs
+  more to run than it earns, or can't be audited when a regulator asks. This topic is the business
+  and operations reality of AI at scale — the reliability engineering that keeps it up, the unit
+  economics that keep it solvent, and the governance that keeps it lawful and accountable. It carries
+  the joint-highest weight in Level III because it is where senior engineers spend their judgment:
+  translating "make it reliable and cheap" into SLOs, error budgets, dollars per token, and an
+  incident process — with the math shown.
+</p>
+
+<div class="box los">
+  <div class="box-title">Learning outcomes</div>
+  <ul>
+    <li>Design SLOs/SLAs and error budgets for AI systems.</li>
+    <li>Architect for reliability: fallbacks, circuit breakers, graceful degradation, rate limiting.</li>
+    <li>Model inference economics: cost per token, utilization, batching, caching, build-vs-buy.</li>
+    <li>Optimize a serving stack for cost under a latency constraint, with the math.</li>
+    <li>Design governance: model risk management, audit trails, approval workflows, compliance.</li>
+    <li>Construct an incident-response and postmortem process for AI-specific failures.</li>
+  </ul>
+</div>
+
+<h2>20.1 SLOs, SLAs, and error budgets</h2>
+<p>
+  Reliability is a target you choose, not a virtue you maximize — 100% is the wrong goal (infinitely
+  expensive, and users can't tell 99.99% from 100%). The SRE vocabulary:
+</p>
+<ul>
+  <li><strong>SLI</strong> (indicator): a measured quantity — availability, p99 latency, error rate,
+  or an AI-specific one like answer-quality or groundedness rate (Topics 13–14).</li>
+  <li><strong>SLO</strong> (objective): the internal target for an SLI — "99.9% of requests succeed
+  under 500 ms, measured monthly."</li>
+  <li><strong>SLA</strong> (agreement): the external, contractual promise, always <em>looser</em>
+  than the SLO so you have margin before you owe refunds.</li>
+  <li><strong>Error budget:</strong> the allowed unreliability, \(1 - \text{SLO}\). At 99.9% monthly
+  that is ~43 minutes of downtime a month. This is the topic's key idea: the budget is a
+  <em>resource to spend</em> — on shipping features, on risky deploys — and when it's exhausted, the
+  policy is to <em>stop shipping and fix reliability</em>. It turns the eternal dev-vs-ops fight into
+  arithmetic.</li>
+</ul>
+<div class="box bridge">
+  <div class="box-title">⚛ Physics bridge</div>
+  <p>
+    The error budget is a tolerance budget, exactly as in an experiment: you don't demand zero error
+    from every component, you allocate a total error and spend it where it's cheapest to control.
+    And the "nines" are a log scale — each additional nine costs roughly an order of magnitude more
+    engineering for an order-of-magnitude smaller absolute gain, the classic diminishing return.
+    Chasing 99.999% when users can't perceive past 99.9% is spending precision where the instrument
+    can't read it.
+  </p>
+</div>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Interactive — the error-budget calculator</div>
+    <div class="wsub">Pick an availability SLO and see the downtime it permits, how a dependency chain erodes it, and how much redundancy buys back. The "nines" are less generous than they sound.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label>Target availability <input type="range" id="sl-nines" min="90" max="99.999" step="0.001" value="99.9"><span class="val" id="sl-nines-v"></span></label>
+      <label>Serial dependencies <input type="range" id="sl-deps" min="1" max="10" step="1" value="4"><span class="val" id="sl-deps-v"></span></label>
+      <label>Redundancy per dep <input type="range" id="sl-red" min="1" max="3" step="1" value="1"><span class="val" id="sl-red-v"></span></label>
+    </div>
+    <div class="tiles" id="sl-tiles"></div>
+    <canvas id="sl-canvas" width="760" height="180"></canvas>
+    <div class="readout" id="sl-readout"></div>
+    <p class="wcaption">
+      Things to try: (1) A "four nines" component sounds bulletproof, but chain four of them in
+      series and availability multiplies down — the whole is always less reliable than its weakest
+      part. (2) Add redundancy (parallel replicas): each dependency's failure probability squares or
+      cubes, dragging the chain back up. (3) Read the monthly error budget in minutes: 99.9% ≈ 43
+      min, 99.99% ≈ 4.3 min. That budget is what you're spending every time you deploy on a Friday.
+    </p>
+  </div>
+</div>
+
+<h2>20.2 Architecting for reliability</h2>
+<p>
+  You spend the error budget wisely by designing so that failures degrade rather than cascade. The
+  standard patterns, all directly applicable to LLM serving:
+</p>
+<ul>
+  <li><strong>Fallbacks:</strong> when the primary path fails, serve a degraded-but-useful
+  alternative — a smaller/cheaper model, a cached answer, or a graceful "I can't do that right now."
+  For LLMs: fall back from a frontier model to a fast one, or from generation to retrieval-only.</li>
+  <li><strong>Circuit breakers:</strong> when a dependency is failing, <em>stop calling it</em> for
+  a cool-down instead of piling on retries that deepen the outage (and drive up cost). The breaker
+  trips on an error-rate threshold, opens, then half-opens to test recovery — borrowed straight from
+  electrical engineering.</li>
+  <li><strong>Graceful degradation:</strong> shed non-essential work under load — drop re-ranking
+  (Topic 14), shorten context, disable an expensive tool — to keep the core service alive. Partial
+  service beats none.</li>
+  <li><strong>Rate limiting &amp; load shedding:</strong> protect the system from traffic spikes and
+  abusive callers; when saturated, reject early and cheaply (return a 429) rather than accepting work
+  you'll drop late — recall Topic 13's queueing: latency diverges near capacity, so admission control
+  is a reliability tool, not just a billing one.</li>
+  <li><strong>Timeouts &amp; retries with backoff:</strong> bounded waits and exponential backoff
+  with jitter, so a blip doesn't become a synchronized retry storm (the thundering herd).</li>
+</ul>
+
+<h2>20.3 Inference economics — the unit that decides the business</h2>
+<p>
+  For most deployed LLM systems, inference is the dominant recurring cost, and the CFO-facing unit
+  is <strong>cost per token</strong> (or per request). Build the number from the hardware:
+  $$\text{cost/token} = \frac{\text{GPU \$/hour}}{3600 \times \text{throughput (tokens/s)} \times \text{utilization}}.$$
+  Every reliability and performance lever moves one of those terms, and the tradeoffs are the heart
+  of the Level III cost essay:
+</p>
+<ul>
+  <li><strong>Batching</strong> (Topic 13) raises throughput and utilization by amortizing fixed
+  overhead — the single biggest cost lever — at the price of latency. Continuous/in-flight batching
+  (vLLM) keeps the GPU full as requests come and go.</li>
+  <li><strong>Caching:</strong> the KV-cache (Topic 8) within a request; <em>prompt/prefix caching</em>
+  across requests that share a long system prompt (compute it once); and a <em>semantic cache</em>
+  that returns a stored answer for a near-duplicate query — each converts compute into a cheap lookup.</li>
+  <li><strong>Model choice &amp; compression:</strong> a distilled/quantized smaller model (Topic 13)
+  at a fraction of the cost per token — routed to only when the frontier model isn't needed (a
+  <em>model router</em>, a bandit in business clothes, Topic 11).</li>
+  <li><strong>Utilization:</strong> idle GPUs bleed money; autoscaling, spot/preemptible capacity,
+  and traffic shaping keep the denominator high.</li>
+</ul>
+<p>
+  <strong>Build vs buy</strong> is the recurring decision: an API (pay per token, zero ops, fast to
+  start, price and data-control at the vendor's mercy) versus self-hosting (high fixed cost and
+  operational burden, but low marginal cost at volume and full control). The crossover is a
+  break-even calculation on <em>your</em> volume — below it, buy; well above it, building pays back.
+  Show the arithmetic; a Level III answer that asserts "self-host to save money" without the
+  break-even point earns nothing.
+</p>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Interactive — serving-stack cost optimizer</div>
+    <div class="wsub">Meet a latency SLO at the lowest cost per million tokens. Turn the levers — batch size, prefix/semantic caching, quantization, model tier — and watch cost and p99 latency trade against your SLO line.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label>Latency SLO (p99) <input type="range" id="cs-slo" min="200" max="3000" step="100" value="1200"><span class="val" id="cs-slo-v"></span></label>
+      <label>Batch size <input type="range" id="cs-b" min="0" max="7" step="1" value="4"><span class="val" id="cs-b-v"></span></label>
+      <label>Prefix-cache hit <input type="range" id="cs-pc" min="0" max="0.9" step="0.05" value="0.3"><span class="val" id="cs-pc-v"></span></label>
+      <label>Semantic-cache hit <input type="range" id="cs-sc" min="0" max="0.5" step="0.05" value="0.1"><span class="val" id="cs-sc-v"></span></label>
+      <label>Precision
+        <select id="cs-q"><option value="1">FP16</option><option value="2" selected>INT8 (2× throughput)</option><option value="3">INT4 (3×)</option></select>
+      </label>
+      <label>Model
+        <select id="cs-m"><option value="70">70B frontier</option><option value="13" selected>13B</option><option value="7">7B distilled</option></select>
+      </label>
+    </div>
+    <div class="tiles" id="cs-tiles"></div>
+    <canvas id="cs-canvas" width="760" height="200"></canvas>
+    <div class="readout" id="cs-readout"></div>
+    <p class="wcaption">
+      Things to try: (1) Raise batch size: cost/token falls steeply (utilization ↑) while p99 climbs
+      — push it until you're just under the SLO line, the cost-optimal operating point. (2) Caching
+      is nearly free money: a 50% prefix-cache hit on a long shared system prompt roughly halves
+      prefill cost with no latency penalty. (3) Drop to a 7B INT4 model and the cost collapses — but
+      only deploy it where quality allows; the honest optimizer routes easy queries here and hard
+      ones to the frontier model.
+    </p>
+  </div>
+</div>
+
+<h2>20.4 Governance, risk, and compliance</h2>
+<p>
+  At scale, "we tested it" is not enough; you need <em>governance</em> — the processes that make AI
+  decisions accountable, auditable, and lawful. The components a Level III answer should name:
+</p>
+<ul>
+  <li><strong>Model risk management (MRM):</strong> a formal lifecycle — models are inventoried,
+  risk-tiered, independently validated before deployment, and periodically re-reviewed. Borrowed
+  from banking (SR 11-7), now standard for high-stakes AI.</li>
+  <li><strong>Audit trails &amp; lineage:</strong> who deployed which model version, trained on what
+  data, approved by whom, and every consequential decision it made — the record a regulator or a
+  court will demand (ties to Topic 13's registry and Topic 7's legal duties).</li>
+  <li><strong>Approval workflows:</strong> deployments (and, for agents, consequential actions —
+  Topic 18) pass through defined sign-offs proportionate to risk. High-risk changes need more eyes,
+  not fewer.</li>
+  <li><strong>Regulatory compliance:</strong> mapping obligations (EU AI Act risk tiers, GDPR, sector
+  rules) to concrete controls — documentation (model cards/datasheets, Topic 15), human oversight,
+  transparency, and data rights. The <em>responsible scaling policies</em> of Topic 19 are governance
+  for capability risk specifically.</li>
+</ul>
+
+<h2>20.5 Incident response and the blameless postmortem</h2>
+<p>
+  Things will break; maturity is measured by the response. The lifecycle — <em>detect
+  (monitoring/alerting, Topic 13) → triage/mitigate (rollback, fallback, circuit-break) → resolve →
+  learn</em> — ends where the value is: the <strong>blameless postmortem</strong>. Blameless is a
+  design choice, not niceness: people who fear punishment hide the information you need to prevent
+  recurrence, so you fix <em>systems and processes</em>, not people. A good postmortem states impact,
+  timeline, root cause, and — the point — concrete action items with owners.
+</p>
+<p>
+  AI adds failure modes classical postmortems don't cover, and naming them is the topic's synthesis:
+  <em>silent quality degradation</em> (no error thrown — drift, Topic 13), <em>non-deterministic and
+  hard-to-reproduce</em> incidents (agent traces, Topic 18), <em>training-serving skew</em> and
+  <em>data-pipeline breaks</em> (Topic 13), <em>prompt-injection and jailbreak</em> incidents
+  (Topics 15, 18, 19), and <em>upstream model/provider changes</em> that shift behavior beneath you.
+  The AI-specific incident runbook and its rehearsed rollback are themselves a Level III deliverable.
+</p>
+
+<div class="box jargon">
+  <div class="box-title">Jargon decoder</div>
+  <dl>
+    <dt>SLI / SLO / SLA</dt><dd>Measured indicator / internal target / external contractual promise (SLA looser than SLO for margin).</dd>
+    <dt>error budget</dt><dd>1 − SLO: the allowed unreliability, spent on features/risk; exhausting it freezes launches until reliability recovers.</dd>
+    <dt>the nines</dt><dd>99.9% ≈ 43 min/month down; 99.99% ≈ 4.3 min. Each nine costs ~10× more engineering.</dd>
+    <dt>circuit breaker</dt><dd>Stops calling a failing dependency for a cool-down (open → half-open → closed) to prevent cascades and retry storms.</dd>
+    <dt>graceful degradation</dt><dd>Shedding non-essential work under load to keep the core service alive; partial service beats none.</dd>
+    <dt>load shedding / rate limiting</dt><dd>Rejecting excess traffic early (429) to stay left of the latency cliff; admission control as reliability.</dd>
+    <dt>cost per token</dt><dd>The unit economic: GPU $/hr ÷ (throughput × utilization); batching, caching, and model choice move the terms.</dd>
+    <dt>prefix / semantic cache</dt><dd>Reuse a shared prompt's compute / return a stored answer for a near-duplicate query — compute → cheap lookup.</dd>
+    <dt>build vs buy</dt><dd>Self-host (high fixed, low marginal, full control) vs API (zero ops, pay-per-token); a break-even on your volume.</dd>
+    <dt>model risk management</dt><dd>Formal inventory, risk-tiering, independent validation, and periodic review of deployed models.</dd>
+    <dt>blameless postmortem</dt><dd>Incident review that fixes systems not people, so information isn't hidden; ends in owned action items.</dd>
+  </dl>
+</div>
+
+<h2>Self-check</h2>
+<div class="quiz" data-answer="c">
+  <p class="quiz-q">1. Your product SLO is 99.9% monthly availability. The team has already burned the whole error budget by the 20th of the month on a series of risky deploys. Per error-budget policy, the right call is:</p>
+  <div class="opts">
+    <button data-opt="a">nothing — the SLO is just a guideline</button>
+    <button data-opt="b">raise the SLO to 99.99% so there's more budget</button>
+    <button data-opt="c">freeze feature launches and redirect effort to reliability until the budget recovers next window — that's exactly what the budget is for</button>
+    <button data-opt="d">lower the SLO to 99% to create budget retroactively</button>
+  </div>
+  <div class="quiz-exp"><strong>c.</strong> The error budget converts the reliability-vs-velocity argument into a rule: budget remaining → ship; budget spent → stop and stabilize. (b) and (d) are gaming the target, not managing it; (a) discards the mechanism's whole value.</div>
+</div>
+<div class="quiz" data-answer="b">
+  <p class="quiz-q">2. A downstream provider's API starts timing out intermittently. Your service keeps retrying aggressively, which worsens the provider's overload and spikes your costs and latency. The pattern you're missing:</p>
+  <div class="opts">
+    <button data-opt="a">a bigger connection pool</button>
+    <button data-opt="b">a circuit breaker (plus exponential backoff with jitter): stop hammering the failing dependency for a cool-down, then half-open to test recovery — and fall back to a degraded path meanwhile</button>
+    <button data-opt="c">a larger model</button>
+    <button data-opt="d">more retries, faster</button>
+  </div>
+  <div class="quiz-exp"><strong>b.</strong> Aggressive retries against a failing dependency are a classic cascade amplifier (the retry storm). The breaker cuts the feedback loop; backoff+jitter desynchronizes retries; a fallback keeps you serving. (d) is the anti-pattern that caused it.</div>
+</div>
+<div class="quiz" data-answer="d">
+  <p class="quiz-q">3. Which change usually gives the largest cost-per-token reduction for a throughput-bound LLM service, and what's the price?</p>
+  <div class="opts">
+    <button data-opt="a">a faster network card; no downside</button>
+    <button data-opt="b">upgrading to a larger model; improves quality</button>
+    <button data-opt="c">disabling monitoring to save compute</button>
+    <button data-opt="d">increasing batch size (and continuous batching) — it raises throughput and GPU utilization, the dominant terms in cost/token — at the cost of higher latency, which must stay under the SLO</button>
+  </div>
+  <div class="quiz-exp"><strong>d.</strong> Batching amortizes fixed per-forward overhead across many requests, the biggest lever on utilization and thus cost (Topics 13, 20.3). The tradeoff is latency — you push batch size up to the SLO line, not past it. (c) is never the answer.</div>
+</div>
+<div class="quiz" data-answer="a">
+  <p class="quiz-q">4. A model's answer quality quietly degrades over two weeks after an upstream provider silently updated the base model; no errors, no latency change, no alerts. The postmortem should conclude:</p>
+  <div class="opts">
+    <button data-opt="a">an AI-specific gap in detection and change management — add quality/groundedness SLIs and drift monitoring, pin/track provider versions, and rehearse rollback; blameless, with owned action items</button>
+    <button data-opt="b">the on-call engineer who missed it should be reprimanded</button>
+    <button data-opt="c">nothing actionable — silent degradation is unavoidable</button>
+    <button data-opt="d">switch off the model permanently</button>
+  </div>
+  <div class="quiz-exp"><strong>a.</strong> This is the AI-specific failure of §20.5: no error is thrown, so system monitoring is blind — you need quality SLIs and drift detection (Topic 13), version pinning, and a tested rollback. Blame (b) suppresses the information a good postmortem needs.</div>
+</div>
+
+<h2>Go deeper</h2>
+<ul class="resources">
+  <li><a href="https://sre.google/sre-book/table-of-contents/">Google — Site Reliability Engineering (free online book)</a><div class="rwhat">The source for §20.1–20.2 and §20.5: Ch. 3 (error budgets), 4 (SLOs), 15 (postmortems). The canonical reference; read the SLO and error-budget chapters.</div></li>
+  <li><a href="https://dataintensive.com/">Kleppmann — Designing Data-Intensive Applications</a><div class="rwhat">The Level III systems-thinking text (in the syllabus): reliability, scalability, and maintainability from first principles. Ch. 1 frames this whole topic.</div></li>
+  <li><a href="https://www.anthropic.com/engineering">Anthropic &amp; provider engineering blogs on inference economics</a><div class="rwhat">Prompt caching, batching, and cost/latency tradeoffs as practiced — the real numbers behind §20.3.</div></li>
+  <li><a href="https://blog.vllm.ai/2023/06/20/vllm.html">vLLM — continuous batching &amp; PagedAttention</a><div class="rwhat">How modern serving keeps GPUs full; the throughput lever of §20.3 in production, with benchmarks.</div></li>
+  <li><a href="https://www.federalreserve.gov/supervisionreg/srletters/sr1107.htm">SR 11-7 — Guidance on Model Risk Management</a><div class="rwhat">The banking-origin MRM framework (§20.4) now applied to AI: inventory, validation, and governance.</div></li>
+  <li><a href="https://artificialintelligenceact.eu/">EU AI Act — overview and risk tiers</a><div class="rwhat">The regulatory obligations you map to controls in §20.4; know the risk-tier structure and what each tier requires.</div></li>
+  <li><a href="https://www.oreilly.com/library/view/ai-engineering/9781098166298/">Chip Huyen — AI Engineering (2024)</a><div class="rwhat">The production-focused Level III text (in the syllabus): inference optimization, cost, evaluation, and serving at depth.</div></li>
+</ul>
+
+<div class="page-footer"></div>
+</main>
+
+<script>
+document.addEventListener("caie:ready", () => {
+  // ================== error budget ==================
+  (function () {
+    const tiles = document.getElementById("sl-tiles");
+    const canvas = document.getElementById("sl-canvas");
+    const readout = document.getElementById("sl-readout");
+    const MIN_MONTH = 30 * 24 * 60;
+    function fmtDown(min) {
+      if (min >= 1440) return (min / 1440).toFixed(1) + " days";
+      if (min >= 60) return (min / 60).toFixed(1) + " h";
+      if (min >= 1) return min.toFixed(1) + " min";
+      return (min * 60).toFixed(1) + " s";
+    }
+    function tile(v, k) { return '<div class="tile"><div class="tv">' + v + '</div><div class="tl">' + k + "</div></div>"; }
+    function draw() {
+      const a = +document.getElementById("sl-nines").value / 100;
+      const deps = +document.getElementById("sl-deps").value;
+      const red = +document.getElementById("sl-red").value;
+      // each dependency has availability a; redundancy makes its failure prob p^red
+      const p = 1 - a;
+      const depAvail = 1 - Math.pow(p, red);
+      const chain = Math.pow(depAvail, deps);
+      const budgetSingle = (1 - a) * MIN_MONTH;
+      const budgetChain = (1 - chain) * MIN_MONTH;
+      tiles.innerHTML =
+        tile((100 * a).toFixed(a > 0.999 ? 3 : 2) + "%", "per-component SLO") +
+        tile(fmtDown(budgetSingle), "budget (1 component)") +
+        tile((100 * chain).toFixed(3) + "%", deps + "-chain availability") +
+        tile(fmtDown(budgetChain), deps + "-chain downtime/mo");
+      // bar viz of chain availability vs single
+      const pal = CAIE.pal();
+      const maxW = Math.min(760, canvas.parentNode.clientWidth - 4);
+      const { ctx, w, h } = CAIE.setupCanvas(canvas, maxW, 180);
+      ctx.clearRect(0, 0, w, h);
+      const padL = 130, padR = 60, top = 30, barH = 30, gap = 22;
+      const fullW = w - padL - padR;
+      // scale: show the "downtime fraction" exaggerated (log-ish) so differences are visible
+      function bar(y, label, avail, color) {
+        const down = 1 - avail;
+        // map down fraction to width via sqrt for visibility
+        const frac = Math.min(1, Math.sqrt(down / 0.1));
+        ctx.fillStyle = pal.grid; ctx.fillRect(padL, y, fullW, barH);
+        ctx.fillStyle = color; ctx.fillRect(padL, y, fullW * (1 - frac), barH);
+        ctx.fillStyle = pal.ink2; ctx.textAlign = "right"; ctx.textBaseline = "middle";
+        ctx.font = "12px " + CAIE.css("--sans");
+        ctx.fillText(label, padL - 10, y + barH / 2);
+        ctx.fillStyle = pal.ink; ctx.textAlign = "left";
+        ctx.fillText((100 * avail).toFixed(3) + "%", padL + fullW + 6, y + barH / 2);
+      }
+      bar(top, "single component", a, pal.s[0]);
+      bar(top + barH + gap, deps + " deps in series", chain, chain > a - 0.001 ? pal.s[1] : pal.s[6]);
+      ctx.fillStyle = pal.muted; ctx.font = "11px " + CAIE.css("--sans");
+      ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("(bar length ∝ availability, downtime exaggerated for visibility)", padL, top + 2 * (barH + gap) - 6);
+      readout.innerHTML =
+        "a " + (100 * a).toFixed(3) + "% component, chained " + deps + "× in series" +
+        (red > 1 ? " with " + red + "× redundancy each" : "") +
+        ", yields <strong>" + (100 * chain).toFixed(3) + "%</strong> — that's <strong>" +
+        fmtDown(budgetChain) + "</strong> of downtime a month. " +
+        (red > 1 ? "Redundancy squared/cubed each dependency's failure probability to claw it back."
+                 : "Add redundancy to buy it back: parallel replicas make each failure probability p^n.");
+    }
+    CAIE.bindQuiet("sl-nines", draw, v => v.toFixed(3) + "%");
+    CAIE.bindQuiet("sl-deps", draw, v => v);
+    CAIE.bindQuiet("sl-red", draw, v => v + "×");
+    CAIE.onTheme(draw);
+    window.addEventListener("resize", draw);
+    draw();
+  })();
+
+  // ================== serving cost optimizer ==================
+  (function () {
+    const tiles = document.getElementById("cs-tiles");
+    const canvas = document.getElementById("cs-canvas");
+    const readout = document.getElementById("cs-readout");
+    // base tokens/s at batch 1, FP16, for each model on one H100 (toy)
+    const MODEL = { 70: { tps: 22, gpuCost: 2.5, quality: 0.95 }, 13: { tps: 95, gpuCost: 2.5, quality: 0.85 }, 7: { tps: 160, gpuCost: 2.5, quality: 0.78 } };
+    function tile(v, k, warn) { return '<div class="tile"><div class="tv"' + (warn ? ' style="color:var(--critical)"' : "") + '>' + v + '</div><div class="tl">' + k + "</div></div>"; }
+    function draw() {
+      const slo = +document.getElementById("cs-slo").value;
+      const B = Math.pow(2, +document.getElementById("cs-b").value);
+      const pc = +document.getElementById("cs-pc").value;
+      const sc = +document.getElementById("cs-sc").value;
+      const q = +document.getElementById("cs-q").value;
+      const m = +document.getElementById("cs-m").value;
+      const md = MODEL[m];
+      // throughput: base * quant multiplier * batch efficiency (sublinear)
+      const quantMul = q;
+      const batchEff = Math.pow(B, 0.75); // diminishing returns
+      const tps = md.tps * quantMul * batchEff;
+      const util = Math.min(0.95, 0.35 + 0.12 * Math.log2(B + 1)); // batching raises utilization
+      // p99 latency (ms): base per token + queue wait from batching
+      const perTok = 1000 / (md.tps * quantMul);
+      const genTokens = 200;
+      const p99 = perTok * genTokens * (1 + 0.12 * B) + 40;
+      // cost per 1M output tokens, reduced by caching (prefix cuts prefill; semantic cuts whole calls)
+      let costPerTok = md.gpuCost / 3600 / (tps * util);
+      const effCost = costPerTok * (1 - 0.5 * pc) * (1 - sc); // prefix ~halves prefill share; semantic skips calls
+      const costPerM = effCost * 1e6;
+      const meets = p99 <= slo;
+      tiles.innerHTML =
+        tile("$" + costPerM.toFixed(2), "cost / 1M tokens") +
+        tile(Math.round(p99) + " ms", "p99 latency", !meets) +
+        tile(Math.round(tps) + "/s", "throughput") +
+        tile((100 * util).toFixed(0) + "%", "GPU utilization");
+      const pal = CAIE.pal();
+      const maxW = Math.min(760, canvas.parentNode.clientWidth - 4);
+      // sweep batch size: cost and latency curves
+      const P = CAIE.plot(canvas, { w: maxW, h: 200, xmin: 1, xmax: 128,
+        ymin: 0, ymax: 1.05, pad: { l: 52, r: 52, t: 14, b: 30 } });
+      P.clear();
+      // dual axis feel: normalize cost and latency each to [0,1] over the sweep
+      const costs = [], lats = [];
+      for (let e = 0; e <= 7; e++) {
+        const b = Math.pow(2, e);
+        const t = md.tps * quantMul * Math.pow(b, 0.75);
+        const u = Math.min(0.95, 0.35 + 0.12 * Math.log2(b + 1));
+        const c = md.gpuCost / 3600 / (t * u) * (1 - 0.5 * pc) * (1 - sc) * 1e6;
+        const l = perTok * genTokens * (1 + 0.12 * b) + 40;
+        costs.push([b, c]); lats.push([b, l]);
+      }
+      const cMax = Math.max(...costs.map(c => c[1])), lMax = Math.max(...lats.map(l => l[1]), slo);
+      P.axes("batch size", "", { xticks: 7, xfmt: v => v >= 1 ? Math.round(v) : v.toFixed(0), yticks: 4, yfmt: () => "" });
+      P.line(costs.map(c => [c[0], c[1] / cMax]), pal.s[1], 2.5);
+      P.line(lats.map(l => [l[0], l[1] / lMax]), pal.s[0], 2.5);
+      P.line([[1, slo / lMax], [128, slo / lMax]], pal.warning, 1.5);
+      P.dot(B, p99 / lMax, 5, meets ? pal.good : pal.critical, true);
+      P.label(4, 1.0, "cost/token", pal.s[1]);
+      P.label(4, 0.86, "p99 latency", pal.s[0]);
+      P.label(90, slo / lMax + 0.02, "SLO", pal.warning);
+      readout.innerHTML =
+        (meets ? "<strong style='color:var(--good)'>meets SLO</strong>" : "<strong style='color:var(--critical)'>exceeds SLO by " + Math.round(p99 - slo) + " ms</strong> — reduce batch, quantize, or pick a faster model") +
+        " · <strong>$" + costPerM.toFixed(2) + "</strong>/1M tokens on the " + m + "B model" +
+        (q > 1 ? " (INT" + (q === 2 ? "8" : "4") + ")" : " (FP16)") +
+        " · caching saves ~" + (100 * (1 - (1 - 0.5 * pc) * (1 - sc))).toFixed(0) + "% · model quality tier ≈ " +
+        (md.quality * 100).toFixed(0) + "% (route hard queries to a bigger model)";
+    }
+    ["cs-q", "cs-m"].forEach(id => document.getElementById(id).addEventListener("change", draw));
+    CAIE.bindQuiet("cs-slo", draw, v => v + " ms");
+    CAIE.bindQuiet("cs-b", draw, v => Math.pow(2, v));
+    CAIE.bindQuiet("cs-pc", draw, v => (100 * v).toFixed(0) + "%");
+    CAIE.bindQuiet("cs-sc", draw, v => (100 * v).toFixed(0) + "%");
+    CAIE.onTheme(draw);
+    window.addEventListener("resize", draw);
+    draw();
+  })();
+});
+</script>
+</body>
+</html>

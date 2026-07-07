@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Topic 10 — Computer Vision · CAIE Course</title>
+<link rel="stylesheet" href="../assets/course.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<script defer src="../assets/course.js"></script>
+</head>
+<body data-page="t10" data-root="..">
+<a class="skip" href="#main">Skip to content</a>
+<header class="topbar">
+  <button id="navToggle" class="iconbtn" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html">CAIE<span>·</span>Course</a>
+  <span class="topbar-title">Level II · Topic 10 · Computer Vision</span>
+  <button id="themeToggle" class="iconbtn" aria-label="Toggle theme">◐</button>
+</header>
+<nav id="sidebar"></nav>
+
+<main id="main">
+<div class="kicker">Level II · Topic 10 · Exam weight 10%</div>
+<h1>Computer Vision</h1>
+<p class="lead">
+  Vision was deep learning's first conquest, and its history is a compressed course in architecture
+  design: how to go deep without dying (ResNet), how to scale sanely (EfficientNet), how to replace
+  convolutions with attention (ViT), and how the same backbone becomes a detector, a segmenter, or
+  an image generator with the right head bolted on.
+</p>
+
+<div class="box los">
+  <div class="box-title">Learning outcomes</div>
+  <ul>
+    <li>Describe ResNet skip connections and EfficientNet compound scaling.</li>
+    <li>Explain Vision Transformers and patch embeddings.</li>
+    <li>Describe detection (YOLO, Faster R-CNN) and segmentation (U-Net, Mask R-CNN).</li>
+    <li>Apply transfer learning/fine-tuning; describe augmentation and its regularizing effect.</li>
+    <li>Explain latent-diffusion generation and editing pipelines.</li>
+  </ul>
+</div>
+
+<h2>10.1 Modern CNN backbones</h2>
+<p>
+  <strong>ResNet</strong> answered the paradox of 2015: adding layers made networks <em>worse</em> —
+  not from overfitting but from optimization failure (deeper nets couldn't even fit the training
+  set). The fix is one line: make each block compute a <em>residual</em>,
+  \(h_{out} = h_{in} + F(h_{in})\). Now the identity is the default — a block only has to learn a
+  <em>correction</em>, and gradients flow through the addition untouched (Topic 5's LSTM logic in
+  spatial form). Result: 152-layer networks trained where 30 had failed, and skip connections
+  became universal — every transformer block carries them.
+</p>
+<p>
+  <strong>EfficientNet</strong> systematized "make it bigger": instead of scaling depth <em>or</em>
+  width <em>or</em> input resolution ad hoc, scale all three by fixed ratios from a
+  budget-multiplier — <em>compound scaling</em>. Its deeper lesson survived into the LLM era: the
+  question is never "bigger?" but "bigger <em>in what proportions</em>?" — which is exactly the
+  Chinchilla question of Topic 16, asked three years early.
+</p>
+
+<h2>10.2 Vision Transformers</h2>
+<p>
+  <strong>ViT</strong> makes the bet that with enough data, learned attention beats built-in
+  convolutional bias: cut the image into fixed patches (16×16), flatten each into a vector, project
+  linearly — these are your "tokens" — add positional embeddings and run a standard transformer
+  encoder. A special <code>[CLS]</code> token's final state (or a pooled mean) is the image
+  representation. With small data, CNNs win (their translation-equivariance is free knowledge);
+  past tens of millions of images, ViT's flexibility wins. Patch size is the resolution/cost dial:
+  sequence length = (H/P)·(W/P), and attention is quadratic in it.
+</p>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Interactive — how an image becomes a token sequence</div>
+    <div class="wsub">A 64×64 image, cut into patches. Drag patch size; click a patch to see where it lands in the sequence. Watch the sequence-length (and attention-cost) counter.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label>patch size <input type="range" id="vt-p" min="0" max="3" step="1" value="1"><span class="val" id="vt-p-v"></span></label>
+    </div>
+    <div style="display:flex;gap:22px;flex-wrap:wrap;align-items:flex-start">
+      <canvas id="vt-img" width="256" height="256" style="cursor:pointer"></canvas>
+      <div style="flex:1;min-width:240px">
+        <div style="font-size:0.78rem;color:var(--muted);margin-bottom:6px">token sequence (row-major)</div>
+        <canvas id="vt-seq" width="300" height="150"></canvas>
+        <div class="readout" id="vt-readout" style="margin-top:8px"></div>
+      </div>
+    </div>
+    <p class="wcaption">
+      Patch 8 → 64 tokens; patch 4 → 256 tokens; attention cost grows 16× between them (quadratic).
+      Every patch, wherever it sits, goes through the <em>same</em> linear projection — the ViT
+      analog of convolution's parameter sharing; position is restored purely by the added positional
+      embedding.
+    </p>
+  </div>
+</div>
+
+<h2>10.3 Detection and segmentation — one backbone, different heads</h2>
+<p>
+  <strong>Detection</strong> = "what and where": output boxes + classes.
+  <strong>Faster R-CNN</strong> is the accurate two-stage design: a Region Proposal Network
+  suggests candidate boxes over backbone features, then a second head classifies and refines each —
+  two passes, high accuracy, ~real-time only with effort. <strong>YOLO</strong> is the fast
+  one-stage design: divide the image into a grid; each cell directly regresses boxes, objectness,
+  and class in a single forward pass — the default for video and edge deployment. Both produce
+  overlapping candidates and rely on <strong>non-maximum suppression</strong>: keep the
+  highest-scoring box, delete neighbors whose <strong>IoU</strong> (intersection-over-union) with
+  it exceeds a threshold, repeat. Detection metrics (mAP) hinge on IoU thresholds — build the
+  intuition below.
+</p>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Interactive — IoU, the metric of overlap</div>
+    <div class="wsub">Drag the predicted box (blue) over the ground truth (gray). IoU = intersection area / union area. Detection scoring counts a prediction correct only above a threshold (commonly 0.5).</div>
+  </div>
+  <div class="widget-body">
+    <canvas id="iou-canvas" width="640" height="280" style="cursor:grab"></canvas>
+    <div class="readout" id="iou-readout"></div>
+  </div>
+</div>
+
+<p>
+  <strong>Segmentation</strong> = per-pixel labels. <strong>U-Net</strong> is the canonical
+  architecture: a contracting encoder (context) and an expanding decoder (localization) with skip
+  connections copying early high-resolution features across to the decoder at matching scales —
+  without them, precise boundaries are unrecoverable after downsampling. Born in medical imaging;
+  now also the standard denoising backbone inside diffusion models. <strong>Mask R-CNN</strong>
+  unifies the threads: Faster R-CNN plus a small mask head per detected object —
+  <em>instance</em> segmentation (each object separately) versus U-Net-style <em>semantic</em>
+  segmentation (each class, all instances merged).
+</p>
+
+<h2>10.4 Transfer learning and augmentation</h2>
+<p>
+  <strong>Transfer learning</strong> is the default workflow: take a backbone pretrained on
+  millions of images (ImageNet, or CLIP-style web pairs — Topic 8), and adapt: (1) freeze it and
+  train only a new head — right when data is scarce; (2) fine-tune the last blocks with a small
+  learning rate — more data; (3) fine-tune everything — lots of data, still with reduced LR to
+  avoid destroying pretrained features (catastrophic forgetting). Early layers hold universal
+  edges/textures; later layers hold task-specific semantics — freeze from the bottom up.
+</p>
+<p>
+  <strong>Augmentation</strong> multiplies your dataset with label-preserving transforms: flips,
+  crops, rotations, color jitter, plus the modern composites — <em>MixUp</em> (blend two images
+  and their labels), <em>CutMix</em> (paste a patch of one image into another), <em>RandAugment</em>
+  (random policy). The regularization view: you are declaring invariances — "a cat shifted left is
+  still a cat" — thereby shrinking the hypothesis space exactly like a physics symmetry constraint.
+  The caveat: augmentations must respect the label (flipping a chest X-ray horizontally moves the
+  heart to the wrong side; rotating a "6" makes a "9").
+</p>
+
+<h2>10.5 Generation: latent diffusion pipelines</h2>
+<p>
+  Topic 8 gave you diffusion; production image generation adds one crucial trick.
+  Pixel-space diffusion at 1024² is brutally expensive, so <strong>latent diffusion</strong>
+  (Stable Diffusion) runs the whole process in a compressed space: a VAE encoder squeezes the image
+  ~48× (512×512×3 → 64×64×4 latents); diffusion happens there with a U-Net (or, in newer systems, a
+  transformer — DiT) conditioned on text embeddings via cross-attention; the VAE decoder renders
+  the final pixels. <em>Editing</em> falls out of the same machinery: <strong>img2img</strong>
+  noises a real image partway and denoises with a new prompt (the t-slider from Topic 8's widget is
+  the "strength" knob); <strong>inpainting</strong> masks a region and denoises only there;
+  <strong>ControlNet</strong> bolts on spatial conditioning (edges, pose, depth) for layout control.
+</p>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Interactive — receptive field growth through a CNN</div>
+    <div class="wsub">Stack 3×3 conv layers (with an optional stride-2 layer) and see which input pixels influence one output unit.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label>layers <input type="range" id="rf-n" min="1" max="6" step="1" value="2"><span class="val" id="rf-n-v"></span></label>
+      <label><input type="checkbox" id="rf-stride"> make layer 2 stride-2</label>
+    </div>
+    <canvas id="rf-canvas" width="640" height="260"></canvas>
+    <div class="readout" id="rf-readout"></div>
+    <p class="wcaption">
+      Receptive field grows +2 pixels per 3×3 layer — but a stride-2 layer <em>doubles</em> the
+      growth rate of everything after it. That's why CNNs downsample: it's the cheap route to
+      seeing the whole image. (Attention gets global receptive field in one layer — and pays
+      quadratically for it.)
+    </p>
+  </div>
+</div>
+
+<div class="box jargon">
+  <div class="box-title">Jargon decoder</div>
+  <dl>
+    <dt>backbone / head / neck</dt><dd>Feature extractor / task-specific output layers / the feature-fusion layers between them (e.g., FPN).</dd>
+    <dt>mAP</dt><dd>Mean Average Precision — detection's headline metric: PR-AUC averaged over classes and IoU thresholds.</dd>
+    <dt>NMS</dt><dd>Non-maximum suppression — deduplicating overlapping detections by IoU.</dd>
+    <dt>FPN</dt><dd>Feature Pyramid Network — multi-scale features so small and large objects are both detectable.</dd>
+    <dt>catastrophic forgetting</dt><dd>Fine-tuning overwrites pretrained knowledge; mitigated by small LRs, freezing, or adapters.</dd>
+    <dt>ControlNet</dt><dd>An auxiliary network injecting spatial conditions (pose, edges, depth) into a frozen diffusion model.</dd>
+    <dt>DiT</dt><dd>Diffusion Transformer — replacing the U-Net denoiser with a transformer over latent patches; the architecture inside modern video/image generators.</dd>
+  </dl>
+</div>
+
+<h2>Self-check</h2>
+<div class="quiz" data-answer="b">
+  <p class="quiz-q">1. Pre-ResNet, going from 20 to 56 layers made even <em>training</em> error worse. The correct interpretation and remedy:</p>
+  <div class="opts">
+    <button data-opt="a">overfitting — add dropout</button>
+    <button data-opt="b">an optimization failure — deep stacks couldn't even represent the identity easily; residual connections make identity the default and let blocks learn corrections</button>
+    <button data-opt="c">vanishing gradients — switch from ReLU to sigmoid</button>
+    <button data-opt="d">too few parameters — widen the layers</button>
+  </div>
+  <div class="quiz-exp"><strong>b.</strong> Overfitting would show low train/high test error; here train error itself degraded. Skip connections fixed trainability, not capacity. (c) is backwards.</div>
+</div>
+<div class="quiz" data-answer="d">
+  <p class="quiz-q">2. You have 800 labeled X-rays. The right starting point:</p>
+  <div class="opts">
+    <button data-opt="a">train a ViT-L from scratch — attention needs no priors</button>
+    <button data-opt="b">train a small CNN from scratch to avoid transfer bias</button>
+    <button data-opt="c">generate 100k synthetic X-rays with a diffusion model first</button>
+    <button data-opt="d">fine-tune a pretrained backbone with a new head, careful augmentation (no horizontal flips!), and cross-validation</button>
+  </div>
+  <div class="quiz-exp"><strong>d.</strong> 800 images is transfer-learning territory; ViT-from-scratch needs orders of magnitude more. And anatomy has a chirality — horizontal flip is label-corrupting here, the classic augmentation trap.</div>
+</div>
+<div class="quiz" data-answer="a">
+  <p class="quiz-q">3. Predicted box (0,0)–(10,10); ground truth (5,0)–(15,10). IoU = ?</p>
+  <div class="opts">
+    <button data-opt="a">intersection 50, union 150 → IoU = 1/3; below the 0.5 threshold, so scored a miss</button>
+    <button data-opt="b">0.5 exactly</button>
+    <button data-opt="c">intersection 50, union 100 → 0.5</button>
+    <button data-opt="d">2/3</button>
+  </div>
+  <div class="quiz-exp"><strong>a.</strong> Intersection = 5×10 = 50; union = 100+100−50 = 150; IoU = 0.33. The union subtracts the intersection — forgetting that is the standard error. Verify with the widget above.</div>
+</div>
+
+<h2>Go deeper</h2>
+<ul class="resources">
+  <li><a href="https://arxiv.org/abs/1512.03385">ResNet (He et al., 2015)</a><div class="rwhat">§1's degradation-problem figures and §3's residual formulation — 4 pages of the most influential architecture paper of the decade.</div></li>
+  <li><a href="https://arxiv.org/abs/2010.11929">ViT — An Image is Worth 16×16 Words (2020)</a><div class="rwhat">Fig. 1 + §3; note the data-scale ablation in §4.2 (CNN inductive bias wins small data).</div></li>
+  <li><a href="https://arxiv.org/abs/1505.04597">U-Net (2015)</a> and <a href="https://arxiv.org/abs/1703.06870">Mask R-CNN (2017)</a><div class="rwhat">Architecture diagrams and loss designs; skim beyond that.</div></li>
+  <li><a href="https://arxiv.org/abs/2112.10752">Latent Diffusion / Stable Diffusion (Rombach et al., 2021)</a><div class="rwhat">§3 for the two-stage latent design that makes generation affordable.</div></li>
+  <li><a href="https://cs231n.github.io/">Stanford CS231n notes (free)</a><div class="rwhat">The classic course notes: convolution arithmetic, receptive fields, transfer learning recipes.</div></li>
+  <li><a href="https://course.fast.ai/">fast.ai — Practical Deep Learning</a><div class="rwhat">Named in the syllabus; lessons 1–2 get a working fine-tuned vision model in an afternoon, top-down style.</div></li>
+</ul>
+
+<div class="page-footer"></div>
+</main>
+
+<script>
+document.addEventListener("caie:ready", () => {
+  // procedural test image
+  function drawScene(ctx, S) {
+    const g = ctx.createLinearGradient(0, 0, S, S);
+    g.addColorStop(0, "#7fb2e8"); g.addColorStop(1, "#e8d47f");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, S, S);
+    ctx.fillStyle = "#3f7d3f";
+    ctx.beginPath(); ctx.ellipse(S * 0.32, S * 0.7, S * 0.26, S * 0.18, 0, 0, 7); ctx.fill();
+    ctx.fillStyle = "#c25353";
+    ctx.fillRect(S * 0.55, S * 0.32, S * 0.3, S * 0.3);
+    ctx.fillStyle = "#f2ecdb";
+    ctx.beginPath(); ctx.arc(S * 0.2, S * 0.22, S * 0.1, 0, 7); ctx.fill();
+  }
+  // ---------- ViT patches ----------
+  (function () {
+    const sizes = [4, 8, 16, 32];
+    const img = document.getElementById("vt-img"), seq = document.getElementById("vt-seq");
+    let sel = -1;
+    function draw() {
+      const P = sizes[+document.getElementById("vt-p").value];
+      document.getElementById("vt-p-v").textContent = P + "×" + P;
+      const S = 256;
+      const { ctx } = CAIE.setupCanvas(img, S, S);
+      drawScene(ctx, S);
+      const n = 64 / P, cell = S / n;
+      const pal = CAIE.pal();
+      ctx.strokeStyle = "rgba(255,255,255,0.75)"; ctx.lineWidth = 1;
+      for (let i = 1; i < n; i++) {
+        ctx.beginPath(); ctx.moveTo(i * cell, 0); ctx.lineTo(i * cell, S); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(0, i * cell); ctx.lineTo(S, i * cell); ctx.stroke();
+      }
+      if (sel >= 0 && sel < n * n) {
+        const si = Math.floor(sel / n), sj = sel % n;
+        ctx.strokeStyle = pal.s[5]; ctx.lineWidth = 3;
+        ctx.strokeRect(sj * cell + 1, si * cell + 1, cell - 2, cell - 2);
+      }
+      // sequence strip
+      const tokens = n * n;
+      const { ctx: c2, w, h } = CAIE.setupCanvas(seq, Math.min(300, seq.parentNode.clientWidth - 4), 150);
+      c2.clearRect(0, 0, w, h);
+      const cols = Math.ceil(Math.sqrt(tokens * w / h));
+      const tw = w / cols, rows2 = Math.ceil(tokens / cols);
+      const th = Math.min(tw, h / rows2);
+      for (let t = 0; t < tokens; t++) {
+        const cx = (t % cols) * tw, cy = Math.floor(t / cols) * th;
+        c2.fillStyle = t === sel ? pal.s[5] : CAIE.alpha(pal.s[0], 0.5);
+        c2.fillRect(cx + 1, cy + 1, tw - 2, th - 2);
+      }
+      document.getElementById("vt-readout").innerHTML =
+        "tokens: <b>" + tokens + "</b> (+1 [CLS])<span>attention pairs: <b>" + CAIE.fmt.si(tokens * tokens) + "</b></span>" +
+        (sel >= 0 ? "<span>selected patch → position <b>" + sel + "</b> in sequence</span>" : "");
+    }
+    img.addEventListener("click", e => {
+      const P = sizes[+document.getElementById("vt-p").value];
+      const n = 64 / P;
+      const r = img.getBoundingClientRect();
+      const j = Math.floor((e.clientX - r.left) / r.width * n);
+      const i = Math.floor((e.clientY - r.top) / r.height * n);
+      sel = i * n + j; draw();
+    });
+    document.getElementById("vt-p").addEventListener("input", () => { sel = -1; draw(); });
+    CAIE.onTheme(draw); window.addEventListener("resize", draw);
+    draw();
+  })();
+
+  // ---------- IoU ----------
+  (function () {
+    const canvas = document.getElementById("iou-canvas");
+    const gt = { x: 240, y: 70, w: 180, h: 140 };
+    const pred = { x: 130, y: 110, w: 180, h: 140 };
+    let drag = null;
+    function iou() {
+      const ix = Math.max(0, Math.min(gt.x + gt.w, pred.x + pred.w) - Math.max(gt.x, pred.x));
+      const iy = Math.max(0, Math.min(gt.y + gt.h, pred.y + pred.h) - Math.max(gt.y, pred.y));
+      const inter = ix * iy;
+      const uni = gt.w * gt.h + pred.w * pred.h - inter;
+      return { inter, uni, iou: inter / uni };
+    }
+    function draw() {
+      const pal = CAIE.pal();
+      const W = Math.min(640, canvas.parentNode.clientWidth - 4);
+      const { ctx, w, h } = CAIE.setupCanvas(canvas, W, 280);
+      ctx.clearRect(0, 0, w, h);
+      // intersection fill
+      const ix0 = Math.max(gt.x, pred.x), iy0 = Math.max(gt.y, pred.y);
+      const ix1 = Math.min(gt.x + gt.w, pred.x + pred.w), iy1 = Math.min(gt.y + gt.h, pred.y + pred.h);
+      ctx.fillStyle = CAIE.alpha(pal.s[1], 0.3);
+      if (ix1 > ix0 && iy1 > iy0) ctx.fillRect(ix0, iy0, ix1 - ix0, iy1 - iy0);
+      ctx.strokeStyle = pal.muted; ctx.lineWidth = 2.5;
+      ctx.strokeRect(gt.x, gt.y, gt.w, gt.h);
+      ctx.strokeStyle = pal.s[0]; ctx.lineWidth = 2.5;
+      ctx.strokeRect(pred.x, pred.y, pred.w, pred.h);
+      ctx.font = "600 11px " + CAIE.css("--sans");
+      ctx.fillStyle = pal.muted; ctx.fillText("ground truth", gt.x + 4, gt.y - 6);
+      ctx.fillStyle = pal.s[0]; ctx.fillText("prediction (drag me)", pred.x + 4, pred.y + pred.h + 14);
+      const m = iou();
+      const pass = m.iou >= 0.5;
+      document.getElementById("iou-readout").innerHTML =
+        "intersection: <b>" + Math.round(m.inter) + "</b><span>union: <b>" + Math.round(m.uni) + "</b></span>" +
+        '<span>IoU: <b style="color:var(--' + (pass ? "good" : "critical") + ')">' + m.iou.toFixed(3) + " " + (pass ? "✓ counts as detection @0.5" : "✗ scored a miss @0.5") + "</b></span>";
+    }
+    function pos(e) {
+      const r = canvas.getBoundingClientRect();
+      const t = e.touches ? e.touches[0] : e;
+      return { x: (t.clientX - r.left) * (canvas.clientWidth / r.width), y: (t.clientY - r.top) * (canvas.clientHeight / r.height) };
+    }
+    function down(e) {
+      const p = pos(e);
+      if (p.x >= pred.x && p.x <= pred.x + pred.w && p.y >= pred.y && p.y <= pred.y + pred.h) {
+        drag = { dx: p.x - pred.x, dy: p.y - pred.y };
+        e.preventDefault();
+      }
+    }
+    function move(e) {
+      if (!drag) return;
+      const p = pos(e);
+      pred.x = p.x - drag.dx; pred.y = p.y - drag.dy;
+      draw();
+      e.preventDefault();
+    }
+    canvas.addEventListener("mousedown", down);
+    canvas.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", () => drag = null);
+    canvas.addEventListener("touchstart", down, { passive: false });
+    canvas.addEventListener("touchmove", move, { passive: false });
+    window.addEventListener("touchend", () => drag = null);
+    CAIE.onTheme(draw); window.addEventListener("resize", draw);
+    draw();
+  })();
+
+  // ---------- receptive field ----------
+  (function () {
+    const canvas = document.getElementById("rf-canvas");
+    function draw() {
+      const n = +document.getElementById("rf-n").value;
+      document.getElementById("rf-n-v").textContent = n;
+      const strided = document.getElementById("rf-stride").checked;
+      // rf and jump computation
+      let rf = 1, jump = 1;
+      const rfs = [];
+      for (let l = 1; l <= n; l++) {
+        const s = (strided && l === 2) ? 2 : 1;
+        rf = rf + (3 - 1) * jump;
+        jump = jump * s;
+        rfs.push(rf);
+      }
+      const pal = CAIE.pal();
+      const W = Math.min(640, canvas.parentNode.clientWidth - 4);
+      const { ctx, w, h } = CAIE.setupCanvas(canvas, W, 260);
+      ctx.clearRect(0, 0, w, h);
+      // input grid 21 wide
+      const G = 21, cell = Math.min((w - 20) / G, 16);
+      const x0 = (w - G * cell) / 2, y0 = 30;
+      const R = rfs[rfs.length - 1];
+      const c0 = Math.floor(G / 2);
+      ctx.font = "600 11px " + CAIE.css("--sans"); ctx.fillStyle = pal.ink2;
+      ctx.fillText("input pixels (highlight = receptive field of the center output unit)", x0, 18);
+      for (let i = 0; i < G; i++) {
+        const inRF = Math.abs(i - c0) <= Math.floor(R / 2);
+        ctx.fillStyle = inRF ? pal.s[0] : pal.grid;
+        ctx.beginPath(); ctx.roundRect(x0 + i * cell, y0, cell - 2, cell - 2, 3); ctx.fill();
+      }
+      // layer stack visual
+      let yy = y0 + cell + 24;
+      for (let l = 0; l < n; l++) {
+        const s = (strided && l === 1) ? 2 : 1;
+        ctx.fillStyle = pal.ink2; ctx.textAlign = "left";
+        ctx.fillText("conv 3×3" + (s === 2 ? " /2 (stride 2)" : "") + "   → RF " + rfs[l] + "×" + rfs[l], x0, yy + 12);
+        ctx.fillStyle = CAIE.alpha(pal.s[l === 1 && strided ? 2 : 0], 0.65);
+        const wl = Math.min(w - x0 * 2, rfs[l] * cell);
+        ctx.beginPath(); ctx.roundRect(x0 + 190, yy, wl * 0.6, 16, 4); ctx.fill();
+        yy += 28;
+      }
+      document.getElementById("rf-readout").innerHTML =
+        "final receptive field: <b>" + R + "×" + R + " px</b><span>params for " + n + " layers (64ch): <b>" +
+        CAIE.fmt.si(n * 9 * 64 * 64) + "</b> — independent of image size</span>";
+    }
+    document.getElementById("rf-n").addEventListener("input", draw);
+    document.getElementById("rf-stride").addEventListener("change", draw);
+    CAIE.onTheme(draw); window.addEventListener("resize", draw);
+    draw();
+  })();
+});
+</script>
+</body>
+</html>

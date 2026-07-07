@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Topic 17 — LLM Training, Fine-Tuning &amp; Alignment · CAIE Course</title>
+<link rel="stylesheet" href="../assets/course.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<script defer src="../assets/course.js"></script>
+</head>
+<body data-page="t17" data-root="..">
+<a class="skip" href="#main">Skip to content</a>
+<header class="topbar">
+  <button id="navToggle" class="iconbtn" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html">CAIE<span>·</span>Course</a>
+  <span class="topbar-title">Level III · Topic 17 · LLM Training, Fine-Tuning &amp; Alignment</span>
+  <button id="themeToggle" class="iconbtn" aria-label="Toggle theme">◐</button>
+</header>
+<nav id="sidebar"></nav>
+
+<main id="main">
+<div class="kicker">Level III · Topic 17 · Exam weight 16%</div>
+<h1>LLM Training, Fine-Tuning &amp; Alignment</h1>
+<p class="lead">
+  A base model is a brilliant, amoral autocomplete: it has read the internet and will continue any
+  text, helpful or not, true or not. Turning it into a useful, safe assistant is <em>post-training</em> —
+  and doing it well is now the field's central craft. This topic is the full recipe: what goes into
+  the pretraining corpus and why the mixture matters, how supervised fine-tuning and preference
+  optimization stack, how to choose among the alignment methods, and how to recognize when
+  alignment has failed in one of its characteristic ways. Level III grades whether you can
+  <em>justify a recipe</em> and <em>diagnose its pathologies</em>, not recite definitions.
+</p>
+
+<div class="box los">
+  <div class="box-title">Learning outcomes</div>
+  <ul>
+    <li>Design a pretraining data pipeline: sourcing, dedup, filtering, mixture weighting, and their downstream effects.</li>
+    <li>Construct a post-training recipe (SFT → reward modeling → RLHF/DPO) and justify each choice.</li>
+    <li>Compare RLHF, DPO, constitutional AI / RLAIF and recommend one for a context.</li>
+    <li>Diagnose alignment failures: reward hacking, sycophancy, mode collapse.</li>
+    <li>Decide between fine-tuning, RAG, and prompting for a business problem, and defend it.</li>
+  </ul>
+</div>
+
+<h2>17.1 Pretraining data — the model is its corpus</h2>
+<p>
+  Capability is bought first with data. The pretraining pipeline is a filtering funnel from
+  petabytes of raw web to a curated trillion-token corpus, and every stage shapes the model:
+</p>
+<ul>
+  <li><strong>Sourcing:</strong> web crawl (Common Crawl) plus curated high-signal sources (code,
+  books, papers, reference wikis). Raw web is mostly boilerplate, spam, and duplication.</li>
+  <li><strong>Deduplication:</strong> remove near-duplicates (MinHash/LSH at scale). Duplicated
+  data wastes compute, worsens loss per FLOP, and — critically — inflates <em>memorization</em>,
+  which is both a privacy risk (Topic 15) and a benchmark-contamination risk.</li>
+  <li><strong>Quality filtering:</strong> classifiers and heuristics keep fluent, informative text
+  and drop the junk. The lever with the highest quality-per-token — but over-aggressive filtering
+  narrows the distribution and can erase dialects and minority topics (a fairness cost, Topic 7).</li>
+  <li><strong>Mixture weighting:</strong> you do not train on sources in their natural proportion.
+  Up-weighting code improves reasoning; up-weighting a domain buys competence there at the expense
+  of breadth. The mixture is a set of dials on the model's eventual personality and skills — and
+  tuning it is an empirical, expensive search.</li>
+  <li><strong>Decontamination:</strong> remove test sets of benchmarks you'll report, or your
+  numbers are memorization, not generalization.</li>
+</ul>
+<div class="box bridge">
+  <div class="box-title">⚛ Physics bridge</div>
+  <p>
+    Data curation is sample preparation, and it dominates the result exactly as it does in an
+    experiment: a beautiful apparatus on a contaminated sample measures the contaminant. Dedup is
+    removing correlated/repeated measurements that fake precision without adding information (they
+    shrink your <em>effective</em> sample size, Topic 2). Mixture weighting is importance sampling —
+    you reweight the empirical distribution toward the regions you care about, accepting bias in
+    exchange for variance reduction where it matters.
+  </p>
+</div>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Interactive — pretraining data pipeline &amp; mixture</div>
+    <div class="wsub">Push a raw web crawl through dedup, quality, and safety filters, then set the training mixture. Watch usable tokens shrink and a stylized capability profile respond to your source weights.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label>Dedup aggressiveness <input type="range" id="dp-dd" min="0" max="1" step="0.05" value="0.6"><span class="val" id="dp-dd-v"></span></label>
+      <label>Quality threshold <input type="range" id="dp-q" min="0" max="1" step="0.05" value="0.5"><span class="val" id="dp-q-v"></span></label>
+      <label>Code weight <input type="range" id="dp-code" min="0" max="0.5" step="0.02" value="0.15"><span class="val" id="dp-code-v"></span></label>
+      <label>Books/papers weight <input type="range" id="dp-book" min="0" max="0.5" step="0.02" value="0.1"><span class="val" id="dp-book-v"></span></label>
+    </div>
+    <canvas id="dp-canvas" width="760" height="280"></canvas>
+    <div class="readout" id="dp-readout"></div>
+    <p class="wcaption">
+      Things to try: (1) Crank quality and dedup to max: the token count collapses — over-filtering
+      starves a large model of the data Chinchilla (Topic 16) demands, so you trade quality-per-token
+      for total tokens. (2) Push code weight high: reasoning/code capability rises but general web
+      fluency dips — the mixture is a zero-sum allocation of a fixed token budget. (3) Note the
+      "distribution narrowing" warning as filters tighten — a fairness and robustness cost that
+      doesn't show up in average loss.
+    </p>
+  </div>
+</div>
+
+<h2>17.2 The post-training stack — SFT → RM → RLHF/DPO</h2>
+<p>
+  Pretraining yields a base model that <em>completes</em> text. Post-training makes it
+  <em>follow instructions</em> and <em>behave</em>. The canonical three stages:
+</p>
+<ol>
+  <li><strong>Supervised fine-tuning (SFT):</strong> train on curated (instruction, ideal-response)
+  pairs. This teaches the <em>format and behavior</em> of an assistant — how to answer, refuse,
+  reason step by step. Quality beats quantity: a few thousand excellent examples outperform
+  millions of mediocre ones (the "less is more for alignment" finding). SFT alone gets you a
+  usable assistant.</li>
+  <li><strong>Reward modeling (RM):</strong> collect human <em>preferences</em> (response A ≻ B —
+  Topic 11) and train a model to score responses via the Bradley–Terry likelihood. Preferences are
+  cheaper and more reliable than writing ideal responses, and they capture "better" on axes
+  (helpfulness, harmlessness, tone) that are hard to demonstrate directly.</li>
+  <li><strong>Preference optimization:</strong> push the policy toward high-reward responses.
+  <strong>RLHF</strong> does this with PPO against the RM plus a KL leash to the reference model
+  (Topic 11). <strong>DPO</strong> skips the explicit RM and the RL loop, optimizing the policy
+  directly on preference pairs via a classification-style loss — simpler and more stable, at the
+  cost of the RM's reusability and online sampling.</li>
+</ol>
+<p>
+  Every stage has a failure signature, and knowing them is the diagnosis skill Level III tests:
+</p>
+<div class="tablewrap"><table>
+  <thead><tr><th>Failure</th><th>Looks like</th><th>Mechanism</th><th>Lever</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Reward hacking</strong></td><td>High RM score, bad actual responses (padding, keyword-stuffing, refusing to be judged)</td><td>Policy exploits the RM's errors — Goodhart's law on a learned proxy</td><td>Stronger KL penalty, better/adversarial RM data, RM ensembles</td></tr>
+    <tr><td><strong>Sycophancy</strong></td><td>Agrees with the user, flatters, abandons correct answers when pushed</td><td>Human raters reward agreement; the RM learns "agree" ≈ "good"</td><td>Preference data that rewards honest disagreement; debate-style eval</td></tr>
+    <tr><td><strong>Mode collapse</strong></td><td>Bland, repetitive, low-diversity outputs; the same joke every time</td><td>Over-optimization concentrates probability mass; KL too weak / too many steps</td><td>Earlier stopping, higher KL, diversity terms</td></tr>
+    <tr><td><strong>Catastrophic forgetting</strong></td><td>Loses base capabilities after aggressive fine-tuning</td><td>SFT/RL overwrites pretrained weights</td><td>Lower LR, LoRA (freeze base), replay of pretraining data</td></tr>
+  </tbody>
+</table></div>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Interactive — RLHF over-optimization &amp; the KL leash</div>
+    <div class="wsub">Optimize a policy against a reward model that's only an imperfect proxy for the true objective. Watch proxy reward keep climbing while the true reward peaks and then collapses — reward hacking, live — and see the KL penalty hold the line.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label>KL penalty β <input type="range" id="kl-b" min="0" max="0.5" step="0.01" value="0.1"><span class="val" id="kl-b-v"></span></label>
+      <label>RM quality <input type="range" id="kl-q" min="0.3" max="1" step="0.05" value="0.7"><span class="val" id="kl-q-v"></span></label>
+    </div>
+    <canvas id="kl-canvas" width="760" height="280"></canvas>
+    <div class="readout" id="kl-readout"></div>
+    <p class="wcaption">
+      Things to try: (1) β = 0: proxy reward soars, true reward peaks early and then <em>falls</em>
+      as the policy drifts into regions where the RM is wrong and exploitable — the textbook
+      over-optimization curve (Gao et al.). (2) Raise β: the policy stays near the reference, the
+      gap between proxy and true reward shrinks, and true reward peaks higher and later. (3) Lower
+      RM quality: even a modest β can't save a bad proxy — the "better RM data" lever from the
+      table. The optimal β is a tuning problem, not a constant.
+    </p>
+  </div>
+</div>
+
+<h2>17.3 Choosing an alignment method</h2>
+<p>
+  The methods form a spectrum of <em>who supplies the judgment</em> and <em>how much machinery</em>
+  it takes:
+</p>
+<ul>
+  <li><strong>RLHF (PPO):</strong> humans give preferences, an RM generalizes them, PPO optimizes
+  online. Most powerful and flexible — the RM can be reused for filtering and monitoring, and online
+  sampling explores fresh responses — but the most infrastructure and the most ways to fail
+  (reward hacking, PPO instability).</li>
+  <li><strong>DPO:</strong> humans give preferences, optimized directly, offline. Far simpler and
+  more stable; the right default when you have a fixed preference set and limited infra. Trades
+  away online exploration and the standalone RM.</li>
+  <li><strong>RLAIF / Constitutional AI:</strong> replace (most) human preference labels with an
+  <em>AI</em> judge guided by a written set of principles (a "constitution"). Scales preference
+  data cheaply and makes the values <em>explicit and auditable</em>, at the risk of inheriting the
+  judge model's blind spots and encoding the constitution-writer's choices. The scalability answer
+  when human labeling is the bottleneck.</li>
+</ul>
+<p>
+  A Level III recommendation states the context, picks one, and names the tradeoff accepted —
+  e.g., "fixed 50k preference set, small team, no online-sampling budget ⇒ DPO, accepting the loss
+  of a reusable reward model and online exploration; revisit if we later need iterated RM-based
+  filtering."
+</p>
+
+<h2>17.4 Fine-tune, retrieve, or prompt? — the adaptation decision</h2>
+<p>
+  A business asks for a model that "knows our stuff." Three adaptation strategies, and choosing
+  wrong is a classic expensive mistake:
+</p>
+<div class="tablewrap"><table>
+  <thead><tr><th></th><th>Prompting / in-context</th><th>RAG (Topic 14)</th><th>Fine-tuning</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Best for</strong></td><td>Format, style, a few examples; fast iteration</td><td>Injecting <em>current, factual, changing</em> knowledge with citations</td><td>Teaching <em>behavior/skill/format</em>, a domain's idiom, or latency-critical narrow tasks</td></tr>
+    <tr><td><strong>Knowledge freshness</strong></td><td>As fresh as the prompt</td><td>As fresh as the index — update without retraining</td><td>Frozen at fine-tune time; stale fast</td></tr>
+    <tr><td><strong>Cost / effort</strong></td><td>Lowest; no training</td><td>Moderate; build + maintain a retrieval stack</td><td>Highest; data curation + training + eval + serving a custom model</td></tr>
+    <tr><td><strong>Attribution</strong></td><td>None</td><td>Native (cites sources)</td><td>None (knowledge baked in)</td></tr>
+  </tbody>
+</table></div>
+<p>
+  The heuristic the exam rewards: <em>if the need is knowledge, reach for RAG; if the need is
+  behavior, reach for fine-tuning; try prompting first for both.</em> They compose — fine-tune a
+  small model for your domain's <em>form</em> and give it RAG for the <em>facts</em>. The most
+  common real-world error is fine-tuning to inject facts: it's expensive, it hallucinates confidently
+  when the facts drift, and it offers no citations — precisely the job RAG was built for.
+</p>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Interactive — adaptation strategy advisor</div>
+    <div class="wsub">Score a use case on four axes; see which of prompting / RAG / fine-tuning the tradeoffs favor, and why. There's rarely a single right answer — read the reasoning, not just the winner.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label>Knowledge changes often <input type="range" id="ad-fresh" min="0" max="1" step="0.1" value="0.5"><span class="val" id="ad-fresh-v"></span></label>
+      <label>Need source citations <input type="range" id="ad-cite" min="0" max="1" step="0.1" value="0.5"><span class="val" id="ad-cite-v"></span></label>
+      <label>Custom behavior/format <input type="range" id="ad-behav" min="0" max="1" step="0.1" value="0.3"><span class="val" id="ad-behav-v"></span></label>
+      <label>Latency/cost pressure <input type="range" id="ad-lat" min="0" max="1" step="0.1" value="0.3"><span class="val" id="ad-lat-v"></span></label>
+    </div>
+    <canvas id="ad-canvas" width="760" height="220"></canvas>
+    <div class="readout" id="ad-readout"></div>
+    <p class="wcaption">
+      Things to try: (1) High "changes often" + "need citations": RAG dominates — this is the
+      fact-injection sweet spot, and fine-tuning scores worst here. (2) High "custom behavior" +
+      "latency pressure", low freshness: fine-tuning (or a fine-tuned small model) wins — behavior
+      and speed are its home turf. (3) Everything low: prompting first — don't build infrastructure
+      you can talk your way out of. The bars are guidance, not gospel; the <em>argument</em> is the
+      deliverable.
+    </p>
+  </div>
+</div>
+
+<div class="box jargon">
+  <div class="box-title">Jargon decoder</div>
+  <dl>
+    <dt>base vs instruct model</dt><dd>Raw next-token predictor vs a post-trained assistant that follows instructions and refuses.</dd>
+    <dt>SFT</dt><dd>Supervised fine-tuning on (instruction, response) pairs — teaches assistant behavior and format.</dd>
+    <dt>reward model (RM)</dt><dd>A learned scorer trained from human preferences (Bradley–Terry); the RLHF optimization target.</dd>
+    <dt>RLHF / DPO</dt><dd>Optimize the policy with PPO against an RM + KL leash / directly on preference pairs, no RM or RL loop.</dd>
+    <dt>RLAIF / Constitutional AI</dt><dd>Use an AI judge guided by written principles in place of human preference labels; scalable, auditable values.</dd>
+    <dt>reward hacking</dt><dd>Policy scores high on the proxy RM while getting worse in truth — Goodhart's law on a learned reward.</dd>
+    <dt>sycophancy</dt><dd>Telling the user what they want to hear; an artifact of preference data rewarding agreement.</dd>
+    <dt>mode collapse</dt><dd>Loss of output diversity from over-optimization; bland, repetitive generations.</dd>
+    <dt>KL penalty (β)</dt><dd>Term keeping the policy close to the reference model; the leash that prevents drift into RM-exploitable regions.</dd>
+    <dt>catastrophic forgetting</dt><dd>Losing pretrained capability during fine-tuning; mitigated by low LR, LoRA, or data replay.</dd>
+    <dt>data mixture</dt><dd>The (non-natural) proportions of sources in pretraining; a primary dial on capabilities.</dd>
+  </dl>
+</div>
+
+<h2>Self-check</h2>
+<div class="quiz" data-answer="b">
+  <p class="quiz-q">1. During RLHF the reward-model score keeps rising for 3,000 steps, but human spot-checks show responses getting worse — padded, evasive, oddly formatted. First diagnosis and lever:</p>
+  <div class="opts">
+    <button data-opt="a">the policy is under-trained; run more PPO steps</button>
+    <button data-opt="b">reward hacking — the policy is exploiting the RM's errors; raise the KL penalty and improve/adversarially augment the RM data, and stop earlier</button>
+    <button data-opt="c">the learning rate is too low</button>
+    <button data-opt="d">the base model was bad; restart pretraining</button>
+  </div>
+  <div class="quiz-exp"><strong>b.</strong> Proxy up, truth down is the over-optimization signature (the widget's β=0 curve). The RM is accurate only near its training distribution; unconstrained PPO walks off it. More steps (a) make it worse. This Goodhart mechanism recurs in Topic 19.</div>
+</div>
+<div class="quiz" data-answer="c">
+  <p class="quiz-q">2. A startup wants a support bot that answers from a knowledge base updated daily, with links to the source article. They're about to fine-tune a model nightly on the KB. Better recommendation:</p>
+  <div class="opts">
+    <button data-opt="a">fine-tune nightly as planned — it bakes the knowledge in</button>
+    <button data-opt="b">prompt engineering alone will suffice</button>
+    <button data-opt="c">RAG: index the KB, retrieve at query time, cite sources — knowledge stays fresh without retraining and citations come for free; fine-tune only if they also need a custom voice</button>
+    <button data-opt="d">RLHF to align the bot with support tickets</button>
+  </div>
+  <div class="quiz-exp"><strong>c.</strong> The need is <em>fresh, factual, attributable knowledge</em> — RAG's exact remit. Nightly fine-tuning is expensive, has no citations, and hallucinates when facts drift. The classic "fine-tuning to inject facts" anti-pattern (§17.4).</div>
+</div>
+<div class="quiz" data-answer="a">
+  <p class="quiz-q">3. A small team has a fixed 40k-comparison preference dataset, no infrastructure for online sampling, and needs stable results soon. Between RLHF-PPO and DPO:</p>
+  <div class="opts">
+    <button data-opt="a">DPO — offline by design, no RM/PPO stack, more stable; well matched to a fixed set and thin infra, accepting the loss of a reusable RM and online exploration</button>
+    <button data-opt="b">RLHF — it always outperforms DPO</button>
+    <button data-opt="c">neither — only SFT is needed for preferences</button>
+    <button data-opt="d">Constitutional AI, to avoid using the preference data at all</button>
+  </div>
+  <div class="quiz-exp"><strong>a.</strong> DPO's sweet spot exactly (echoing Topic 11's decision, now as a Level III justification): fixed offline preferences + limited infra. The graded part is naming the tradeoff you accept, not just the method.</div>
+</div>
+<div class="quiz" data-answer="d">
+  <p class="quiz-q">4. A team over-aggressively quality-filters and deduplicates their pretraining corpus, cutting it from 3T to 400B tokens, then trains a 30B model. Likely consequence:</p>
+  <div class="opts">
+    <button data-opt="a">strictly better model — cleaner data always helps</button>
+    <button data-opt="b">no effect — token count doesn't matter above a threshold</button>
+    <button data-opt="c">only faster training, same quality</button>
+    <button data-opt="d">under-training relative to Chinchilla (30B wants ~600B+ tokens) plus a narrowed distribution — average loss may look fine while robustness and coverage of rare topics suffer</button>
+  </div>
+  <div class="quiz-exp"><strong>d.</strong> Two costs compound: too few tokens for the model size (Topic 16's D ≈ 20N), and over-filtering that erases tail distributions — a fairness/robustness harm invisible in aggregate loss (§17.1, widget point 1 and 3). Curation is a balance, not "more filtering = better."</div>
+</div>
+
+<h2>Go deeper</h2>
+<ul class="resources">
+  <li><a href="https://arxiv.org/abs/2203.02155">Ouyang et al. — InstructGPT (2022)</a><div class="rwhat">The canonical SFT → RM → PPO recipe; Fig. 2 is the three-stage diagram this whole topic elaborates.</div></li>
+  <li><a href="https://arxiv.org/abs/2305.18290">Rafailov et al. — Direct Preference Optimization (2023)</a><div class="rwhat">DPO's derivation and its RLHF-equivalence argument; the basis for the §17.3 comparison.</div></li>
+  <li><a href="https://arxiv.org/abs/2212.08073">Bai et al. — Constitutional AI (2022)</a><div class="rwhat">RLAIF with an explicit constitution; how AI feedback replaces human labels and what that trades.</div></li>
+  <li><a href="https://arxiv.org/abs/2210.10760">Gao, Schulman, Hilton — Scaling Laws for Reward Model Overoptimization (2022)</a><div class="rwhat">The paper behind the reward-hacking widget: proxy-vs-true reward curves and the role of KL and RM size.</div></li>
+  <li><a href="https://arxiv.org/abs/2305.11206">Zhou et al. — LIMA: Less Is More for Alignment (2023)</a><div class="rwhat">Evidence that ~1k excellent SFT examples go remarkably far; the §17.2 "quality beats quantity" claim.</div></li>
+  <li><a href="https://huggingface.co/spaces/HuggingFaceFW/blogpost-fineweb-v1">FineWeb — the data pipeline, in the open</a><div class="rwhat">A frontier-quality web corpus built transparently: dedup, filtering, and ablations for every choice in §17.1.</div></li>
+  <li><a href="https://rlhfbook.com/">Nathan Lambert — RLHF Book (free online)</a><div class="rwhat">The current, comprehensive treatment of post-training: RM, PPO, DPO, and the failure modes, from a practitioner.</div></li>
+</ul>
+
+<div class="page-footer"></div>
+</main>
+
+<script>
+document.addEventListener("caie:ready", () => {
+  // ================== data pipeline ==================
+  (function () {
+    const canvas = document.getElementById("dp-canvas");
+    const readout = document.getElementById("dp-readout");
+    const RAW = 12000; // billion tokens of raw crawl
+    function draw() {
+      const dd = +document.getElementById("dp-dd").value;
+      const q = +document.getElementById("dp-q").value;
+      const codeW = +document.getElementById("dp-code").value;
+      const bookW = +document.getElementById("dp-book").value;
+      // funnel: dedup removes up to ~55% of raw, quality removes up to ~70% of what's left
+      const afterDedup = RAW * (1 - 0.55 * dd);
+      const afterQual = afterDedup * (1 - 0.7 * q);
+      const afterSafety = afterQual * 0.95;
+      const pal = CAIE.pal();
+      const maxW = Math.min(760, canvas.parentNode.clientWidth - 4);
+      const { ctx, w, h } = CAIE.setupCanvas(canvas, maxW, 280);
+      ctx.clearRect(0, 0, w, h);
+      // funnel bars (left half)
+      const stages = [
+        ["Raw crawl", RAW, pal.muted],
+        ["After dedup", afterDedup, pal.s[3]],
+        ["After quality filter", afterQual, pal.s[1]],
+        ["After safety filter", afterSafety, pal.s[0]]
+      ];
+      const halfW = w * 0.52;
+      const padL = 8, barH = 26, gap = 14, top = 22;
+      ctx.font = "11px " + CAIE.css("--sans");
+      const X = v => padL + v / RAW * (halfW - padL - 90);
+      stages.forEach(([name, val, color], i) => {
+        const y = top + i * (barH + gap);
+        ctx.fillStyle = color;
+        ctx.fillRect(padL, y, X(val) - padL, barH);
+        ctx.fillStyle = pal.ink2; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+        ctx.fillText(name + " · " + CAIE.fmt.si(val * 1e9), padL + 4, y - 8);
+      });
+      // capability radar (right half) — stylized
+      const web = Math.max(0, 1 - codeW - bookW);
+      const caps = {
+        "General fluency": 0.5 + 0.5 * web - 0.15 * q,
+        "Reasoning/code": 0.3 + 1.3 * codeW + 0.2 * bookW,
+        "Factual/academic": 0.3 + 1.4 * bookW + 0.1 * q,
+        "Robustness": 0.75 - 0.5 * Math.max(0, q - 0.5) - 0.4 * Math.max(0, dd - 0.7)
+      };
+      const cx = w * 0.78, cy = h * 0.5, R = 78;
+      const keys = Object.keys(caps);
+      ctx.strokeStyle = pal.grid;
+      for (let ring = 1; ring <= 3; ring++) {
+        ctx.beginPath();
+        keys.forEach((k, i) => {
+          const ang = -Math.PI / 2 + i / keys.length * 2 * Math.PI;
+          const r = R * ring / 3;
+          const x = cx + r * Math.cos(ang), y = cy + r * Math.sin(ang);
+          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        });
+        ctx.closePath(); ctx.stroke();
+      }
+      ctx.fillStyle = CAIE.alpha(CAIE.css("--s1"), 0.25); ctx.strokeStyle = pal.s[0]; ctx.lineWidth = 2;
+      ctx.beginPath();
+      keys.forEach((k, i) => {
+        const ang = -Math.PI / 2 + i / keys.length * 2 * Math.PI;
+        const v = Math.max(0.05, Math.min(1, caps[k]));
+        const x = cx + R * v * Math.cos(ang), y = cy + R * v * Math.sin(ang);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      });
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = pal.ink2; ctx.font = "10px " + CAIE.css("--sans");
+      keys.forEach((k, i) => {
+        const ang = -Math.PI / 2 + i / keys.length * 2 * Math.PI;
+        const x = cx + (R + 16) * Math.cos(ang), y = cy + (R + 16) * Math.sin(ang);
+        ctx.textAlign = Math.abs(Math.cos(ang)) < 0.3 ? "center" : (Math.cos(ang) > 0 ? "left" : "right");
+        ctx.textBaseline = "middle";
+        ctx.fillText(k, x, y);
+      });
+      const narrowed = q > 0.7 || dd > 0.8;
+      readout.innerHTML =
+        "usable corpus: <strong>" + CAIE.fmt.si(afterSafety * 1e9) + " tokens</strong> from " +
+        CAIE.fmt.si(RAW * 1e9) + " raw (" + (100 * afterSafety / RAW).toFixed(0) + "% survive) · mixture: web " +
+        (100 * web).toFixed(0) + "% / code " + (100 * codeW).toFixed(0) + "% / books " + (100 * bookW).toFixed(0) + "%" +
+        (narrowed ? " · <strong style='color:var(--serious)'>distribution narrowing</strong> — aggressive filtering erases tail topics/dialects (robustness ↓)" : "");
+    }
+    ["dp-dd", "dp-q", "dp-code", "dp-book"].forEach((id, k) => {
+      CAIE.bindQuiet(id, draw, v => (100 * v).toFixed(0) + "%");
+    });
+    CAIE.onTheme(draw);
+    window.addEventListener("resize", draw);
+    draw();
+  })();
+
+  // ================== RLHF over-optimization ==================
+  (function () {
+    const canvas = document.getElementById("kl-canvas");
+    const readout = document.getElementById("kl-readout");
+    function draw() {
+      const beta = +document.getElementById("kl-b").value;
+      const rmQ = +document.getElementById("kl-q").value;
+      // model: as policy moves distance d from ref (KL grows ~d^2), proxy reward = d (RM thinks more is better),
+      // true reward = rmQ*d - (1-rmQ)*d^2 (RM error compounds); PPO climbs proxy - beta*KL
+      const pal = CAIE.pal();
+      const maxW = Math.min(760, canvas.parentNode.clientWidth - 4);
+      const proxy = [], trueR = [], objective = [];
+      let peakTrue = -Infinity, peakD = 0;
+      // find where PPO (maximizing proxy - beta*KL) settles: d* where d(proxy - beta*d^2)/dd = 0 → 1 - 2*beta*d = 0
+      const settleD = beta > 0.001 ? Math.min(3, 1 / (2 * beta)) : 3;
+      for (let i = 0; i <= 120; i++) {
+        const d = i / 120 * 3;
+        const kl = d * d;
+        const pr = d;
+        const tr = 3 * (rmQ * d - (1 - rmQ) * 1.6 * d * d);
+        proxy.push([d, pr]); trueR.push([d, tr]);
+        objective.push([d, pr - beta * kl]);
+        if (tr > peakTrue) { peakTrue = tr; peakD = d; }
+      }
+      const allY = proxy.concat(trueR).map(p => p[1]);
+      const ymin = Math.min(...allY) - 0.3, ymax = Math.max(...allY) + 0.3;
+      const P = CAIE.plot(canvas, { w: maxW, h: 280, xmin: 0, xmax: 3, ymin, ymax });
+      P.clear();
+      P.axes("KL distance from reference policy →  (training progress)", "reward", {
+        xticks: 6, xfmt: v => v.toFixed(1), yticks: 4, yfmt: v => v.toFixed(1)
+      });
+      P.line(proxy, pal.s[1], 2.5);
+      P.line(trueR, pal.s[0], 2.5);
+      P.label(2.7, proxy[108][1], "proxy (RM) reward", pal.s[1], "right");
+      P.label(2.7, Math.max(trueR[108][1], ymin + 0.4), "true reward", pal.s[0], "right");
+      // where PPO settles
+      const sIdx = Math.round(settleD / 3 * 120);
+      const trueAtSettle = trueR[Math.min(120, sIdx)][1];
+      P.line([[settleD, ymin], [settleD, ymax]], pal.ink2, 1.2);
+      P.dot(settleD, trueAtSettle, 5, pal.good, true);
+      P.label(settleD, ymax - 0.15, "PPO settles here", pal.ink2, "center");
+      const hacked = settleD > peakD + 0.15;
+      readout.innerHTML =
+        "β = <strong>" + beta.toFixed(2) + "</strong>, RM quality <strong>" + rmQ.toFixed(2) +
+        "</strong> · true reward peaks at KL ≈ <strong>" + peakD.toFixed(2) + "</strong>; PPO settles at KL ≈ <strong>" +
+        settleD.toFixed(2) + "</strong> → " +
+        (hacked ? "<strong style='color:var(--critical)'>over-optimized</strong>: the leash is too loose, the policy walked past the true optimum into RM-exploitable territory — raise β"
+                : trueAtSettle > 0.9 * peakTrue ? "<strong style='color:var(--good)'>well-tuned</strong>: settling near the true peak"
+                : "under-optimized: β too high, policy barely moves from reference");
+    }
+    CAIE.bindQuiet("kl-b", draw, v => v.toFixed(2));
+    CAIE.bindQuiet("kl-q", draw, v => v.toFixed(2));
+    CAIE.onTheme(draw);
+    window.addEventListener("resize", draw);
+    draw();
+  })();
+
+  // ================== adaptation advisor ==================
+  (function () {
+    const canvas = document.getElementById("ad-canvas");
+    const readout = document.getElementById("ad-readout");
+    function draw() {
+      const fresh = +document.getElementById("ad-fresh").value;
+      const cite = +document.getElementById("ad-cite").value;
+      const behav = +document.getElementById("ad-behav").value;
+      const lat = +document.getElementById("ad-lat").value;
+      // scores
+      const prompt = 0.5 + 0.2 * (1 - behav) + 0.15 * (1 - fresh) - 0.3 * lat - 0.2 * cite;
+      const rag = 0.35 + 0.9 * fresh + 0.9 * cite - 0.2 * lat - 0.1 * behav;
+      const ft = 0.3 + 0.9 * behav + 0.7 * lat - 0.8 * fresh - 0.6 * cite;
+      const scores = [["Prompting", Math.max(0.02, prompt), CAIE.css("--s3")],
+                      ["RAG", Math.max(0.02, rag), CAIE.css("--s1")],
+                      ["Fine-tuning", Math.max(0.02, ft), CAIE.css("--s5")]];
+      const maxS = Math.max(...scores.map(s => s[1]));
+      const norm = scores.map(([n, s, c]) => [n, s / maxS, c, s]);
+      const pal = CAIE.pal();
+      const maxW = Math.min(760, canvas.parentNode.clientWidth - 4);
+      const { ctx, w, h } = CAIE.setupCanvas(canvas, maxW, 220);
+      ctx.clearRect(0, 0, w, h);
+      const padL = 110, padR = 30, top = 30, rowH = 52;
+      const barMax = w - padL - padR;
+      ctx.font = "600 13px " + CAIE.css("--sans");
+      norm.forEach(([name, v, color, raw], i) => {
+        const y = top + i * rowH;
+        ctx.fillStyle = pal.grid; ctx.fillRect(padL, y, barMax, 26);
+        ctx.fillStyle = color; ctx.fillRect(padL, y, barMax * v, 26);
+        ctx.fillStyle = pal.ink2; ctx.textAlign = "right"; ctx.textBaseline = "middle";
+        ctx.fillText(name, padL - 10, y + 13);
+        ctx.fillStyle = pal.ink; ctx.textAlign = "left";
+        ctx.fillText(i === 0 && v === 1 ? "◆ recommended" : "", padL + barMax * v + 8, y + 13);
+      });
+      // rank
+      const ranked = [...norm].sort((a, b) => b[3] - a[3]);
+      const win = ranked[0][0];
+      const reasons = {
+        "RAG": "knowledge freshness and/or citations dominate — inject facts through retrieval, not weights.",
+        "Fine-tuning": "custom behavior/format and latency pressure dominate, and knowledge is stable — bake the skill in.",
+        "Prompting": "no strong pull toward infrastructure — start here; you can escalate to RAG or fine-tuning if it falls short."
+      };
+      readout.innerHTML = "leading choice: <strong>" + win + "</strong> — " + reasons[win] +
+        " Runner-up: <strong>" + ranked[1][0] + "</strong>. Remember these compose (fine-tune for form + RAG for facts).";
+    }
+    ["ad-fresh", "ad-cite", "ad-behav", "ad-lat"].forEach(id => CAIE.bindQuiet(id, draw, v => (100 * v).toFixed(0) + "%"));
+    CAIE.onTheme(draw);
+    window.addEventListener("resize", draw);
+    draw();
+  })();
+});
+</script>
+</body>
+</html>

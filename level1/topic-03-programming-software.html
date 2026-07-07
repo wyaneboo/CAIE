@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Topic 3 — Programming &amp; Software Engineering for AI · CAIE Course</title>
+<link rel="stylesheet" href="../assets/course.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<script defer src="../assets/course.js"></script>
+</head>
+<body data-page="t03" data-root="..">
+<a class="skip" href="#main">Skip to content</a>
+<header class="topbar">
+  <button id="navToggle" class="iconbtn" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html">CAIE<span>·</span>Course</a>
+  <span class="topbar-title">Level I · Topic 3 · Programming &amp; Software Engineering for AI</span>
+  <button id="themeToggle" class="iconbtn" aria-label="Toggle theme">◐</button>
+</header>
+<nav id="sidebar"></nav>
+
+<main id="main">
+<div class="kicker">Level I · Topic 3 · Exam weight 14%</div>
+<h1>Programming &amp; Software Engineering for AI</h1>
+<p class="lead">
+  This is the topic where "physics degree, no CS" bites hardest — and the one that most separates an
+  employable engineer from a notebook hobbyist. Nobody will pay you a senior salary for knowing what
+  an eigenvalue is; they will pay you for shipping code that other people can run, test, trust, and
+  maintain. The good news: the core ideas are few, and none of them are as hard as quantum mechanics.
+</p>
+
+<div class="box los">
+  <div class="box-title">Learning outcomes</div>
+  <ul>
+    <li>Describe Python's memory model, the GIL, and their implications for concurrency.</li>
+    <li>Apply vectorized NumPy operations and explain broadcasting rules; profile and optimize Python code.</li>
+    <li>Use generators, decorators, context managers, and type hints idiomatically.</li>
+    <li>Apply version-control workflows (branching, rebasing, Conventional Commits); write unit, integration, and property-based tests for ML code.</li>
+    <li>Describe dependency management and reproducible environments (venv, Poetry, Docker); explain clean architecture and SOLID as applied to ML systems.</li>
+    <li>Analyze time/space complexity (Big-O); describe CPU vs GPU vs TPU and the memory hierarchy; explain SIMD and why GPUs suit matrix math.</li>
+  </ul>
+</div>
+
+<h2>3.1 Python — what's actually happening under the hood</h2>
+<p>
+  Python is the lingua franca of ML not because it's fast (it's ~100× slower than C for raw loops)
+  but because it's a pleasant <em>orchestration language</em>: the heavy math runs in compiled
+  C/CUDA libraries (NumPy, PyTorch), and Python just conducts.
+  Three facts about its internals you must know:
+</p>
+<ul>
+  <li><strong>Everything is an object on the heap.</strong> Even the integer <code>3</code> is a
+  ~28-byte object with a type pointer and a reference count. Variables are <em>names bound to
+  objects</em>, not boxes containing values — which is why <code>b = a</code> for a list gives you two
+  names for <em>one</em> list (mutating via either is visible to both), and why default mutable
+  arguments (<code>def f(x, cache={})</code>) are a famous bug: the dict is created once, at function
+  definition, and shared across calls.</li>
+  <li><strong>Memory is managed by reference counting</strong> (plus a cycle-detecting garbage
+  collector). An object dies when its refcount hits zero. This is deterministic and simple — and it's
+  the reason for fact three:</li>
+  <li><strong>The GIL (Global Interpreter Lock)</strong> lets only one thread execute Python bytecode
+  at a time, because refcount updates aren't thread-safe without it. Consequence: Python
+  <em>threads</em> don't speed up CPU-bound Python code. They're fine for I/O-bound work (waiting on
+  network/disk releases the GIL), and NumPy/PyTorch release the GIL inside big C kernels. For real
+  CPU parallelism you use <em>processes</em> (<code>multiprocessing</code>), or you push the work into
+  the compiled layer — which is what vectorization is.</li>
+</ul>
+<p>
+  <strong>Broadcasting</strong> is NumPy's rule for combining arrays of different shapes without
+  copying: align shapes from the right; dimensions match if equal or if one of them is 1 (the size-1
+  dimension is virtually stretched). So shape <code>(32, 1, 512) + (64, 512)</code> →
+  <code>(32, 64, 512)</code>. It's how you write "subtract the mean of each row" without a loop, and
+  misunderstanding it is the #1 source of silent shape bugs — an operation that <em>should</em> have
+  errored instead broadcasts happily and produces garbage of a legal shape.
+</p>
+<pre><code># The idioms the syllabus names, in 12 lines
+def batches(data, n):                 # GENERATOR: lazy, O(1) memory
+    for i in range(0, len(data), n):
+        yield data[i:i+n]             # produces values on demand
+
+@functools.lru_cache(maxsize=None)     # DECORATOR: wraps a function with behavior
+def tokenize(text: str) -> list[int]: # TYPE HINTS: checked by mypy, read by humans
+    ...
+
+with open(path) as f, torch.no_grad():   # CONTEXT MANAGERS: guaranteed setup/teardown
+    ...                                   # (file closed, grad-tracking restored, even on error)</code></pre>
+<p>
+  <strong>Profiling before optimizing</strong> is a professional reflex: <code>cProfile</code> tells
+  you which function eats the time, <code>line_profiler</code> which line,
+  <code>memory_profiler</code>/<code>tracemalloc</code> where the RAM goes. The empirical rule: 95% of
+  runtime lives in 5% of the code, and your guess about <em>which</em> 5% is usually wrong.
+</p>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Interactive — the price of the interpreter (a real benchmark, running now)</div>
+    <div class="wsub">This benchmark runs live in your browser's JS engine: summing 5 million numbers via a per-element dynamic call (mimicking Python-level loops) vs a tight loop over a typed array (mimicking NumPy's C kernel).</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls"><button class="btn" id="v-run">Run benchmark</button></div>
+    <canvas id="v-canvas" width="640" height="170"></canvas>
+    <div class="readout" id="v-readout">Press run — takes about a second.</div>
+    <p class="wcaption">
+      The gap you see (typically 10–60× here; in real Python vs NumPy it's 50–500×) is not the CPU
+      doing different math — it's dispatch overhead: type checks, boxed objects, function-call
+      machinery <em>per element</em>. Vectorization amortizes that overhead over millions of elements
+      in one call. The GPU (below) pushes the same idea to tens of thousands of parallel lanes.
+    </p>
+  </div>
+</div>
+
+<h2>3.2 Software engineering practice — the craft part</h2>
+<p>
+  <strong>Version control.</strong> Git tracks snapshots of your project as a graph of commits.
+  The professional workflow: never commit to <code>main</code> directly; cut a <strong>branch</strong>
+  per change, open a <em>pull request</em>, get review, merge. <strong>Rebasing</strong> replays your
+  branch's commits on top of the latest main — a linear, readable history — versus merging, which
+  ties the histories together with a merge commit. Rule of thumb: rebase your own unpushed work;
+  never rebase commits others have already built on (you'd be rewriting shared history).
+  <a href="https://www.conventionalcommits.org/">Conventional Commits</a> standardizes messages
+  (<code>feat:</code>, <code>fix:</code>, <code>refactor:</code>…) so changelogs and semantic versions
+  can be generated automatically.
+</p>
+<p>
+  <strong>Testing ML code</strong> is genuinely harder than testing normal code, because the output
+  is statistical. The layered strategy:
+</p>
+<ul>
+  <li><strong>Unit tests</strong> pin down deterministic pieces: does the tokenizer round-trip? Does
+  the loss decrease on one overfit batch? Does a shape-(3,4) input produce shape-(3,2) output?</li>
+  <li><strong>Integration tests</strong> run the pipeline end-to-end on a tiny fixture dataset:
+  data → features → train 2 steps → save → load → predict. Most production breakage lives in the
+  seams these cover.</li>
+  <li><strong>Property-based tests</strong> (the <code>hypothesis</code> library) generate hundreds of
+  random inputs and assert <em>invariants</em>: "softmax outputs always sum to 1," "normalization is
+  idempotent," "augmented images keep their labels." You state the physics; the framework hunts for
+  counterexamples.</li>
+</ul>
+<p>
+  <strong>Reproducible environments.</strong> "Works on my machine" is a confession, not a defense.
+  Three escalating tools: <code>venv</code> isolates one project's packages;
+  <strong>Poetry</strong> (or <code>uv</code>) additionally locks the exact version of every
+  transitive dependency in a lockfile, so a teammate installs bit-identical libraries;
+  <strong>Docker</strong> freezes the entire operating system — Python itself, CUDA drivers, system
+  libraries — into an image that runs the same on your laptop and on a cluster. ML adds one more
+  layer the syllabus will revisit in Topic 13: reproducibility also requires pinning <em>data,
+  random seeds, and hardware nondeterminism</em>, not just code.
+</p>
+<p>
+  <strong>Architecture.</strong> "Clean architecture" compressed to one sentence: <em>dependencies
+  point inward, from volatile details (databases, APIs, frameworks) toward stable business logic —
+  never the reverse.</em> The SOLID principles are five aging-but-useful heuristics for that; the two
+  worth memorizing verbatim are <strong>S</strong>ingle Responsibility (one module, one reason to
+  change) and <strong>D</strong>ependency Inversion (depend on interfaces, not concrete
+  implementations — so you can swap "OpenAI API" for "local model" without rewriting the caller). In
+  ML systems the classic sin is entangling data loading, feature computation, model definition, and
+  serving in one notebook. Separate them, because they change at different speeds and are tested in
+  different ways — Topic 13's train/serve skew is what happens when you don't.
+</p>
+
+<h2>3.3 Computational foundations — Big-O and the machine</h2>
+<p>
+  <strong>Big-O</strong> answers one question: <em>how does cost scale as input grows?</em>
+  Constants are dropped because they're hardware-dependent; growth <em>class</em> isn't. An
+  \(O(n^2)\) attention over a 100× longer sequence costs 10,000× more — that single fact drives half
+  of Topic 8's architecture research. The classes worth recognizing on sight: hash lookup
+  \(O(1)\); binary search \(O(\log n)\); a scan \(O(n)\); sorting \(O(n \log n)\);
+  pairwise comparisons \(O(n^2)\); naive matrix multiply of n×n matrices \(O(n^3)\); brute-force
+  subsets \(O(2^n)\).
+</p>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Interactive — growth classes racing</div>
+    <div class="wsub">Every curve equals 1 at n=1. The log-scale toggle is the professional's view: on a log y-axis, polynomial curves flatten but 2ⁿ stays a straight, doomed line.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label>max n <input type="range" id="b-n" min="10" max="200" step="5" value="60"><span class="val" id="b-n-v"></span></label>
+      <label><input type="checkbox" id="b-log" checked> log-scale y</label>
+    </div>
+    <canvas id="b-canvas" width="640" height="320"></canvas>
+    <div class="legend" id="b-legend"></div>
+    <p class="wcaption">
+      Reading exercise: at n = 200, n log n is ~1,500 while n² is 40,000 and 2ⁿ is ~10⁶⁰ — more
+      operations than atoms in the galaxy. "It works on my 100-row test file" says nothing about the
+      10⁹-row production table; only the growth class does.
+    </p>
+  </div>
+</div>
+
+<p>
+  <strong>The memory hierarchy</strong> is the second half of performance literacy. Arithmetic is
+  nearly free; <em>moving data is what costs</em>. A CPU register is reachable in ~0.3 ns; main
+  memory in ~100 ns; an SSD in ~100 µs; another datacenter in ~1 ms. Caches exploit
+  <em>locality</em> — if you touch memory sequentially (like iterating a contiguous NumPy array),
+  the hardware streams it; if you jump randomly (like chasing Python object pointers), you pay the
+  full latency per access. This is the <em>second</em> reason vectorized code wins, independent of
+  interpreter overhead.
+</p>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Interactive — the memory hierarchy, in human time</div>
+    <div class="wsub">Click each level. Right column rescales latencies so 1 CPU cycle = 1 second — the scale at which the numbers become visceral.</div>
+  </div>
+  <div class="widget-body">
+    <div id="h-rows"></div>
+    <div class="box note" style="margin-top:12px"><div class="box-title">Selected</div><p id="h-detail">Click a row above.</p></div>
+  </div>
+</div>
+
+<p>
+  <strong>CPU vs GPU vs TPU.</strong> A CPU is a few (8–64) very smart cores optimized for latency:
+  branch prediction, deep caches, out-of-order execution — great for irregular, sequential logic. A
+  GPU is tens of thousands of simple arithmetic units optimized for throughput: they execute the
+  same instruction on many data elements in lockstep (<strong>SIMD</strong>/SIMT), which is
+  <em>exactly</em> the shape of matrix multiplication — the same multiply-accumulate on every element
+  of a tile. A TPU goes further: it hard-wires matrix multiplication into a systolic array and
+  deletes everything else. The ranking is not "GPU better than CPU"; it's "each architecture wins on
+  workloads that match its shape." Deep learning is ~90% matmul by FLOPs, hence the GPU era.
+  The catch — <em>arithmetic intensity</em>: a GPU only hits peak FLOPs if you feed it enough work
+  per byte moved from memory; small batches and tiny kernels leave it idle, waiting on the very
+  memory hierarchy you just clicked through. That idea returns with a vengeance in Topics 12 and 20.
+</p>
+
+<div class="box jargon">
+  <div class="box-title">Jargon decoder</div>
+  <dl>
+    <dt>GIL</dt><dd>Global Interpreter Lock — CPython mutex allowing one thread to run Python bytecode at a time. Threads for I/O, processes (or C kernels) for CPU work.</dd>
+    <dt>vectorization</dt><dd>Replacing per-element interpreted loops with single whole-array operations executed in compiled code (and, at the hardware level, SIMD instructions).</dd>
+    <dt>SIMD / SIMT</dt><dd>Single Instruction, Multiple Data/Threads — one instruction applied to many elements in lockstep. The GPU's execution model.</dd>
+    <dt>CI/CD</dt><dd>Continuous Integration / Continuous Delivery — every commit automatically triggers tests (CI) and, if green, deployment (CD). Detailed in Topic 13.</dd>
+    <dt>lockfile</dt><dd>Machine-generated file pinning exact versions of all transitive dependencies (poetry.lock, uv.lock), making installs reproducible.</dd>
+    <dt>refactoring</dt><dd>Restructuring code without changing behavior — safe only when tests exist to prove behavior didn't change.</dd>
+    <dt>technical debt</dt><dd>Future work you implicitly borrowed by shipping the quick version now. Interest compounds.</dd>
+    <dt>arithmetic intensity</dt><dd>FLOPs performed per byte moved from memory. Below the hardware's ratio (~100–300 for modern GPUs), you're memory-bound and FLOPs sit idle.</dd>
+  </dl>
+</div>
+
+<h2>Self-check</h2>
+<div class="quiz" data-answer="c">
+  <p class="quiz-q">1. Your feature-extraction script is CPU-bound pure Python. You split it across 8 threads and see no speedup. Why?</p>
+  <div class="opts">
+    <button data-opt="a">Threads only help on GPUs</button>
+    <button data-opt="b">Python threads have too much memory overhead</button>
+    <button data-opt="c">The GIL serializes Python bytecode execution; use multiprocessing or push the work into vectorized/compiled code</button>
+    <button data-opt="d">The OS scheduler doesn't support 8 threads per process</button>
+  </div>
+  <div class="quiz-exp"><strong>c.</strong> One thread holds the GIL at a time for CPU-bound Python. Threads would help if the time were spent in I/O waits or in GIL-releasing C kernels.</div>
+</div>
+<div class="quiz" data-answer="b">
+  <p class="quiz-q">2. Arrays of shape (128, 1, 64) and (8, 64) are added. The result is:</p>
+  <div class="opts">
+    <button data-opt="a">an error — shapes don't match</button>
+    <button data-opt="b">shape (128, 8, 64), by broadcasting the size-1 and missing dimensions</button>
+    <button data-opt="c">shape (128, 8, 128)</button>
+    <button data-opt="d">shape (136, 64) by concatenation</button>
+  </div>
+  <div class="quiz-exp"><strong>b.</strong> Align right: (128,1,64) vs (·,8,64). 64=64 ✓; 1 vs 8 → stretch to 8; missing dim → 128. Legal, silent, and shape-(128,8,64) — which is also why broadcasting bugs are silent: verify intent with explicit <code>reshape</code>/<code>einsum</code> when in doubt.</div>
+</div>
+<div class="quiz" data-answer="d">
+  <p class="quiz-q">3. Which test is the <em>property-based</em> one?</p>
+  <div class="opts">
+    <button data-opt="a">assert model.predict(fixture_row) == 1</button>
+    <button data-opt="b">assert pipeline runs end-to-end on 10 sample rows</button>
+    <button data-opt="c">assert accuracy on the validation set ≥ 0.85</button>
+    <button data-opt="d">for hundreds of generated random inputs x: assert softmax(x).sum() ≈ 1 and all outputs ≥ 0</button>
+  </div>
+  <div class="quiz-exp"><strong>d.</strong> Property-based testing asserts invariants over generated inputs rather than specific examples. (a) is a unit test, (b) integration, (c) an evaluation gate.</div>
+</div>
+<div class="quiz" data-answer="a">
+  <p class="quiz-q">4. A training step does very little math per byte loaded (low arithmetic intensity). The GPU utilization graph will show:</p>
+  <div class="opts">
+    <button data-opt="a">low FLOP utilization — the compute units stall waiting on memory; bigger batches or fused kernels help</button>
+    <button data-opt="b">100% utilization — GPUs are always fully used when a kernel is running</button>
+    <button data-opt="c">the GIL throttling the GPU</button>
+    <button data-opt="d">nothing unusual; arithmetic intensity only matters on CPUs</button>
+  </div>
+  <div class="quiz-exp"><strong>a.</strong> Below the hardware's FLOPs-to-bandwidth ratio, the kernel is memory-bound. Batching, operator fusion, and mixed precision (Topic 12) all raise intensity.</div>
+</div>
+
+<h2>Go deeper</h2>
+<ul class="resources">
+  <li><a href="https://docs.python.org/3/tutorial/">The official Python tutorial</a> and <a href="https://numpy.org/doc/stable/user/basics.broadcasting.html">NumPy broadcasting docs</a><div class="rwhat">The broadcasting page is 10 minutes and permanently ends shape confusion.</div></li>
+  <li><a href="https://jakevdp.github.io/PythonDataScienceHandbook/">Python Data Science Handbook — VanderPlas (free online)</a><div class="rwhat">Ch. 2 (NumPy) for vectorization idioms with timings.</div></li>
+  <li><a href="https://missing.csail.mit.edu/">MIT — The Missing Semester of Your CS Education (free)</a><div class="rwhat">Shell, Git, debugging, profiling — the exact CS-hygiene material a physics degree skips. Lectures 5 (command line) and 6 (Git) first.</div></li>
+  <li><a href="https://learngitbranching.js.org/">Learn Git Branching (interactive)</a><div class="rwhat">Visual, gamified branching/rebasing — the fastest route to Git fluency.</div></li>
+  <li><a href="https://hypothesis.readthedocs.io/">Hypothesis documentation</a><div class="rwhat">The "quick start" and "what is property-based testing" pages.</div></li>
+  <li><a href="https://colin-scott.github.io/personal_website/research/interactive_latency.html">Interactive latency numbers (Colin Scott)</a><div class="rwhat">The famous "latency numbers every programmer should know," by year.</div></li>
+  <li><a href="https://horace.io/brrr_intro.html">Making Deep Learning Go Brrrr From First Principles — Horace He</a><div class="rwhat">Compute-bound vs memory-bound vs overhead-bound, explained with GPU roofline reasoning. Short, brilliant, and the bridge to Topic 12.</div></li>
+</ul>
+
+<div class="page-footer"></div>
+</main>
+
+<script>
+document.addEventListener("caie:ready", () => {
+  // ---------- vectorization benchmark ----------
+  (function () {
+    const N = 5_000_000;
+    function drawBars(res) {
+      const pal = CAIE.pal();
+      const { ctx, w } = CAIE.setupCanvas(document.getElementById("v-canvas"), Math.min(640, document.getElementById("v-canvas").parentNode.clientWidth - 4), 170);
+      ctx.clearRect(0, 0, w, 170);
+      if (!res) { ctx.fillStyle = pal.muted; ctx.font = "13px " + CAIE.css("--sans"); ctx.fillText("Results appear here.", 10, 40); return; }
+      const max = Math.max(res.slow, res.fast);
+      const rows = [
+        ["per-element dynamic dispatch (≈ Python loop)", res.slow, pal.s[5]],
+        ["tight typed-array loop (≈ NumPy kernel)", res.fast, pal.s[0]]
+      ];
+      rows.forEach((r, i) => {
+        const y = 30 + i * 60, bw = Math.max(4, (w - 260) * r[1] / max);
+        ctx.fillStyle = r[2];
+        ctx.beginPath(); ctx.roundRect(230, y, bw, 26, 4); ctx.fill();
+        ctx.fillStyle = pal.ink; ctx.font = "600 12px " + CAIE.css("--sans");
+        ctx.textAlign = "right"; ctx.fillText(r[0], 222, y + 17);
+        ctx.textAlign = "left"; ctx.fillText(r[1].toFixed(1) + " ms", 236 + bw, y + 17);
+      });
+    }
+    document.getElementById("v-run").addEventListener("click", () => {
+      document.getElementById("v-readout").textContent = "Running…";
+      setTimeout(() => {
+        const arr = new Float64Array(N);
+        for (let i = 0; i < N; i++) arr[i] = i % 97;
+        // "interpreted": boxed objects + dynamic per-element function calls
+        const boxed = [];
+        for (let i = 0; i < N / 10; i++) boxed.push({ v: arr[i] });
+        const addDyn = (acc, o) => acc + o.v;
+        let t0 = performance.now();
+        let s1 = 0;
+        for (let i = 0; i < boxed.length; i++) s1 = addDyn(s1, boxed[i]);
+        const slow = (performance.now() - t0) * 10; // scale to N elements
+        // "vectorized": tight loop over contiguous typed memory
+        t0 = performance.now();
+        let s2 = 0;
+        for (let i = 0; i < N; i++) s2 += arr[i];
+        const fast = performance.now() - t0;
+        drawBars({ slow, fast });
+        document.getElementById("v-readout").innerHTML =
+          "speedup: <b>" + (slow / fast).toFixed(1) + "×</b> on " + (N / 1e6) + "M elements (your machine, just now)" +
+          "<span>checksums equal: <b>" + (Math.abs(s1 * 10 - s2) < 1e-3 * s2 ? "yes" : "≈") + "</b></span>";
+      }, 30);
+    });
+    CAIE.onTheme(() => drawBars(null));
+    drawBars(null);
+  })();
+
+  // ---------- Big-O ----------
+  (function () {
+    const canvas = document.getElementById("b-canvas");
+    const fns = [
+      { name: "O(1)", f: n => 1, c: 3 },
+      { name: "O(log n)", f: n => Math.log2(Math.max(2, n)), c: 1 },
+      { name: "O(n)", f: n => n, c: 0 },
+      { name: "O(n log n)", f: n => n * Math.log2(Math.max(2, n)), c: 2 },
+      { name: "O(n²)", f: n => n * n, c: 4 },
+      { name: "O(2ⁿ)", f: n => Math.pow(2, n), c: 5 }
+    ];
+    document.getElementById("b-legend").innerHTML = fns.map(f =>
+      "<span><i style='background:var(--s" + (f.c + 1) + ")'></i>" + f.name + "</span>").join("");
+    function draw() {
+      const N = +document.getElementById("b-n").value;
+      document.getElementById("b-n-v").textContent = N;
+      const logY = document.getElementById("b-log").checked;
+      const pal = CAIE.pal();
+      const ymaxRaw = logY ? Math.log10(Math.pow(2, Math.min(N, 60))) : N * N;
+      const P = CAIE.plot(canvas, { w: Math.min(640, canvas.parentNode.clientWidth - 4), h: 320, xmin: 1, xmax: N, ymin: 0, ymax: ymaxRaw * 1.05 },);
+      P.clear();
+      P.axes("n (input size)", logY ? "log₁₀ operations" : "operations", { xfmt: v => Math.round(v), yfmt: v => logY ? v.toFixed(0) : CAIE.fmt.si(v) });
+      fns.forEach(fd => {
+        P.fn(n => { const v = fd.f(n); return logY ? Math.log10(Math.max(1, v)) : Math.min(v, ymaxRaw * 1.2); }, pal.s[fd.c], 2);
+      });
+    }
+    document.getElementById("b-n").addEventListener("input", draw);
+    document.getElementById("b-log").addEventListener("change", draw);
+    CAIE.onTheme(draw); window.addEventListener("resize", draw);
+    draw();
+  })();
+
+  // ---------- memory hierarchy ----------
+  (function () {
+    const rows = [
+      { name: "CPU register", t: 0.3, human: "1 second", d: "Inside the core itself. Compilers keep hot variables here. Zero-cost — the reference point." },
+      { name: "L1 cache (~64 KB)", t: 1, human: "3 seconds", d: "Per-core scratchpad. Hit rate >95% in well-written loops. Contiguous array access lives here." },
+      { name: "L2/L3 cache (MBs)", t: 10, human: "30 seconds", d: "Shared between cores. Where your working set goes when it outgrows L1. Cache-friendly algorithms (blocking/tiling in matmul kernels) exist to stay here." },
+      { name: "DRAM (main memory)", t: 100, human: "6 minutes", d: "100 ns. Pointer-chasing code (Python objects, linked lists) pays this per hop — that's the second reason interpreted loops are slow." },
+      { name: "GPU over PCIe/NVLink", t: 2000, human: "2 hours", d: "Moving tensors between CPU and GPU. Why data loaders prefetch and why you keep tensors on-device between ops." },
+      { name: "NVMe SSD read", t: 100000, human: "3.5 days", d: "100 µs. Reading training shards. Sequential streaming ≫ random access; hence formats like Parquet and WebDataset (Topic 6)." },
+      { name: "Same-datacenter network hop", t: 500000, human: "2.5 weeks", d: "0.5 ms. Every all-reduce in distributed training (Topic 12), every feature-store lookup (Topic 6), every microservice call (Topic 13)." },
+      { name: "Cross-region round trip", t: 150000000, human: "≈ 15 years", d: "150 ms. Why inference endpoints are deployed near users and why chatty cross-region designs die in review (Topic 20)." }
+    ];
+    const wrap = document.getElementById("h-rows");
+    const maxLog = Math.log10(rows[rows.length - 1].t / rows[0].t);
+    wrap.innerHTML = rows.map((r, i) =>
+      '<button class="hrow" data-i="' + i + '" style="display:flex;width:100%;align-items:center;gap:10px;padding:7px 10px;margin:3px 0;border:1px solid var(--border);border-radius:8px;background:var(--page);cursor:pointer;font:inherit;color:var(--ink)">' +
+      '<span style="flex:0 0 220px;text-align:left;font-weight:600;font-size:0.85rem">' + r.name + "</span>" +
+      '<span style="flex:1"><span style="display:block;height:10px;border-radius:5px;background:var(--s1);width:' +
+      Math.max(2, 100 * Math.log10(r.t / rows[0].t + 1) / maxLog) + '%"></span></span>' +
+      '<span style="flex:0 0 90px;text-align:right;font-family:var(--mono);font-size:0.78rem">' + (r.t < 1000 ? r.t + " ns" : r.t < 1e6 ? (r.t / 1000) + " µs" : (r.t / 1e6) + " ms") + "</span>" +
+      '<span style="flex:0 0 90px;text-align:right;font-family:var(--mono);font-size:0.78rem;color:var(--muted)">' + r.human + "</span></button>").join("");
+    wrap.addEventListener("click", e => {
+      const b = e.target.closest(".hrow");
+      if (!b) return;
+      const r = rows[+b.dataset.i];
+      document.getElementById("h-detail").innerHTML = "<strong>" + r.name + "</strong> — " + r.d;
+    });
+  })();
+});
+</script>
+</body>
+</html>

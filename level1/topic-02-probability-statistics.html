@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Topic 2 — Probability, Statistics &amp; Information Theory · CAIE Course</title>
+<link rel="stylesheet" href="../assets/course.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<script defer src="../assets/course.js"></script>
+</head>
+<body data-page="t02" data-root="..">
+<a class="skip" href="#main">Skip to content</a>
+<header class="topbar">
+  <button id="navToggle" class="iconbtn" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html">CAIE<span>·</span>Course</a>
+  <span class="topbar-title">Level I · Topic 2 · Probability, Statistics &amp; Information Theory</span>
+  <button id="themeToggle" class="iconbtn" aria-label="Toggle theme">◐</button>
+</header>
+<nav id="sidebar"></nav>
+
+<main id="main">
+<div class="kicker">Level I · Topic 2 · Exam weight 18%</div>
+<h1>Probability, Statistics &amp; Information Theory</h1>
+<p class="lead">
+  Machine learning <em>is</em> statistics executed at industrial scale. Every loss function you will
+  ever minimize is secretly a statement about probability distributions, and this topic is where that
+  secret gets told. For a physicist, the punchline will feel familiar: Shannon's entropy and Gibbs's
+  entropy are the same formula, and training a classifier is minimizing a free energy.
+</p>
+
+<div class="box los">
+  <div class="box-title">Learning outcomes</div>
+  <ul>
+    <li>Apply probability axioms, conditional probability, and Bayes' theorem; work with joint, marginal, and conditional distributions.</li>
+    <li>Describe Bernoulli, Binomial, Gaussian, Poisson, Categorical, Dirichlet distributions and their use cases; compute expectation, variance, covariance, correlation.</li>
+    <li>Explain the CLT and the Law of Large Numbers.</li>
+    <li>Compare frequentist vs Bayesian inference; apply MLE and MAP; construct confidence intervals and hypothesis tests; explain the bias-variance tradeoff formally; describe bootstrapping and cross-validation.</li>
+    <li>Define and compute entropy, cross-entropy, KL divergence, and mutual information; explain why cross-entropy is the natural classification loss; connect MLE to minimizing KL.</li>
+  </ul>
+</div>
+
+<h2>2.1 Probability — the algebra of uncertainty</h2>
+<p>
+  The axioms: probabilities are non-negative, sum to one over the whole sample space, and add for
+  mutually exclusive events. Everything else is bookkeeping. The two workhorses:
+</p>
+<p>
+  <strong>Conditional probability</strong> \(P(A\mid B) = P(A \cap B)/P(B)\), and
+  <strong>Bayes' theorem</strong>, which is just conditional probability read in both directions:
+  $$P(H \mid D) = \frac{P(D \mid H)\, P(H)}{P(D)} \quad\text{— posterior} =
+  \frac{\text{likelihood} \times \text{prior}}{\text{evidence}}.$$
+  Bayes is the update rule for beliefs. A classic trap the exam loves: a test with 99% accuracy for a
+  disease with 0.1% prevalence still gives you ≈ 9% chance of disease after a positive result —
+  because the prior is tiny, false positives from the healthy 99.9% swamp the true positives.
+  <strong>Base-rate neglect is the #1 probability error working engineers make</strong> (it will
+  reappear in Topic 13 when you compute how many drift "alerts" are false alarms).
+</p>
+<p>
+  A <strong>joint distribution</strong> \(p(x, y)\) contains everything; the
+  <strong>marginal</strong> \(p(x) = \sum_y p(x,y)\) integrates the rest out; the
+  <strong>conditional</strong> \(p(y \mid x) = p(x,y)/p(x)\) slices it. Supervised learning is the
+  business of estimating \(p(y \mid x)\); generative modeling (Topic 8) goes after the joint.
+</p>
+<div class="tablewrap">
+<table>
+  <tr><th>Distribution</th><th>Models</th><th>Where it shows up in ML</th></tr>
+  <tr><td><strong>Bernoulli(p)</strong></td><td>one coin flip</td><td>binary labels; the output of a sigmoid neuron</td></tr>
+  <tr><td><strong>Binomial(n,p)</strong></td><td>№ of successes in n flips</td><td>A/B test counts, error counts in eval sets</td></tr>
+  <tr><td><strong>Categorical(p₁…p_K)</strong></td><td>one K-sided die roll</td><td>the output of every softmax layer — next-token prediction is one giant Categorical</td></tr>
+  <tr><td><strong>Gaussian(μ,σ²)</strong></td><td>sums of many small effects</td><td>noise models, weight init, VAE latents, diffusion noise</td></tr>
+  <tr><td><strong>Poisson(λ)</strong></td><td>counts of rare events per interval</td><td>request arrivals (Topic 20 queueing), rare-event logs</td></tr>
+  <tr><td><strong>Dirichlet(α)</strong></td><td>a distribution <em>over</em> categorical distributions</td><td>Bayesian prior over class proportions, topic models</td></tr>
+</table>
+</div>
+<p>
+  <strong>Moments.</strong> Expectation \(E[X]\) is the average under the distribution; variance
+  \(\mathrm{Var}(X) = E[(X-\mu)^2]\); covariance \(\mathrm{Cov}(X,Y) = E[(X-\mu_X)(Y-\mu_Y)]\)
+  measures linear co-movement, and correlation is covariance normalized to \([-1,1]\). Independence
+  ⇒ zero covariance, but zero covariance does <em>not</em> imply independence (think \(Y = X^2\)) —
+  a beloved exam trick.
+</p>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Interactive — distribution explorer</div>
+    <div class="wsub">Pick a family, drag its parameters, and watch the shape, mean (solid line), and ±1σ band respond.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label>family
+        <select id="d-fam">
+          <option value="bernoulli">Bernoulli(p)</option>
+          <option value="binomial" selected>Binomial(n, p)</option>
+          <option value="poisson">Poisson(λ)</option>
+          <option value="gaussian">Gaussian(μ, σ)</option>
+        </select>
+      </label>
+      <label id="d-p1l">p <input type="range" id="d-p1" min="0.01" max="0.99" step="0.01" value="0.3"><span class="val" id="d-p1-v"></span></label>
+      <label id="d-p2l">n <input type="range" id="d-p2" min="1" max="60" step="1" value="20"><span class="val" id="d-p2-v"></span></label>
+    </div>
+    <canvas id="d-canvas" width="640" height="300"></canvas>
+    <div class="readout" id="d-readout"></div>
+    <p class="wcaption">
+      Things to try: crank Binomial's n up with p fixed — the silhouette becomes Gaussian (CLT in
+      action). Set Binomial with large n, small p, and compare with Poisson at λ = np — the law of
+      rare events. Note Poisson's signature: mean = variance.
+    </p>
+  </div>
+</div>
+
+<h2>2.2 The Central Limit Theorem and the Law of Large Numbers</h2>
+<p>
+  The <strong>Law of Large Numbers</strong>: sample means converge to the true mean as
+  \(n \to \infty\). It's why evaluation metrics stabilize with more test examples. The
+  <strong>Central Limit Theorem</strong> is stronger and stranger: the sample mean of <em>any</em>
+  distribution with finite variance becomes Gaussian,
+  $$\bar X_n \;\xrightarrow{d}\; \mathcal{N}\!\left(\mu, \tfrac{\sigma^2}{n}\right),$$
+  regardless of the original shape. That \(\sigma/\sqrt{n}\) is the error bar on every benchmark
+  number you will ever report — and the reason a 2-point accuracy gain measured on 200 examples
+  (\(\sigma/\sqrt n \approx 3\) points) is noise, not signal.
+</p>
+<div class="box bridge">
+  <div class="box-title">⚛ Physics bridge</div>
+  <p>
+    You've met the CLT as the reason a random walk of \(N\) steps spreads as \(\sqrt N\) — diffusion.
+    And the Gaussian's ubiquity is the same fact that makes Maxwell–Boltzmann velocity components
+    Gaussian: many independent microscopic contributions, one universal macroscopic shape. When a
+    distribution has heavy tails (no finite variance — think Lévy flights), the CLT fails, and so do
+    naive error bars; production latency distributions (Topic 20) are exactly this kind of beast,
+    which is why engineers report p95/p99 percentiles instead of means.
+  </p>
+</div>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Interactive — the CLT grinding any shape into a Gaussian</div>
+    <div class="wsub">We draw 4,000 samples of the <em>mean of n draws</em> from a decidedly non-Gaussian population, and histogram them. The curve is the CLT's predicted Gaussian.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label>population
+        <select id="c-pop">
+          <option value="exp" selected>exponential (skewed)</option>
+          <option value="uni">uniform (flat)</option>
+          <option value="bim">bimodal (two spikes)</option>
+        </select>
+      </label>
+      <label>n per mean <input type="range" id="c-n" min="1" max="80" step="1" value="1"><span class="val" id="c-n-v"></span></label>
+    </div>
+    <canvas id="c-canvas" width="640" height="300"></canvas>
+    <p class="wcaption">
+      At n = 1 you see the population itself. Drag n upward and watch skew and lumps get averaged
+      away while the width shrinks like \(1/\sqrt{n}\). This is why minibatch gradients (a mean of n
+      per-example gradients) are approximately Gaussian noise around the true gradient.
+    </p>
+  </div>
+</div>
+
+<h2>2.3 Statistical inference — two philosophies, one toolbox</h2>
+<p>
+  <strong>Frequentist</strong> inference treats parameters as fixed unknowns and randomness as living
+  in the data: "if I re-ran this experiment many times, my 95% confidence-interval procedure would
+  trap the true value 95% of the time." <strong>Bayesian</strong> inference treats parameters as
+  random variables with a prior, and conditions on the one dataset you actually saw:
+  "given this data, the parameter lies in this credible interval with probability 0.95." The
+  frequentist statement is about the <em>procedure</em>; the Bayesian one is about the
+  <em>parameter</em>. Exams punish people who mix them up.
+</p>
+<p>
+  <strong>Maximum Likelihood Estimation (MLE)</strong>: choose parameters that maximize the
+  probability of the observed data, \(\hat\theta = \arg\max_\theta \sum_i \log p(x_i \mid \theta)\).
+  <strong>MAP</strong> adds the prior: \(\arg\max_\theta \left[\sum_i \log p(x_i\mid\theta) + \log p(\theta)\right]\).
+  That extra term is precisely regularization: a Gaussian prior on weights <em>is</em> L2 weight
+  decay; a Laplace prior <em>is</em> L1. When you tune weight decay in Topic 5, you are choosing a
+  prior width.
+</p>
+<p>
+  <strong>Hypothesis testing</strong> asks: assuming no effect (the null), how surprising is my data?
+  The p-value is \(P(\text{data at least this extreme} \mid \text{null})\) — <em>not</em> the
+  probability the null is true. You'll use this machinery for real in A/B testing models
+  (Topic 13). <strong>Resampling methods</strong> sidestep distributional assumptions:
+  <em>bootstrapping</em> re-draws datasets with replacement from your sample to get empirical error
+  bars on any statistic; <em>cross-validation</em> rotates a held-out fold to estimate generalization
+  without wasting data — the default honesty protocol for Topic 4's models.
+</p>
+<p>
+  <strong>Bias–variance, formally.</strong> For squared error and a model \(\hat f\) trained on a
+  random dataset \(D\):
+  $$E_{D}\big[(y - \hat f_D(x))^2\big] = \underbrace{\big(f(x) - E_D[\hat f_D(x)]\big)^2}_{\text{bias}^2}
+  + \underbrace{E_D\big[(\hat f_D(x) - E_D[\hat f_D(x)])^2\big]}_{\text{variance}} + \underbrace{\sigma^2}_{\text{irreducible noise}}.$$
+  Bias: your model family can't represent the truth (too rigid). Variance: your model dances to the
+  noise of whichever training set it saw (too flexible). You will <em>see</em> this decomposition as
+  a slider in Topic 4's polynomial-fit widget.
+</p>
+
+<h2>2.4 Information theory — surprise, coded in bits</h2>
+<p>
+  The <strong>entropy</strong> of a discrete distribution,
+  $$H(P) = -\sum_i p_i \log p_i,$$
+  is its average surprise — the minimum average number of bits (log base 2) needed to encode samples.
+  Uniform = maximally uncertain = maximal entropy; a point mass = zero entropy.
+  <strong>Cross-entropy</strong> \(H(P, Q) = -\sum_i p_i \log q_i\) is the average bits you pay when
+  reality follows \(P\) but you coded for \(Q\). The overhead is the
+  <strong>KL divergence</strong>:
+  $$D_{\mathrm{KL}}(P \,\|\, Q) = \sum_i p_i \log \frac{p_i}{q_i} = H(P,Q) - H(P) \;\ge 0,$$
+  zero iff \(P = Q\), and asymmetric — \(D_{\mathrm{KL}}(P\|Q) \neq D_{\mathrm{KL}}(Q\|P)\), so it is
+  not a distance. <strong>Mutual information</strong>
+  \(I(X;Y) = D_{\mathrm{KL}}(p(x,y)\,\|\,p(x)p(y))\) measures how far a joint is from independence —
+  the information one variable carries about another, used in feature selection and
+  representation-learning objectives.
+</p>
+<p>
+  <strong>Why cross-entropy is <em>the</em> classification loss.</strong> Minimizing cross-entropy
+  between the data distribution and your model equals minimizing
+  \(D_{\mathrm{KL}}(P_{\text{data}} \| Q_\theta)\) (they differ by \(H(P_{\text{data}})\), a constant in
+  \(\theta\)) — and it also equals maximizing likelihood: the empirical average of
+  \(-\log q_\theta(y_i \mid x_i)\) <em>is</em> the negative log-likelihood. One object, three names.
+  When a language model reports "loss 2.3," that is a cross-entropy in nats per token; perplexity
+  (Topic 9) is just \(e^{2.3} \approx 10\) — "as confused as a 10-sided die."
+</p>
+<div class="box bridge">
+  <div class="box-title">⚛ Physics bridge</div>
+  <p>
+    \(H = -\sum p \ln p\) is Gibbs entropy with \(k_B = 1\). Softmax
+    \(p_i \propto e^{z_i/T}\) is the Boltzmann distribution with logits as negative energies —
+    "temperature" in LLM sampling (Topic 9) is exactly thermodynamic temperature. Cross-entropy
+    minimization is free-energy minimization; the log-partition function is log-sum-exp (Topic 1).
+    And maximum entropy subject to constraints — Jaynes's derivation of statistical mechanics — is
+    also how the exponential family of distributions arises in statistics. You already know this
+    subject; it just changed clothes.
+  </p>
+</div>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Interactive — entropy, cross-entropy &amp; KL between two distributions</div>
+    <div class="wsub">P (blue) is "reality"; Q (yellow) is your model. Drag the sliders to reshape each; all three information quantities update live. Bars are normalized automatically.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls" id="k-controls"></div>
+    <canvas id="k-canvas" width="640" height="260"></canvas>
+    <div class="tiles">
+      <div class="tile"><div class="tv" id="k-hp">–</div><div class="tl">H(P) — bits reality needs</div></div>
+      <div class="tile"><div class="tv" id="k-hpq">–</div><div class="tl">H(P,Q) — bits your code pays</div></div>
+      <div class="tile"><div class="tv" id="k-kl">–</div><div class="tl">KL(P‖Q) — the overhead</div></div>
+      <div class="tile"><div class="tv" id="k-klr">–</div><div class="tl">KL(Q‖P) — note: ≠ KL(P‖Q)</div></div>
+    </div>
+    <p class="wcaption">
+      Things to try: (1) make Q assign near-zero mass to an outcome P cares about — KL(P‖Q) explodes
+      (this is why a model that says "impossible" about something real is penalized brutally by
+      cross-entropy). (2) Make P uniform — H(P) hits its maximum, log₂5 ≈ 2.32 bits. (3) Verify the
+      identity H(P,Q) = H(P) + KL(P‖Q) from the tiles.
+    </p>
+  </div>
+</div>
+
+<div class="box jargon">
+  <div class="box-title">Jargon decoder</div>
+  <dl>
+    <dt>i.i.d.</dt><dd>Independent and identically distributed — the standard (and often false in production!) assumption that samples come from one fixed distribution. Violations of i.i.d. are called distribution shift (Topic 13).</dd>
+    <dt>likelihood</dt><dd>\(p(\text{data}\mid\theta)\) viewed as a function of \(\theta\) with data fixed. Not a probability distribution over θ.</dd>
+    <dt>prior / posterior</dt><dd>Belief about parameters before / after seeing data.</dd>
+    <dt>nat / bit</dt><dd>Information units: natural log vs log₂. 1 nat ≈ 1.443 bits. Neural losses are usually nats.</dd>
+    <dt>perplexity</dt><dd>\(e^{\text{cross-entropy}}\) — effective branching factor; "how many-sided a die is the model as confused as."</dd>
+    <dt>conjugate prior</dt><dd>A prior that keeps the posterior in the same family (e.g., Dirichlet is conjugate to Categorical) — algebra convenience, heavily used in Bayesian ML.</dd>
+    <dt>p-value</dt><dd>P(data at least this extreme | null hypothesis true). Not the probability the null is true.</dd>
+  </dl>
+</div>
+
+<h2>Self-check</h2>
+<div class="quiz" data-answer="b">
+  <p class="quiz-q">1. A hallucination detector flags true hallucinations 95% of the time, with a 5% false-positive rate. In your traffic, 2% of answers are hallucinations. An answer gets flagged. Probability it's actually a hallucination?</p>
+  <div class="opts">
+    <button data-opt="a">≈ 95%</button>
+    <button data-opt="b">≈ 28%</button>
+    <button data-opt="c">≈ 50%</button>
+    <button data-opt="d">≈ 5%</button>
+  </div>
+  <div class="quiz-exp"><strong>b.</strong> Bayes: (0.95×0.02)/(0.95×0.02 + 0.05×0.98) = 0.019/0.068 ≈ 0.28. The 98% clean answers generate most flags. Every monitoring system you build in Topic 13 lives or dies on this arithmetic.</div>
+</div>
+<div class="quiz" data-answer="c">
+  <p class="quiz-q">2. Minimizing cross-entropy loss on classification is equivalent to:</p>
+  <div class="opts">
+    <button data-opt="a">minimizing H(P) of the data distribution</button>
+    <button data-opt="b">maximizing the entropy of the model's predictions</button>
+    <button data-opt="c">maximizing likelihood, and minimizing KL(data ‖ model)</button>
+    <button data-opt="d">minimizing KL(model ‖ data)</button>
+  </div>
+  <div class="quiz-exp"><strong>c.</strong> H(P,Q) = H(P) + KL(P‖Q), and H(P) doesn't depend on model parameters. Note the direction: it's KL(data‖model) — the direction that punishes assigning tiny probability to real events. (d) is the other direction, which is mode-seeking — relevant to variational inference and RLHF's KL penalty (Topic 17).</div>
+</div>
+<div class="quiz" data-answer="a">
+  <p class="quiz-q">3. Your model scores 71.0% vs baseline 69.5% on a 400-example benchmark. Roughly, the standard error on each score is \(\sqrt{p(1-p)/n}\) ≈ 2.3 points. The right conclusion:</p>
+  <div class="opts">
+    <button data-opt="a">the difference is well within noise; get more eval data or use paired tests before claiming a win</button>
+    <button data-opt="b">a 1.5-point gain is real because both numbers came from the same benchmark</button>
+    <button data-opt="c">the new model is worse — smaller models generalize better</button>
+    <button data-opt="d">re-run until the gap exceeds 2.3 points once, then ship</button>
+  </div>
+  <div class="quiz-exp"><strong>a.</strong> CLT gives σ/√n ≈ 2.3 points per score; a 1.5-point gap is ~0.5σ of the difference. (d) is p-hacking. Paired comparisons (same examples, both models) reduce variance and are the professional move.</div>
+</div>
+<div class="quiz" data-answer="d">
+  <p class="quiz-q">4. Adding L2 weight decay to a loss is equivalent, in the MAP view, to:</p>
+  <div class="opts">
+    <button data-opt="a">assuming heavier-tailed noise in the data</button>
+    <button data-opt="b">placing a uniform prior on the weights</button>
+    <button data-opt="c">placing a Laplace prior on the weights</button>
+    <button data-opt="d">placing a zero-mean Gaussian prior on the weights</button>
+  </div>
+  <div class="quiz-exp"><strong>d.</strong> \(-\log p(\theta)\) for a Gaussian prior is \(\|\theta\|^2 / 2\sigma^2\) + const — exactly the L2 penalty, with decay strength = 1/σ². Laplace gives L1 (sparsity, Topic 4).</div>
+</div>
+
+<h2>Go deeper</h2>
+<ul class="resources">
+  <li><a href="https://mml-book.github.io/">Mathematics for Machine Learning (free PDF)</a><div class="rwhat">Ch. 6 (probability &amp; distributions), Ch. 8 (models + MLE/MAP). The bridge from this page to the exam.</div></li>
+  <li><a href="https://www.statlearning.com/">An Introduction to Statistical Learning — James et al. (free PDF)</a><div class="rwhat">Ch. 2 (bias-variance) and Ch. 5 (cross-validation, bootstrap) — the gentlest rigorous treatment in print.</div></li>
+  <li><a href="https://www.microsoft.com/en-us/research/publication/pattern-recognition-machine-learning/">Bishop — Pattern Recognition and Machine Learning (free PDF from Microsoft Research)</a><div class="rwhat">Ch. 1.2–1.6 covers probability, decision theory, and information theory in exactly this topic's order; Ch. 2 for the distribution zoo including Dirichlet.</div></li>
+  <li><a href="https://www.inference.org.uk/itprnn/book.pdf">MacKay — Information Theory, Inference, and Learning Algorithms (free PDF)</a><div class="rwhat">Ch. 1–3 and 8. The most physicist-friendly information theory book ever written; MacKay was a physicist.</div></li>
+  <li><a href="https://www.youtube.com/watch?v=HZGCoVF3YvM">3Blue1Brown — Bayes theorem, the geometry of changing beliefs</a><div class="rwhat">Ten minutes that permanently fix base-rate neglect.</div></li>
+  <li><a href="https://colah.github.io/posts/2015-09-Visual-Information/">Chris Olah — Visual Information Theory</a><div class="rwhat">Entropy, cross-entropy and KL with the clearest diagrams available anywhere. Read after playing with the widget above.</div></li>
+</ul>
+
+<div class="page-footer"></div>
+</main>
+
+<script>
+document.addEventListener("caie:ready", () => {
+  // ---------- Widget 1: distribution explorer ----------
+  (function () {
+    const canvas = document.getElementById("d-canvas");
+    const fam = document.getElementById("d-fam");
+    const p1l = document.getElementById("d-p1l"), p2l = document.getElementById("d-p2l");
+    const p1 = document.getElementById("d-p1"), p2 = document.getElementById("d-p2");
+    function logFact(n) { let s = 0; for (let i = 2; i <= n; i++) s += Math.log(i); return s; }
+    function config() {
+      const f = fam.value;
+      if (f === "bernoulli") { p1l.firstChild.textContent = "p "; p1.min = 0.01; p1.max = 0.99; p1.step = 0.01; p2l.style.display = "none"; }
+      if (f === "binomial") { p1l.firstChild.textContent = "p "; p1.min = 0.01; p1.max = 0.99; p1.step = 0.01; p2l.style.display = ""; p2l.firstChild.textContent = "n "; p2.min = 1; p2.max = 60; p2.step = 1; }
+      if (f === "poisson") { p1l.firstChild.textContent = "λ "; p1.min = 0.2; p1.max = 30; p1.step = 0.2; if (+p1.value > 30) p1.value = 5; p2l.style.display = "none"; }
+      if (f === "gaussian") { p1l.firstChild.textContent = "μ "; p1.min = -5; p1.max = 5; p1.step = 0.1; p2l.style.display = ""; p2l.firstChild.textContent = "σ "; p2.min = 0.3; p2.max = 3; p2.step = 0.05; if (+p2.value > 3) p2.value = 1; }
+    }
+    function draw() {
+      const f = fam.value, a = +p1.value, b = +p2.value;
+      document.getElementById("d-p1-v").textContent = a;
+      document.getElementById("d-p2-v").textContent = b;
+      const pal = CAIE.pal();
+      let pts = [], discrete = true, mean, vari, xmin, xmax;
+      if (f === "bernoulli") { pts = [[0, 1 - a], [1, a]]; mean = a; vari = a * (1 - a); xmin = -0.5; xmax = 1.5; }
+      else if (f === "binomial") {
+        const n = Math.round(b);
+        for (let k = 0; k <= n; k++) {
+          const lp = logFact(n) - logFact(k) - logFact(n - k) + k * Math.log(a) + (n - k) * Math.log(1 - a);
+          pts.push([k, Math.exp(lp)]);
+        }
+        mean = n * a; vari = n * a * (1 - a); xmin = -0.5; xmax = n + 0.5;
+      } else if (f === "poisson") {
+        const kmax = Math.max(12, Math.ceil(a + 5 * Math.sqrt(a)));
+        for (let k = 0; k <= kmax; k++) pts.push([k, Math.exp(k * Math.log(a) - a - logFact(k))]);
+        mean = a; vari = a; xmin = -0.5; xmax = kmax + 0.5;
+      } else {
+        discrete = false; mean = a; vari = b * b; xmin = a - 4 * b; xmax = a + 4 * b;
+        for (let i = 0; i <= 160; i++) {
+          const x = xmin + (xmax - xmin) * i / 160;
+          pts.push([x, Math.exp(-0.5 * Math.pow((x - a) / b, 2)) / (b * Math.sqrt(2 * Math.PI))]);
+        }
+      }
+      const ymax = Math.max(...pts.map(p => p[1])) * 1.15;
+      const P = CAIE.plot(canvas, { w: Math.min(640, canvas.parentNode.clientWidth - 4), h: 300, xmin, xmax, ymin: 0, ymax });
+      P.clear();
+      P.axes(discrete ? "k" : "x", discrete ? "P(X=k)" : "density", { yfmt: v => v.toFixed(2), xfmt: v => discrete ? Math.round(v) : v.toFixed(1) });
+      // ±1σ band
+      const sd = Math.sqrt(vari);
+      P.ctx.fillStyle = CAIE.alpha(pal.s[0], 0.10);
+      P.ctx.fillRect(P.X(Math.max(xmin, mean - sd)), P.pad.t, P.X(Math.min(xmax, mean + sd)) - P.X(Math.max(xmin, mean - sd)), P.h - P.pad.t - P.pad.b);
+      if (discrete) {
+        const bw = Math.max(3, Math.min(26, (P.X(1) - P.X(0)) * 0.7));
+        P.ctx.fillStyle = pal.s[0];
+        for (const [k, p] of pts) {
+          const x = P.X(k), y0 = P.Y(0), y1 = P.Y(p);
+          P.ctx.beginPath();
+          P.ctx.roundRect(x - bw / 2, y1, bw, Math.max(0, y0 - y1), [4, 4, 0, 0]);
+          P.ctx.fill();
+        }
+      } else P.fn(x => Math.exp(-0.5 * Math.pow((x - a) / b, 2)) / (b * Math.sqrt(2 * Math.PI)), pal.s[0], 2.5);
+      // mean line
+      P.ctx.strokeStyle = pal.ink2; P.ctx.setLineDash([5, 4]);
+      P.ctx.beginPath(); P.ctx.moveTo(P.X(mean), P.pad.t); P.ctx.lineTo(P.X(mean), P.Y(0)); P.ctx.stroke();
+      P.ctx.setLineDash([]);
+      document.getElementById("d-readout").innerHTML =
+        "E[X] = <b>" + mean.toFixed(2) + "</b><span>Var(X) = <b>" + vari.toFixed(2) + "</b></span><span>σ = <b>" + sd.toFixed(2) + "</b> (shaded band = μ±σ)</span>";
+    }
+    fam.addEventListener("change", () => { config(); draw(); });
+    p1.addEventListener("input", draw); p2.addEventListener("input", draw);
+    CAIE.onTheme(draw); window.addEventListener("resize", draw);
+    config(); draw();
+  })();
+
+  // ---------- Widget 2: CLT ----------
+  (function () {
+    const canvas = document.getElementById("c-canvas");
+    const rand = CAIE.rng(42);
+    function sample(pop) {
+      if (pop === "exp") return -Math.log(1 - rand());
+      if (pop === "uni") return rand() * 2;
+      return rand() < 0.5 ? 0.3 + 0.12 * CAIE.gauss(rand) : 1.9 + 0.12 * CAIE.gauss(rand);
+    }
+    const stats = { exp: [1, 1], uni: [1, 1 / 3], bim: [1.1, 0.655] }; // mean, var
+    function draw() {
+      const pop = document.getElementById("c-pop").value;
+      const n = +document.getElementById("c-n").value;
+      document.getElementById("c-n-v").textContent = n;
+      const M = 4000, means = new Array(M);
+      for (let i = 0; i < M; i++) {
+        let s = 0; for (let j = 0; j < n; j++) s += sample(pop);
+        means[i] = s / n;
+      }
+      const [mu, v2] = stats[pop];
+      const sd = Math.sqrt(v2 / n);
+      const xmin = Math.max(0, mu - 4.2 * Math.sqrt(v2)), xmax = mu + 4.2 * Math.sqrt(v2);
+      const B = 60, hist = new Array(B).fill(0);
+      for (const m of means) {
+        const b = Math.floor((m - xmin) / (xmax - xmin) * B);
+        if (b >= 0 && b < B) hist[b]++;
+      }
+      const binW = (xmax - xmin) / B;
+      const dens = hist.map(hh => hh / (M * binW));
+      const gauss = x => Math.exp(-0.5 * Math.pow((x - mu) / sd, 2)) / (sd * Math.sqrt(2 * Math.PI));
+      const ymax = Math.max(...dens, gauss(mu)) * 1.12;
+      const pal = CAIE.pal();
+      const P = CAIE.plot(canvas, { w: Math.min(640, canvas.parentNode.clientWidth - 4), h: 300, xmin, xmax, ymin: 0, ymax });
+      P.clear(); P.axes("sample mean", "density", { yfmt: v => v.toFixed(1), xfmt: v => v.toFixed(1) });
+      P.ctx.fillStyle = CAIE.alpha(pal.s[0], 0.55);
+      for (let b2 = 0; b2 < B; b2++) {
+        if (!dens[b2]) continue;
+        P.ctx.fillRect(P.X(xmin + b2 * binW) + 0.5, P.Y(dens[b2]), P.X(xmin + binW) - P.X(xmin) - 1, P.Y(0) - P.Y(dens[b2]));
+      }
+      P.fn(gauss, pal.s[5], 2.5);
+      P.label(mu + 0.2 * Math.sqrt(v2), gauss(mu), "CLT prediction N(μ, σ²/n)", pal.s[5]);
+    }
+    document.getElementById("c-pop").addEventListener("change", draw);
+    document.getElementById("c-n").addEventListener("input", draw);
+    CAIE.onTheme(draw); window.addEventListener("resize", draw);
+    draw();
+  })();
+
+  // ---------- Widget 3: entropy / KL ----------
+  (function () {
+    const K = 5, labels = ["A", "B", "C", "D", "E"];
+    const pRaw = [5, 3, 1.5, 1, 0.5], qRaw = [2, 2, 2, 2, 2];
+    const ctrl = document.getElementById("k-controls");
+    let html = "";
+    for (let d = 0; d < 2; d++) {
+      const nm = d === 0 ? "P" : "Q";
+      html += '<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center"><b style="color:var(--' + (d === 0 ? "s1" : "s3") + ')">' + nm + "</b>";
+      for (let i = 0; i < K; i++) {
+        html += "<label>" + labels[i] + ' <input type="range" id="k-' + nm + i + '" min="0.02" max="6" step="0.02" value="' + (d === 0 ? pRaw[i] : qRaw[i]) + '" style="width:74px"></label>';
+      }
+      html += "</div>";
+    }
+    ctrl.innerHTML = html;
+    const canvas = document.getElementById("k-canvas");
+    function norm(raw) { const s = raw.reduce((a, b) => a + b, 0); return raw.map(v => v / s); }
+    function draw() {
+      const p = norm([0, 1, 2, 3, 4].map(i => +document.getElementById("k-P" + i).value));
+      const q = norm([0, 1, 2, 3, 4].map(i => +document.getElementById("k-Q" + i).value));
+      const lg2 = Math.log(2);
+      const H = dist => -dist.reduce((s, v) => s + (v > 0 ? v * Math.log(v) : 0), 0) / lg2;
+      const CE = (a, b) => -a.reduce((s, v, i) => s + (v > 0 ? v * Math.log(Math.max(b[i], 1e-12)) : 0), 0) / lg2;
+      const hp = H(p), hpq = CE(p, q), kl = hpq - hp, klr = CE(q, p) - H(q);
+      document.getElementById("k-hp").textContent = hp.toFixed(3);
+      document.getElementById("k-hpq").textContent = hpq.toFixed(3);
+      document.getElementById("k-kl").textContent = kl.toFixed(3);
+      document.getElementById("k-klr").textContent = klr.toFixed(3);
+      const pal = CAIE.pal();
+      const { ctx, w, h } = CAIE.setupCanvas(canvas, Math.min(640, canvas.parentNode.clientWidth - 4), 260);
+      ctx.clearRect(0, 0, w, h);
+      const ymax = Math.max(...p, ...q) * 1.15, base = h - 26;
+      const gw = w / K;
+      ctx.font = "11px " + CAIE.css("--sans"); ctx.textAlign = "center";
+      for (let i = 0; i < K; i++) {
+        const cx = i * gw + gw / 2, bw = Math.min(34, gw / 3.1);
+        const hP = p[i] / ymax * (base - 16), hQ = q[i] / ymax * (base - 16);
+        ctx.fillStyle = pal.s[0];
+        ctx.beginPath(); ctx.roundRect(cx - bw - 2, base - hP, bw, hP, [4, 4, 0, 0]); ctx.fill();
+        ctx.fillStyle = pal.s[2];
+        ctx.beginPath(); ctx.roundRect(cx + 2, base - hQ, bw, hQ, [4, 4, 0, 0]); ctx.fill();
+        ctx.fillStyle = pal.ink2;
+        ctx.fillText(labels[i], cx, h - 10);
+        ctx.fillStyle = pal.muted;
+        ctx.fillText(p[i].toFixed(2), cx - bw / 2 - 2, base - hP - 5);
+        ctx.fillText(q[i].toFixed(2), cx + bw / 2 + 2, base - hQ - 5);
+      }
+      ctx.strokeStyle = pal.baseline;
+      ctx.beginPath(); ctx.moveTo(0, base); ctx.lineTo(w, base); ctx.stroke();
+    }
+    for (let i = 0; i < K; i++) {
+      document.getElementById("k-P" + i).addEventListener("input", draw);
+      document.getElementById("k-Q" + i).addEventListener("input", draw);
+    }
+    CAIE.onTheme(draw); window.addEventListener("resize", draw);
+    draw();
+  })();
+});
+</script>
+</body>
+</html>

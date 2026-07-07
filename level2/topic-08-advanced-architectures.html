@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Topic 8 — Advanced Architectures · CAIE Course</title>
+<link rel="stylesheet" href="../assets/course.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<script defer src="../assets/course.js"></script>
+</head>
+<body data-page="t08" data-root="..">
+<a class="skip" href="#main">Skip to content</a>
+<header class="topbar">
+  <button id="navToggle" class="iconbtn" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html">CAIE<span>·</span>Course</a>
+  <span class="topbar-title">Level II · Topic 8 · Advanced Architectures</span>
+  <button id="themeToggle" class="iconbtn" aria-label="Toggle theme">◐</button>
+</header>
+<nav id="sidebar"></nav>
+
+<main id="main">
+<div class="kicker">Level II · Topic 8 · Exam weight 18%</div>
+<h1>Advanced Architectures: Transformers, Diffusion, GNNs</h1>
+<p class="lead">
+  Level II begins with the architecture that ate the field. You will derive attention rather than
+  admire it, account for every byte of the KV cache, and understand diffusion as a physicist should
+  — as time-reversed Langevin dynamics. Vignettes here give you a company, a latency budget, and a
+  sequence length, and ask which architectural lever to pull.
+</p>
+
+<div class="box los">
+  <div class="box-title">Learning outcomes</div>
+  <ul>
+    <li>Derive scaled dot-product attention and explain the √d factor; decompose multi-head attention into Q/K/V projections and justify multiple heads.</li>
+    <li>Explain positional encodings (sinusoidal, learned, RoPE, ALiBi) and their extrapolation properties; describe the full transformer block and pre-LN vs post-LN.</li>
+    <li>Analyze attention's quadratic complexity; describe FlashAttention, sparse/linear/sliding-window variants; explain KV caching and MQA/GQA/paged attention.</li>
+    <li>Describe VAEs (reparameterization trick), GANs (minimax, mode collapse), diffusion models (forward/reverse, DDPM vs DDIM); compare diffusion vs autoregressive generation.</li>
+    <li>Describe GNN message passing and CLIP-style contrastive alignment.</li>
+  </ul>
+</div>
+
+<h2>8.1 Attention, derived</h2>
+<p>
+  Topic 5 called attention a differentiable dictionary lookup. Now precisely: each token's embedding
+  \(x_i\) is projected three ways — a <strong>query</strong> \(q_i = W_Q x_i\) ("what am I looking
+  for?"), a <strong>key</strong> \(k_i = W_K x_i\) ("what do I contain?"), and a
+  <strong>value</strong> \(v_i = W_V x_i\) ("what do I contribute if selected?"). Token \(i\)'s
+  output is a similarity-weighted mixture of everyone's values:
+  $$\mathrm{Attention}(Q,K,V) = \mathrm{softmax}\!\left(\frac{QK^\top}{\sqrt{d_k}}\right) V.$$
+</p>
+<p>
+  <strong>Why √d?</strong> If the components of \(q\) and \(k\) are independent with zero mean and
+  unit variance, then \(q\cdot k = \sum_{j=1}^{d_k} q_j k_j\) has variance \(d_k\) — standard
+  deviation \(\sqrt{d_k}\). At \(d_k = 128\), raw dot products routinely reach ±20, and softmax of
+  ±20 is a one-hot vector: gradients through it vanish (every input change leaves the winner the
+  winner). Dividing by \(\sqrt{d_k}\) restores unit variance — exactly the same signal-scale
+  bookkeeping as Xavier initialization in Topic 5, applied to the attention logits. The widget below
+  lets you watch saturation happen as \(d\) grows.
+</p>
+<p>
+  <strong>Why multiple heads?</strong> One softmax produces one convex mixture — one "relationship
+  pattern" per layer. Splitting \(d_{model}\) into \(h\) heads of dimension \(d_{model}/h\), each
+  with its own \(W_Q, W_K, W_V\), lets the layer attend to several relations simultaneously (a
+  syntactic head, a coreference head, a positional head…), then concatenate and re-project. Cost is
+  the same as one big head; expressivity is not.
+</p>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Interactive — attention weights and the √d effect</div>
+    <div class="wsub">A toy 8-token attention matrix (row = query token, column = where it attends). Grow the key dimension d and toggle the √d scaling: without it, softmax saturates to one-hot and gradients die.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label>key dim d <input type="range" id="at-d" min="4" max="512" step="4" value="64"><span class="val" id="at-d-v"></span></label>
+      <label><input type="checkbox" id="at-scale" checked> divide by √d</label>
+      <label><input type="checkbox" id="at-causal" checked> causal mask (decoder-style)</label>
+    </div>
+    <canvas id="at-canvas" width="640" height="330"></canvas>
+    <div class="readout" id="at-readout"></div>
+    <p class="wcaption">
+      Watch the mean row entropy: with scaling it stays healthy as d grows; untick the box and it
+      collapses toward 0 bits (one-hot rows) — the saturation the √d factor exists to prevent. The
+      causal mask zeroes the upper triangle: a decoder token may only look backward, which is what
+      makes autoregressive generation (and KV caching) possible.
+    </p>
+  </div>
+</div>
+
+<p>
+  <strong>The full block.</strong> A transformer layer is:
+  \(x \mathrel{+}= \mathrm{MHA}(\mathrm{LN}(x))\); \(x \mathrel{+}= \mathrm{FFN}(\mathrm{LN}(x))\) —
+  attention mixes information <em>across</em> positions; the FFN (typically 4× wider, GELU or
+  SwiGLU) transforms each position independently; residual connections carry an identity path;
+  normalization keeps scales sane. That's <strong>pre-LN</strong> (norm inside the residual branch),
+  which trains stably deep because the residual stream is never normalized away. The original 2017
+  <strong>post-LN</strong> (norm after the addition) gives slightly better final loss but needs
+  careful warmup and becomes fragile with depth — a classic exam contrast.
+</p>
+<p>
+  <strong>Positional encodings.</strong> Attention is permutation-invariant — without positional
+  information, "dog bites man" = "man bites dog." Options, with their extrapolation behavior (what
+  happens past training length):
+</p>
+<div class="tablewrap">
+<table>
+  <tr><th>Scheme</th><th>Mechanism</th><th>Extrapolation</th></tr>
+  <tr><td><strong>Sinusoidal</strong></td><td>add fixed sin/cos waves of geometric frequencies to embeddings</td><td>defined at any length, degrades in practice</td></tr>
+  <tr><td><strong>Learned absolute</strong></td><td>a trained embedding per position index</td><td>none — position 4097 literally has no vector</td></tr>
+  <tr><td><strong>RoPE</strong> (rotary)</td><td><em>rotate</em> each q,k pair by an angle ∝ position; dot products then depend only on <em>relative</em> offset</td><td>moderate; extendable via interpolation/YaRN tricks — the modern default (Llama, Qwen)</td></tr>
+  <tr><td><strong>ALiBi</strong></td><td>no embedding at all; subtract a linear distance penalty from attention logits per head</td><td>best zero-shot length extrapolation; biases toward recency</td></tr>
+</table>
+</div>
+<div class="box bridge">
+  <div class="box-title">⚛ Physics bridge</div>
+  <p>
+    RoPE is phase encoding: a pair of embedding dimensions is treated as a complex number and
+    position is a rotation \(e^{i m\theta}\) — so \(\langle q_m, k_n\rangle\) depends only on the
+    phase difference \((m-n)\theta\), like an interference pattern depending only on path
+    difference. Sinusoidal encoding is a Fourier basis over position. And attention itself —
+    \(\mathrm{softmax}(E/T)\) weights over states — is a Boltzmann distribution over which past
+    token to "occupy," with the √d factor setting the temperature.
+  </p>
+</div>
+<p>
+  <strong>The quadratic problem and its industry.</strong> \(QK^\top\) is an \(n \times n\) matrix:
+  \(O(n^2 d)\) time and — naively — \(O(n^2)\) memory. At 128k context that matrix has
+  1.6×10¹⁰ entries per head per layer. The main responses:
+</p>
+<ul>
+  <li><strong>FlashAttention</strong> — <em>exact</em> attention, restructured: compute
+  \(QK^\top\) tile by tile in fast on-chip SRAM, using the online-softmax trick so the full matrix
+  never touches slow HBM memory. It's a memory-hierarchy optimization (Topic 3!), not an
+  approximation: 2–4× faster, \(O(n)\) memory, identical output.</li>
+  <li><strong>Sliding-window / sparse</strong> — attend only to the last w tokens or to a structured
+  subset (Mistral's 4k window; Longformer's global+local): \(O(nw)\). Long range flows through
+  stacked layers' growing receptive field, CNN-style.</li>
+  <li><strong>Linear attention</strong> — replace softmax with a kernel feature map so
+  \((\phi(Q)\phi(K)^\top)V\) can be reassociated to \(\phi(Q)(\phi(K)^\top V)\): \(O(n)\), but
+  quality lags at equal size; the idea lives on in state-space/hybrid models (Mamba-class).</li>
+</ul>
+<p>
+  <strong>KV caching</strong> is the inference-side twin. Generating token \(t\) needs attention
+  over all previous keys/values; recomputing them each step would make generation \(O(n^2)\) per
+  token. So you cache K and V for every layer — and that cache, not the weights, is what limits
+  batch size at long context:
+  $$\text{KV bytes} = 2 \times L \times n_{kv} \times d_{head} \times S \times B \times \text{bytes/param}.$$
+  Shrinking it: <strong>MQA</strong> (all query heads share 1 K/V head), <strong>GQA</strong>
+  (groups share — e.g. 64 query heads, 8 KV heads: 8× smaller cache, negligible quality loss — the
+  Llama-70B choice), and <strong>paged attention</strong> (vLLM): store the cache in non-contiguous
+  pages like virtual memory, eliminating fragmentation so real serving batches fit.
+</p>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Interactive — KV-cache memory calculator</div>
+    <div class="wsub">Size the cache for a real model. This is a Level II exam calculation — do it by hand once, then check yourself here.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label>preset
+        <select id="kv-preset">
+          <option value="7b">Llama-2-7B (32L · 4096d · 32 heads · MHA)</option>
+          <option value="70b" selected>Llama-3-70B (80L · 8192d · 64 heads · GQA-8)</option>
+          <option value="custom">custom</option>
+        </select>
+      </label>
+      <label>context S <input type="range" id="kv-s" min="1024" max="131072" step="1024" value="8192"><span class="val" id="kv-s-v"></span></label>
+      <label>batch B <input type="range" id="kv-b" min="1" max="64" step="1" value="8"><span class="val" id="kv-b-v"></span></label>
+      <label>dtype
+        <select id="kv-dtype"><option value="2" selected>fp16/bf16 (2 B)</option><option value="1">fp8/int8 (1 B)</option></select>
+      </label>
+    </div>
+    <canvas id="kv-canvas" width="640" height="220"></canvas>
+    <div class="readout" id="kv-readout"></div>
+    <p class="wcaption">
+      The three bars show the same model with MHA, GQA (8 KV heads), and MQA (1). The dashed line is
+      one H100's 80 GB — note how at 128k context even GQA can exceed what remains after weights.
+      This calculation is why long context is priced the way it is (Topic 20).
+    </p>
+  </div>
+</div>
+
+<h2>8.2 Generative architectures — three ways to invent data</h2>
+<p>
+  Generative modeling asks for samples from \(p(x)\). Three families, three strategies:
+</p>
+<p>
+  <strong>VAEs</strong> pair a probabilistic encoder \(q(z\mid x)\) with a decoder \(p(x\mid z)\)
+  and maximize the ELBO: reconstruction quality minus \(D_{KL}(q(z\mid x)\,\|\,\mathcal N(0,I))\),
+  which keeps the latent space organized so you can sample from the prior. The
+  <strong>reparameterization trick</strong> solves "how do you backprop through sampling?": instead
+  of sampling \(z \sim \mathcal N(\mu, \sigma^2)\) — a stochastic node with no gradient — compute
+  \(z = \mu + \sigma \odot \epsilon\), \(\epsilon \sim \mathcal N(0, I)\). Randomness moves into an
+  input; \(\mu\) and \(\sigma\) sit on a clean differentiable path. VAEs sample fast and embed
+  meaningfully, but reconstructions blur (the Gaussian likelihood averages modes).
+</p>
+<p>
+  <strong>GANs</strong> stage a two-player game: a generator maps noise to fakes, a discriminator
+  classifies real vs fake, \(\min_G \max_D \; E[\log D(x)] + E[\log(1 - D(G(z)))]\). At equilibrium
+  the generator matches the data distribution. In practice the game oscillates and suffers
+  <strong>mode collapse</strong>: the generator finds a few outputs that reliably fool the current
+  discriminator and abandons the rest of the distribution — the canonical symptom is a face model
+  producing thirty near-identical faces. Sharp samples, treacherous training, no likelihoods.
+</p>
+<p>
+  <strong>Diffusion models</strong> — the current image-generation standard — define a
+  <em>forward</em> process that gradually gaussianizes data over T steps,
+  \(x_t = \sqrt{\bar\alpha_t}\, x_0 + \sqrt{1-\bar\alpha_t}\,\epsilon\), and train a network
+  \(\epsilon_\theta(x_t, t)\) to predict the added noise — a simple regression loss, no adversary.
+  Generation runs the process backward: start from pure noise, repeatedly subtract predicted noise.
+  <strong>DDPM</strong> sampling is the faithful stochastic reversal (~1000 steps);
+  <strong>DDIM</strong> reinterprets the same trained network as a deterministic ODE and takes
+  20–50 big steps — the standard fast sampler. Training is stable, coverage is excellent, and the
+  cost is many network evaluations per sample.
+</p>
+<div class="box bridge">
+  <div class="box-title">⚛ Physics bridge</div>
+  <p>
+    The forward process is an Ornstein–Uhlenbeck relaxation toward an isotropic Gaussian —
+    structure diffusing away exactly as in the heat equation. The reverse process follows the
+    <em>score</em> \(\nabla_x \log p_t(x)\) (Anderson's time-reversal theorem): denoising is
+    reverse Langevin dynamics, and the noise-prediction network is secretly learning the score
+    field. DDIM is the associated probability-flow ODE — same marginals, no noise. If you've
+    integrated Fokker–Planck equations, you already own the mathematics of Stable Diffusion.
+  </p>
+</div>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Interactive — diffusion on a 2-D dataset</div>
+    <div class="wsub">A spiral of data points. Drag t to run the forward (noising) process; press Reverse to watch samples flow back down the learned-score field from pure noise to the data manifold.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label>forward time t <input type="range" id="df-t" min="0" max="1" step="0.01" value="0"><span class="val" id="df-t-v"></span></label>
+      <button class="btn" id="df-rev">Reverse: noise → data</button>
+      <button class="btn ghost" id="df-reset">Reset</button>
+    </div>
+    <canvas id="df-canvas" width="640" height="330"></canvas>
+    <p class="wcaption">
+      Blue: current sample positions; faint gray: the true data spiral. Forward diffusion destroys
+      structure smoothly — by t = 1 the spiral is indistinguishable from an isotropic Gaussian.
+      The reverse animation follows an approximate score field toward the data (illustrative — a
+      real model learns \(\epsilon_\theta\) with a neural network rather than peeking at the data).
+    </p>
+  </div>
+</div>
+
+<p>
+  <strong>Diffusion vs autoregressive — the tradeoff table the exam wants:</strong> AR models
+  (GPT-style) factorize \(p(x) = \prod_i p(x_i \mid x_{&lt;i})\): exact likelihoods, natural for
+  discrete sequences, streaming generation, but serial decoding (one token at a time). Diffusion:
+  parallel over all positions per step but many steps, natural for continuous data (images, audio),
+  supports inpainting/editing via partial noising, weaker at discrete text. Rule of thumb: language
+  → AR; images/audio/video → diffusion (usually <em>latent</em> diffusion — Topic 10); molecules
+  and structured continuums → diffusion's home turf too.
+</p>
+
+<h2>8.3 Graphs and multimodality</h2>
+<p>
+  <strong>GNNs.</strong> When data is a graph (molecules, social networks, road maps), the
+  architecture should respect its symmetry — permutation of node labels — exactly as CNNs respect
+  translation. <strong>Message passing</strong>: each round, every node aggregates its neighbors'
+  vectors with a permutation-invariant reduction (sum/mean/max) and updates its own:
+  $$h_v^{(k+1)} = \phi\Big(h_v^{(k)}, \bigoplus_{u \in N(v)} \psi(h_u^{(k)}, e_{uv})\Big).$$
+  After k rounds a node has seen its k-hop neighborhood — a receptive field over graph structure.
+  (GCN/GraphSAGE/GAT differ in the aggregation; GAT uses attention weights over neighbors, and
+  a transformer is, in this language, a GNN on the fully-connected token graph.) Caveats worth
+  knowing: over-smoothing (too many rounds → all nodes converge to the same vector) and
+  over-squashing (long-range information bottlenecked through few edges).
+</p>
+<p>
+  <strong>CLIP-style contrastive alignment.</strong> To join vision and language, train an image
+  encoder and a text encoder on N (image, caption) pairs per batch with a symmetric InfoNCE loss:
+  make each image's embedding most similar to <em>its own</em> caption among all N (softmax over
+  similarities, both directions). No pixel labels — just co-occurrence. The result is a shared
+  embedding space where "a photo of a dog" lands near dog photos: zero-shot classification
+  (compare an image against label prompts), retrieval, and the text-conditioning backbone that
+  diffusion models use to understand prompts. This one loss function is the joint that connects
+  Topics 8, 10, and 14.
+</p>
+
+<div class="box jargon">
+  <div class="box-title">Jargon decoder</div>
+  <dl>
+    <dt>residual stream</dt><dd>The running sum flowing through a transformer's skip connections; each block reads from and writes into it. Central to interpretability work (Topic 15).</dd>
+    <dt>HBM / SRAM</dt><dd>GPU main memory (large, slow) vs on-chip cache (tiny, fast). FlashAttention is the art of staying in SRAM.</dd>
+    <dt>ELBO</dt><dd>Evidence Lower BOund — the VAE objective: reconstruction − KL. Maximizing it maximizes a lower bound on log-likelihood.</dd>
+    <dt>score function</dt><dd>\(\nabla_x \log p(x)\) — the vector field pointing toward higher data density; what diffusion models implicitly learn.</dd>
+    <dt>InfoNCE</dt><dd>The contrastive loss: cross-entropy of picking the true pair among in-batch negatives.</dd>
+    <dt>context window</dt><dd>Maximum sequence length a model processes; extending it is a PE + memory + data problem simultaneously.</dd>
+    <dt>Mamba / SSM</dt><dd>State-space models: linear-time sequence architectures with a recurrent (constant-memory) inference mode — the main non-attention challenger.</dd>
+  </dl>
+</div>
+
+<h2>Self-check</h2>
+<div class="quiz" data-answer="b">
+  <p class="quiz-q">1. Without the √d scaling, attention at large d fails because:</p>
+  <div class="opts">
+    <button data-opt="a">the QK product overflows fp16</button>
+    <button data-opt="b">dot-product variance grows with d, saturating softmax to near-one-hot and killing gradients</button>
+    <button data-opt="c">the KV cache becomes too large</button>
+    <button data-opt="d">multiple heads become redundant</button>
+  </div>
+  <div class="quiz-exp"><strong>b.</strong> Var(q·k)=d for unit-variance components; softmax of ±√d·z saturates. (Overflow (a) can also eventually happen, but the gradient-death mechanism is the designed-for reason.)</div>
+</div>
+<div class="quiz" data-answer="c">
+  <p class="quiz-q">2. FlashAttention achieves its speedup by:</p>
+  <div class="opts">
+    <button data-opt="a">approximating attention with a low-rank factorization</button>
+    <button data-opt="b">attending only to a sliding window</button>
+    <button data-opt="c">computing exact attention tile-by-tile in on-chip SRAM with online softmax, avoiding materializing the n×n matrix in HBM</button>
+    <button data-opt="d">quantizing Q and K to int8</button>
+  </div>
+  <div class="quiz-exp"><strong>c.</strong> It is exact — an IO-complexity result, not an approximation. Distinguishing "faster exact" from "cheaper approximate" methods is a favorite exam discriminator.</div>
+</div>
+<div class="quiz" data-answer="a">
+  <p class="quiz-q">3. A 64-head model switches from MHA to GQA with 8 KV heads. The KV cache shrinks by:</p>
+  <div class="opts">
+    <button data-opt="a">8× — cache scales with KV heads, not query heads</button>
+    <button data-opt="b">64×</button>
+    <button data-opt="c">2×</button>
+    <button data-opt="d">it doesn't change; only weights shrink</button>
+  </div>
+  <div class="quiz-exp"><strong>a.</strong> Cache = 2·L·n_kv·d_head·S·B·bytes. n_kv drops 64→8. Verify on the calculator above.</div>
+</div>
+<div class="quiz" data-answer="d">
+  <p class="quiz-q">4. Your GAN generates excellent portraits — but only about a dozen distinct faces. This is:</p>
+  <div class="opts">
+    <button data-opt="a">overfitting; add dropout to the generator</button>
+    <button data-opt="b">posterior collapse; anneal the KL term</button>
+    <button data-opt="c">vanishing gradients; use ReLU</button>
+    <button data-opt="d">mode collapse — the generator covers a few modes that fool the discriminator; diffusion's likelihood-based training is the coverage-safe alternative</button>
+  </div>
+  <div class="quiz-exp"><strong>d.</strong> Mode collapse is the signature GAN pathology (posterior collapse (b) is the VAE one — worth keeping straight for the exam). Coverage guarantees are a core reason the industry moved to diffusion.</div>
+</div>
+
+<h2>Go deeper</h2>
+<ul class="resources">
+  <li><a href="https://arxiv.org/abs/1706.03762">Attention Is All You Need (Vaswani et al., 2017)</a><div class="rwhat">The primary source; §3.2 for scaled dot-product and multi-head. Short by paper standards.</div></li>
+  <li><a href="https://nlp.seas.harvard.edu/annotated-transformer/">The Annotated Transformer (Harvard NLP)</a><div class="rwhat">The paper reimplemented line by line in PyTorch — the syllabus names it explicitly.</div></li>
+  <li><a href="https://jalammar.github.io/illustrated-transformer/">Jay Alammar — The Illustrated Transformer</a><div class="rwhat">The gentlest visual walkthrough; read before the Annotated version.</div></li>
+  <li><a href="https://arxiv.org/abs/2205.14135">FlashAttention (Dao et al., 2022)</a> · <a href="https://arxiv.org/abs/2305.13245">GQA (Ainslie et al., 2023)</a> · <a href="https://arxiv.org/abs/2104.09864">RoPE (Su et al., 2021)</a> · <a href="https://arxiv.org/abs/2108.12409">ALiBi (Press et al., 2021)</a><div class="rwhat">The four primary papers behind this page's efficiency and PE material — intros and figures suffice for exam depth.</div></li>
+  <li><a href="https://arxiv.org/abs/2006.11239">DDPM (Ho et al., 2020)</a> and <a href="https://lilianweng.github.io/posts/2021-07-11-diffusion-models/">Lilian Weng — What are Diffusion Models?</a><div class="rwhat">Weng's post is the best single derivation of forward/reverse/ELBO; DDIM and score-SDE sections included.</div></li>
+  <li><a href="https://arxiv.org/abs/2103.00020">CLIP (Radford et al., 2021)</a><div class="rwhat">§2 for the contrastive objective; Fig. 1 is the whole idea.</div></li>
+  <li><a href="https://distill.pub/2021/gnn-intro/">Distill — A Gentle Introduction to Graph Neural Networks</a><div class="rwhat">Interactive message-passing visuals.</div></li>
+  <li><a href="https://karpathy.ai/zero-to-hero.html">Karpathy — "Let's build GPT" (2h)</a><div class="rwhat">Write a working decoder-only transformer from an empty file. The single best consolidation exercise for this topic.</div></li>
+</ul>
+
+<div class="page-footer"></div>
+</main>
+
+<script>
+document.addEventListener("caie:ready", () => {
+  // ---------- attention heatmap ----------
+  (function () {
+    const tokens = ["The", "cat", "sat", "on", "the", "mat", "because", "it"];
+    const n = tokens.length;
+    const canvas = document.getElementById("at-canvas");
+    // fixed "semantic" affinity structure (which pairs should attend, qualitatively)
+    const rand = CAIE.rng(99);
+    const base = [];
+    for (let i = 0; i < n; i++) { base.push([]); for (let j = 0; j < n; j++) base[i].push(CAIE.gauss(rand) * 0.6); }
+    // inject structure: "it" -> "cat", "sat"->"cat", "mat"->"the/on"
+    base[7][1] += 2.2; base[2][1] += 1.6; base[5][3] += 1.0; base[5][4] += 0.8; base[6][2] += 1.2;
+    function draw() {
+      const d = +document.getElementById("at-d").value;
+      document.getElementById("at-d-v").textContent = d;
+      const scale = document.getElementById("at-scale").checked;
+      const causal = document.getElementById("at-causal").checked;
+      // simulate raw logits: structure * sqrt(d)/8 growth (dot products scale like sqrt(d))
+      const growth = Math.sqrt(d);
+      const div = scale ? Math.sqrt(d) : 1;
+      const W = [];
+      let entSum = 0, entCnt = 0;
+      for (let i = 0; i < n; i++) {
+        const row = [];
+        let mx = -1e9;
+        for (let j = 0; j < n; j++) {
+          let z = base[i][j] * growth / div * (scale ? 1 : 1);
+          if (causal && j > i) z = -1e9;
+          row.push(z); if (z > mx) mx = z;
+        }
+        let s = 0;
+        const ex = row.map(z => { const e = Math.exp(z - mx); s += e; return e; });
+        const p = ex.map(e => e / s);
+        W.push(p);
+        let H = 0;
+        for (const v of p) if (v > 1e-9) H -= v * Math.log2(v);
+        entSum += H; entCnt++;
+      }
+      const pal = CAIE.pal();
+      const Wd = Math.min(640, canvas.parentNode.clientWidth - 4);
+      const { ctx, w, h } = CAIE.setupCanvas(canvas, Wd, 330);
+      ctx.clearRect(0, 0, w, h);
+      const x0 = 86, y0 = 46;
+      const cw = Math.min(48, (w - x0 - 10) / n), ch = Math.min(32, (h - y0 - 10) / n);
+      ctx.font = "11px " + CAIE.css("--sans");
+      for (let j = 0; j < n; j++) {
+        ctx.save();
+        ctx.translate(x0 + j * cw + cw / 2, y0 - 8);
+        ctx.rotate(-0.6);
+        ctx.fillStyle = pal.ink2; ctx.textAlign = "left";
+        ctx.fillText(tokens[j], 0, 0);
+        ctx.restore();
+      }
+      for (let i = 0; i < n; i++) {
+        ctx.fillStyle = pal.ink2; ctx.textAlign = "right"; ctx.textBaseline = "middle";
+        ctx.fillText(tokens[i] + " →", x0 - 8, y0 + i * ch + ch / 2);
+        for (let j = 0; j < n; j++) {
+          const p = W[i][j];
+          ctx.fillStyle = (causal && j > i) ? pal.page : CAIE.seq(0.04 + 0.92 * Math.pow(p, 0.6));
+          ctx.fillRect(x0 + j * cw + 1, y0 + i * ch + 1, cw - 2, ch - 2);
+          if (p > 0.005 && !(causal && j > i)) {
+            ctx.fillStyle = p > 0.45 ? "#fff" : pal.ink2;
+            ctx.textAlign = "center";
+            ctx.font = "9px " + CAIE.css("--mono");
+            ctx.fillText((100 * p).toFixed(0), x0 + j * cw + cw / 2, y0 + i * ch + ch / 2);
+            ctx.font = "11px " + CAIE.css("--sans");
+          }
+        }
+      }
+      document.getElementById("at-readout").innerHTML =
+        "mean row entropy: <b>" + (entSum / entCnt).toFixed(2) + " bits</b> (max possible " + Math.log2(n).toFixed(2) + ")" +
+        "<span>softmax input std ≈ <b>" + (0.6 * growth / div).toFixed(2) + "</b>" + (scale ? " (kept ~O(1) by √d)" : " (growing with √d — saturating!)") + "</span>";
+    }
+    ["at-d", "at-scale", "at-causal"].forEach(id => document.getElementById(id).addEventListener("input", draw));
+    CAIE.onTheme(draw); window.addEventListener("resize", draw);
+    draw();
+  })();
+
+  // ---------- KV cache calculator ----------
+  (function () {
+    const presets = { "7b": { L: 32, d: 4096, h: 32, gqa: 32 }, "70b": { L: 80, d: 8192, h: 64, gqa: 8 } };
+    let cur = presets["70b"];
+    const canvas = document.getElementById("kv-canvas");
+    function draw() {
+      const S = +document.getElementById("kv-s").value;
+      const B = +document.getElementById("kv-b").value;
+      const bytes = +document.getElementById("kv-dtype").value;
+      document.getElementById("kv-s-v").textContent = (S / 1024) + "k";
+      document.getElementById("kv-b-v").textContent = B;
+      const dHead = cur.d / cur.h;
+      const gb = nkv => 2 * cur.L * nkv * dHead * S * B * bytes / 1024 ** 3;
+      const rows = [
+        ["MHA (" + cur.h + " KV heads)", gb(cur.h), 5],
+        ["GQA (" + Math.min(8, cur.h) + " KV heads)", gb(Math.min(8, cur.h)), 0],
+        ["MQA (1 KV head)", gb(1), 1]
+      ];
+      const pal = CAIE.pal();
+      const W = Math.min(640, canvas.parentNode.clientWidth - 4);
+      const { ctx, w, h } = CAIE.setupCanvas(canvas, W, 220);
+      ctx.clearRect(0, 0, w, h);
+      const maxGB = Math.max(80, ...rows.map(r => r[1])) * 1.08;
+      const bw = w - 250;
+      rows.forEach((r, i) => {
+        const y = 26 + i * 56;
+        ctx.fillStyle = pal.s[r[2]];
+        ctx.beginPath(); ctx.roundRect(190, y, Math.max(3, bw * r[1] / maxGB), 30, 4); ctx.fill();
+        ctx.fillStyle = pal.ink; ctx.font = "600 12px " + CAIE.css("--sans");
+        ctx.textAlign = "right"; ctx.fillText(r[0], 182, y + 19);
+        ctx.textAlign = "left"; ctx.fillText(r[1] >= 1000 ? (r[1] / 1024).toFixed(2) + " TB" : r[1].toFixed(1) + " GB", 196 + bw * r[1] / maxGB, y + 19);
+      });
+      // 80GB line
+      const x80 = 190 + bw * 80 / maxGB;
+      ctx.strokeStyle = pal.critical; ctx.setLineDash([5, 4]); ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(x80, 10); ctx.lineTo(x80, h - 24); ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle = pal.critical; ctx.font = "10px " + CAIE.css("--sans"); ctx.textAlign = "center";
+      ctx.fillText("H100 80 GB (total)", x80, h - 10);
+      const weights = (cur.L && cur.d) ? (cur.d * cur.d * 12 * cur.L * 2 / 1024 ** 3) : 0;
+      document.getElementById("kv-readout").innerHTML =
+        "per-token KV cost (GQA): <b>" + (2 * cur.L * Math.min(8, cur.h) * dHead * bytes / 1024).toFixed(1) + " KB</b>" +
+        "<span>model weights (fp16, ≈12·d²·L): <b>" + weights.toFixed(0) + " GB</b> — the cache competes with these</span>";
+    }
+    document.getElementById("kv-preset").addEventListener("change", e => {
+      if (e.target.value !== "custom") cur = presets[e.target.value];
+      draw();
+    });
+    ["kv-s", "kv-b", "kv-dtype"].forEach(id => document.getElementById(id).addEventListener("input", draw));
+    CAIE.onTheme(draw); window.addEventListener("resize", draw);
+    draw();
+  })();
+
+  // ---------- diffusion ----------
+  (function () {
+    const canvas = document.getElementById("df-canvas");
+    const rand = CAIE.rng(31);
+    const N = 260;
+    const data = [], noise0 = [];
+    for (let i = 0; i < N; i++) {
+      const t = i / N * 3.6 * Math.PI;
+      const r = 0.12 + t / (3.6 * Math.PI) * 1.15;
+      data.push([r * Math.cos(t) + 0.04 * CAIE.gauss(rand), r * Math.sin(t) + 0.04 * CAIE.gauss(rand)]);
+      noise0.push([CAIE.gauss(rand), CAIE.gauss(rand)]);
+    }
+    let pts = data.map(p => p.slice());
+    let mode = "forward", anim = null;
+    function alphaBar(t) { // cosine-ish schedule
+      return Math.pow(Math.cos(t * Math.PI / 2), 2);
+    }
+    function setForward(t) {
+      const ab = alphaBar(t);
+      pts = data.map((p, i) => [
+        Math.sqrt(ab) * p[0] + Math.sqrt(1 - ab) * noise0[i][0],
+        Math.sqrt(ab) * p[1] + Math.sqrt(1 - ab) * noise0[i][1]
+      ]);
+    }
+    function draw() {
+      const pal = CAIE.pal();
+      const W = Math.min(640, canvas.parentNode.clientWidth - 4);
+      const { ctx, w, h } = CAIE.setupCanvas(canvas, W, 330);
+      const R = 2.2;
+      const X = x => (x + R) / (2 * R) * w, Y = y => h - (y + R) / (2 * R) * h;
+      ctx.clearRect(0, 0, w, h);
+      ctx.fillStyle = CAIE.alpha(pal.muted, 0.35);
+      for (const p of data) { ctx.beginPath(); ctx.arc(X(p[0]), Y(p[1]), 2.2, 0, 7); ctx.fill(); }
+      ctx.fillStyle = pal.s[0];
+      for (const p of pts) { ctx.beginPath(); ctx.arc(X(p[0]), Y(p[1]), 3, 0, 7); ctx.fill(); }
+    }
+    document.getElementById("df-t").addEventListener("input", e => {
+      if (anim) { cancelAnimationFrame(anim); anim = null; }
+      const t = +e.target.value;
+      document.getElementById("df-t-v").textContent = t.toFixed(2);
+      setForward(t); draw();
+    });
+    document.getElementById("df-rev").addEventListener("click", () => {
+      if (anim) cancelAnimationFrame(anim);
+      const r2 = CAIE.rng(500 + Math.floor(Math.random() * 1000));
+      pts = pts.map(() => [1.4 * CAIE.gauss(r2), 1.4 * CAIE.gauss(r2)]);
+      let step = 0, total = 90;
+      function frame() {
+        step++;
+        const tt = 1 - step / total; // annealing noise
+        pts = pts.map(p => {
+          // approximate score: pull toward weighted nearby data (kernel width shrinks with tt)
+          const h2 = 0.12 + 1.1 * tt * tt;
+          let wx = 0, wy = 0, ws = 0;
+          for (let k = 0; k < N; k += 2) {
+            const dx = data[k][0] - p[0], dy = data[k][1] - p[1];
+            const wgt = Math.exp(-(dx * dx + dy * dy) / (2 * h2 * h2));
+            wx += wgt * dx; wy += wgt * dy; ws += wgt;
+          }
+          const g = ws > 1e-9 ? 1 / ws : 0;
+          const stepSize = 0.16;
+          const sig = 0.16 * tt;
+          return [
+            p[0] + stepSize * wx * g + sig * CAIE.gauss(r2),
+            p[1] + stepSize * wy * g + sig * CAIE.gauss(r2)
+          ];
+        });
+        draw();
+        if (step < total) anim = requestAnimationFrame(frame);
+        else anim = null;
+      }
+      frame();
+    });
+    document.getElementById("df-reset").addEventListener("click", () => {
+      if (anim) { cancelAnimationFrame(anim); anim = null; }
+      document.getElementById("df-t").value = 0;
+      document.getElementById("df-t-v").textContent = "0.00";
+      pts = data.map(p => p.slice());
+      draw();
+    });
+    CAIE.onTheme(draw); window.addEventListener("resize", draw);
+    document.getElementById("df-t-v").textContent = "0.00";
+    draw();
+  })();
+});
+</script>
+</body>
+</html>

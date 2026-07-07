@@ -1,0 +1,714 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Topic 4 — Classical Machine Learning · CAIE Course</title>
+<link rel="stylesheet" href="../assets/course.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<script defer src="../assets/course.js"></script>
+</head>
+<body data-page="t04" data-root="..">
+<a class="skip" href="#main">Skip to content</a>
+<header class="topbar">
+  <button id="navToggle" class="iconbtn" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html">CAIE<span>·</span>Course</a>
+  <span class="topbar-title">Level I · Topic 4 · Classical Machine Learning</span>
+  <button id="themeToggle" class="iconbtn" aria-label="Toggle theme">◐</button>
+</header>
+<nav id="sidebar"></nav>
+
+<main id="main">
+<div class="kicker">Level I · Topic 4 · Exam weight 18%</div>
+<h1>Classical Machine Learning</h1>
+<p class="lead">
+  Before transformers there were twenty years of algorithms that still win on tabular data, still
+  run half the world's fraud detection and credit scoring, and still supply the <em>vocabulary</em> —
+  overfitting, regularization, evaluation — that every deep-learning conversation is conducted in. A
+  senior engineer who reaches for a neural net on 5,000 rows of tabular data has failed this topic.
+</p>
+
+<div class="box los">
+  <div class="box-title">Learning outcomes</div>
+  <ul>
+    <li>Derive and implement linear and logistic regression; explain L1/L2 regularization and contrast their effects on weights.</li>
+    <li>Describe decision trees (Gini/entropy splits); explain bagging, random forests, and boosting; describe SVMs, the kernel trick, and margin maximization; apply k-NN and explain the curse of dimensionality.</li>
+    <li>Implement k-means and explain its convergence and failure modes; describe hierarchical clustering, DBSCAN, GMMs and EM; apply PCA; explain t-SNE/UMAP and their distortions.</li>
+    <li>Calculate accuracy, precision, recall, F1, ROC-AUC, PR-AUC and choose among them; diagnose over/underfitting from learning curves; describe class-imbalance strategies; explain data leakage.</li>
+  </ul>
+</div>
+
+<h2>4.1 Supervised learning — the workhorses</h2>
+<p>
+  <strong>Linear regression</strong> models \(y = w^\top x + b\) and minimizes squared error. Setting
+  the gradient to zero gives the closed-form <em>normal equations</em>
+  \(w = (X^\top X)^{-1} X^\top y\) — one of the few ML problems with an exact solution (and an MLE
+  under Gaussian noise, connecting to Topic 2). <strong>Logistic regression</strong> pushes the
+  linear score through a sigmoid, \(p = \sigma(w^\top x) = 1/(1+e^{-w^\top x})\), and maximizes
+  likelihood — equivalently minimizes cross-entropy. No closed form, but the loss is convex, so
+  gradient descent finds <em>the</em> global optimum. Despite the name it is a classifier, and it
+  remains the default first model for any binary problem: fast, calibrated, interpretable.
+</p>
+<p>
+  <strong>Regularization</strong> adds a penalty on weight size:
+  <em>L2 (ridge)</em> adds \(\lambda\|w\|_2^2\) and shrinks all weights smoothly toward zero;
+  <em>L1 (lasso)</em> adds \(\lambda\|w\|_1\) and drives many weights <em>exactly</em> to zero,
+  performing feature selection. Geometric reason: the L1 ball has corners on the axes, and optima
+  land on corners. In MAP terms (Topic 2): Gaussian vs Laplace priors.
+</p>
+<p>
+  <strong>Decision trees</strong> recursively split the feature space with axis-aligned thresholds,
+  choosing at each node the split that most purifies the classes — maximum reduction in
+  <em>Gini impurity</em> \(\sum_k p_k(1-p_k)\) or in <em>entropy</em> \(-\sum_k p_k \log p_k\>\)
+  (information gain). Trees are interpretable and handle mixed feature types, but a deep tree
+  memorizes noise — high variance. The fixes are ensembles:
+</p>
+<ul>
+  <li><strong>Bagging</strong>: train many trees on bootstrap resamples and average. Averaging \(B\)
+  weakly-correlated estimators divides variance by nearly \(B\) — pure Topic 2 statistics.
+  <strong>Random forests</strong> add feature subsampling per split to decorrelate the trees further.</li>
+  <li><strong>Boosting</strong> is sequential instead of parallel: each new small tree is fit to the
+  <em>errors</em> of the ensemble so far. AdaBoost reweights misclassified points; <strong>gradient
+  boosting</strong> generalizes this — each tree fits the negative gradient of the loss (for squared
+  error, literally the residuals). <strong>XGBoost/LightGBM</strong> are engineered implementations
+  with regularization and second-order steps; they remain the strongest default on tabular data, and
+  knowing that <em>is</em> exam material.</li>
+</ul>
+<p>
+  <strong>SVMs</strong> choose the separating hyperplane that maximizes the <em>margin</em> — the
+  distance to the nearest points (the support vectors). The optimization only ever touches data
+  through inner products \(\langle x_i, x_j \rangle\), so you can swap in a kernel
+  \(k(x_i, x_j) = \langle \phi(x_i), \phi(x_j)\rangle\) and implicitly work in a huge (even
+  infinite-dimensional, for RBF) feature space without computing \(\phi\) — the
+  <strong>kernel trick</strong>. That "Gram matrix of pairwise similarities" pattern is the same
+  algebra you'll meet again as attention scores in Topic 8.
+</p>
+<p>
+  <strong>k-NN</strong> classifies by voting among the k nearest training points — no training at
+  all, all cost at query time. It exposes the <strong>curse of dimensionality</strong>: in high
+  dimensions, volume concentrates in shells; the ratio between nearest and farthest neighbor
+  distances → 1, and "nearest" stops meaning anything. Rule of thumb: distance-based methods degrade
+  badly beyond a few dozen raw dimensions unless the data lies on a low-dimensional manifold —
+  which, fortunately, real data usually does (that's why embeddings in Topic 14 work at 768-d:
+  the <em>intrinsic</em> dimension is far lower).
+</p>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Interactive — decision-boundary playground</div>
+    <div class="wsub">Three classifiers, three datasets. The shaded field is each model's predicted probability. Click on the canvas to add points (left-click = blue class, shift-click = orange class) and watch the boundary react.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label>dataset
+        <select id="p-data">
+          <option value="blobs">two blobs (easy)</option>
+          <option value="moons" selected>two moons (curved)</option>
+          <option value="xor">XOR (not linearly separable)</option>
+        </select>
+      </label>
+      <label>model
+        <select id="p-model">
+          <option value="logreg">logistic regression</option>
+          <option value="knn" selected>k-NN</option>
+          <option value="tree">decision tree</option>
+        </select>
+      </label>
+      <label id="p-kl">k <input type="range" id="p-k" min="1" max="25" step="2" value="5"><span class="val" id="p-k-v"></span></label>
+      <label id="p-dl" style="display:none">max depth <input type="range" id="p-depth" min="1" max="8" step="1" value="3"><span class="val" id="p-depth-v"></span></label>
+      <button class="btn ghost" id="p-reset">Reset points</button>
+    </div>
+    <canvas id="p-canvas" width="640" height="380" style="cursor:crosshair"></canvas>
+    <div class="readout" id="p-readout"></div>
+    <p class="wcaption">
+      Things to try: (1) logistic regression on XOR — it's structurally incapable (a line can't cut
+      XOR), the lesson that motivated neural networks. (2) k-NN with k=1: the boundary chases every
+      point, including ones you add in silly places — variance made visible; k=25 smooths it — bias.
+      (3) Decision tree: depth 1 vs 8 — watch axis-aligned rectangles memorize your clicks.
+    </p>
+  </div>
+</div>
+
+<h2>4.2 Unsupervised learning — structure without labels</h2>
+<p>
+  <strong>k-means</strong> alternates two steps: assign each point to its nearest centroid; move each
+  centroid to the mean of its points. Each step can only decrease the total within-cluster squared
+  distance (the "inertia"), and there are finitely many assignments, so it always converges — but
+  only to a <em>local</em> optimum that depends on initialization (hence k-means++ seeding and
+  multiple restarts). Failure modes: you must pick k; it assumes round, similar-size clusters
+  (it's secretly a hard-assignment Gaussian mixture with equal spherical covariances); it shreds
+  elongated or nested shapes.
+</p>
+<p>
+  <strong>The relatives.</strong> <em>Hierarchical clustering</em> greedily merges nearest clusters,
+  producing a dendrogram — no k needed until you cut it. <em>DBSCAN</em> defines clusters as dense
+  regions (points with ≥ minPts neighbors within ε), discovers the number of clusters itself, finds
+  arbitrary shapes, and labels sparse points as noise — but struggles when densities vary.
+  <em>Gaussian Mixture Models</em> replace hard assignments with soft ones and fit with the
+  <strong>EM algorithm</strong>: E-step computes responsibilities \(P(\text{cluster}\mid x)\)
+  (a Bayes-rule step), M-step re-fits each Gaussian's weight, mean, covariance from its responsibility-weighted
+  points. EM monotonically increases likelihood; k-means is its zero-covariance limit.
+</p>
+<div class="box bridge">
+  <div class="box-title">⚛ Physics bridge</div>
+  <p>
+    EM is a mean-field self-consistency loop: responsibilities given parameters, parameters given
+    responsibilities, iterate to a fixed point — the same structure as Hartree–Fock or solving for a
+    mean field magnetization. And PCA you already know cold: diagonalize the covariance matrix, keep
+    the largest-eigenvalue modes. "Fraction of variance retained" is the ratio of kept eigenvalues to
+    the trace — exactly how you'd truncate a normal-mode expansion.
+  </p>
+</div>
+<p>
+  <strong>PCA</strong> projects data onto the top eigenvectors of its covariance (equivalently, the
+  top right-singular vectors of the centered data matrix — Topic 1's SVD). It is linear, fast,
+  deterministic, and the right first move for compression and decorrelation.
+  <strong>t-SNE and UMAP</strong> are nonlinear <em>visualization</em> maps: they try to preserve
+  local neighborhoods when squashing to 2-D. Both distort: cluster <em>sizes</em> and
+  <em>inter-cluster distances</em> in a t-SNE plot are essentially meaningless, and perplexity /
+  n_neighbors settings can manufacture or merge clusters. Use them to explore, never to measure.
+</p>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Interactive — k-means, one step at a time</div>
+    <div class="wsub">Step through assign → update and watch inertia fall monotonically. Re-seed to see convergence to a different (sometimes worse) local optimum.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label>k <input type="range" id="km-k" min="2" max="6" step="1" value="3"><span class="val" id="km-k-v"></span></label>
+      <button class="btn" id="km-step">Step</button>
+      <button class="btn" id="km-run">Run to convergence</button>
+      <button class="btn ghost" id="km-seed">Re-seed</button>
+    </div>
+    <canvas id="km-canvas" width="640" height="340"></canvas>
+    <div class="readout" id="km-readout"></div>
+    <p class="wcaption">
+      The dataset has three true blobs plus one elongated band — try k=3 and k=4 and notice how the
+      band gets butchered into round pieces regardless. That's the spherical-cluster assumption
+      showing through.
+    </p>
+  </div>
+</div>
+
+<h2>4.3 Model evaluation — where careers are made and lost</h2>
+<p>
+  For binary classification, everything flows from the confusion matrix: true/false positives and
+  negatives. <strong>Precision</strong> = TP/(TP+FP): of the things I flagged, how many were real?
+  <strong>Recall</strong> = TP/(TP+FN): of the real things, how many did I catch?
+  <strong>F1</strong> is their harmonic mean. <strong>Accuracy</strong> is the fraction correct —
+  and is <em>worthless under class imbalance</em>: a fraud model that says "never fraud" is 99.8%
+  accurate. The <strong>ROC curve</strong> traces (false-positive rate, true-positive rate) as the
+  decision threshold sweeps; its area, <strong>ROC-AUC</strong>, is the probability a random positive
+  scores above a random negative. Under heavy imbalance even ROC-AUC flatters (FPR's denominator is
+  the huge negative class), so precision-recall curves and <strong>PR-AUC</strong> are the honest
+  view for rare-event problems. Choosing the metric <em>is</em> the engineering decision; the
+  threshold that trades precision against recall is a <em>business</em> decision — that framing
+  returns in Topics 7 and 13.
+</p>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Interactive — one threshold, every metric</div>
+    <div class="wsub">Two score distributions — negatives (gray) and positives (blue) — with an adjustable decision threshold and class imbalance. Left: distributions; right: the ROC curve with your operating point.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label>separation <input type="range" id="r-sep" min="0.3" max="3" step="0.05" value="1.4"><span class="val" id="r-sep-v"></span></label>
+      <label>threshold <input type="range" id="r-thr" min="-3" max="5" step="0.05" value="1"><span class="val" id="r-thr-v"></span></label>
+      <label>positives share <input type="range" id="r-prev" min="0.01" max="0.5" step="0.01" value="0.2"><span class="val" id="r-prev-v"></span></label>
+    </div>
+    <div style="display:flex;gap:14px;flex-wrap:wrap">
+      <canvas id="r-canvas" width="380" height="260"></canvas>
+      <canvas id="r-roc" width="240" height="260"></canvas>
+    </div>
+    <div class="tiles">
+      <div class="tile"><div class="tv" id="r-prec">–</div><div class="tl">precision</div></div>
+      <div class="tile"><div class="tv" id="r-rec">–</div><div class="tl">recall (TPR)</div></div>
+      <div class="tile"><div class="tv" id="r-f1">–</div><div class="tl">F1</div></div>
+      <div class="tile"><div class="tv" id="r-acc">–</div><div class="tl">accuracy</div></div>
+      <div class="tile"><div class="tv" id="r-auc">–</div><div class="tl">ROC-AUC</div></div>
+    </div>
+    <p class="wcaption">
+      Things to try: (1) drop positives to 1% and watch accuracy stay high while precision collapses
+      — the imbalance trap. (2) Note AUC doesn't move when you drag the threshold: AUC is a property
+      of the <em>scorer</em>, the threshold picks your <em>operating point</em> on it. (3) Push
+      separation to 3 — this is what "a better model" means: the whole tradeoff curve improves.
+    </p>
+  </div>
+</div>
+
+<p>
+  <strong>Overfitting vs underfitting</strong> is diagnosed from <em>learning curves</em>: training
+  and validation error vs model capacity (or data size). Underfit: both errors high and close —
+  add capacity or features. Overfit: training error low, validation error high and rising with
+  capacity — regularize, simplify, or get data. The widget below makes the whole story one slider.
+</p>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Interactive — bias–variance with one slider</div>
+    <div class="wsub">Polynomial regression on 30 noisy samples of a smooth function. Left: the fit; right: train vs test error as degree grows — the canonical U-curve.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label>polynomial degree <input type="range" id="bv-deg" min="0" max="15" step="1" value="1"><span class="val" id="bv-deg-v"></span></label>
+      <button class="btn ghost" id="bv-resample">New noise sample</button>
+    </div>
+    <div style="display:flex;gap:14px;flex-wrap:wrap">
+      <canvas id="bv-fit" width="380" height="260"></canvas>
+      <canvas id="bv-err" width="240" height="260"></canvas>
+    </div>
+    <p class="wcaption">
+      Degree 0–1 underfits (high bias): the model can't bend. Degree 12+ overfits (high variance):
+      press "new noise sample" repeatedly and watch the high-degree fit thrash while degree 4 barely
+      moves — variance is literally sensitivity to the training draw. The test-error minimum sits at
+      moderate capacity. Every regularizer in this course is a way of buying that sweet spot.
+    </p>
+  </div>
+</div>
+
+<p>
+  <strong>Class imbalance strategies:</strong> resample (oversample minority — e.g. SMOTE — or
+  undersample majority), reweight the loss (class weights inversely proportional to frequency), or
+  use <em>focal loss</em>, which down-weights already-easy examples so training focuses on the hard
+  minority. And always report PR-AUC, not accuracy.
+</p>
+<p>
+  <strong>Data leakage</strong> is the silent career-ender: information from outside the training
+  window contaminating training. Canonical forms: normalizing with statistics computed on the full
+  dataset <em>before</em> splitting; features that encode the label (e.g., "charged-off fees" when
+  predicting default); random splits of time-series (the model peeks at the future); duplicate or
+  near-duplicate rows straddling the split. Symptom: validation metrics too good to be true, then a
+  production faceplant. Rule: <em>fit every preprocessing step inside the training fold only</em> —
+  pipelines exist to enforce this.
+</p>
+
+<div class="box jargon">
+  <div class="box-title">Jargon decoder</div>
+  <dl>
+    <dt>hyperparameter</dt><dd>A knob you set (k, depth, λ, learning rate), not learned from data. Tuned on a validation set, never the test set.</dd>
+    <dt>bootstrap</dt><dd>Resampling the dataset with replacement; "bagging" = bootstrap aggregating.</dd>
+    <dt>support vector</dt><dd>A training point lying on the margin — one of the few points that actually determine the SVM boundary.</dd>
+    <dt>RBF kernel</dt><dd>Radial basis function \(e^{-\gamma\|x-x'\|^2}\) — similarity decaying with distance; implicitly infinite-dimensional features.</dd>
+    <dt>SMOTE</dt><dd>Synthetic Minority Oversampling — creates synthetic minority points by interpolating between neighbors.</dd>
+    <dt>inertia</dt><dd>k-means objective: total squared distance of points to their assigned centroid.</dd>
+    <dt>dendrogram</dt><dd>The merge tree produced by hierarchical clustering.</dd>
+    <dt>calibration</dt><dd>Whether predicted probabilities match observed frequencies (of events given p=0.8, ~80% happen). Logistic regression is naturally well-calibrated; boosted trees and deep nets often aren't.</dd>
+  </dl>
+</div>
+
+<h2>Self-check</h2>
+<div class="quiz" data-answer="b">
+  <p class="quiz-q">1. You need a model that uses at most 20 of 5,000 candidate features, for regulatory interpretability. The most direct tool:</p>
+  <div class="opts">
+    <button data-opt="a">L2 regularization with large λ</button>
+    <button data-opt="b">L1 regularization, tuning λ until ~20 weights remain nonzero</button>
+    <button data-opt="c">a deeper decision tree</button>
+    <button data-opt="d">k-NN with large k</button>
+  </div>
+  <div class="quiz-exp"><strong>b.</strong> L1's corners produce exact zeros — built-in feature selection. L2 shrinks everything but zeroes nothing.</div>
+</div>
+<div class="quiz" data-answer="c">
+  <p class="quiz-q">2. Random forests reduce error primarily by reducing ______; gradient boosting primarily by reducing ______.</p>
+  <div class="opts">
+    <button data-opt="a">bias; bias</button>
+    <button data-opt="b">variance; variance</button>
+    <button data-opt="c">variance; bias</button>
+    <button data-opt="d">noise; noise</button>
+  </div>
+  <div class="quiz-exp"><strong>c.</strong> Bagging averages many overfit (low-bias, high-variance) trees — averaging kills variance. Boosting adds weak (high-bias) learners that sequentially correct systematic errors — reducing bias. This duality is a favorite exam item-set.</div>
+</div>
+<div class="quiz" data-answer="d">
+  <p class="quiz-q">3. Fraud is 0.2% of transactions. Which evaluation setup is sound?</p>
+  <div class="opts">
+    <button data-opt="a">accuracy on a balanced 50/50 resampled test set</button>
+    <button data-opt="b">accuracy on the natural distribution</button>
+    <button data-opt="c">ROC-AUC alone, since it's threshold-free</button>
+    <button data-opt="d">PR-AUC on the natural distribution, plus precision/recall at the business-chosen threshold</button>
+  </div>
+  <div class="quiz-exp"><strong>d.</strong> Test distributions must match reality (rebalancing the test set falsifies precision). Accuracy saturates at 99.8% for a useless model; ROC-AUC is inflated by the enormous negative class. PR-AUC + an explicit operating point is the professional answer.</div>
+</div>
+<div class="quiz" data-answer="a">
+  <p class="quiz-q">4. A colleague scales all features using the full dataset's mean/std, then splits train/test, and reports great results. The problem:</p>
+  <div class="opts">
+    <button data-opt="a">leakage — test-set statistics influenced training preprocessing; refit the scaler on the training fold only</button>
+    <button data-opt="b">none — scaling is label-free, so it can't leak</button>
+    <button data-opt="c">the scaler should have used median/IQR instead</button>
+    <button data-opt="d">train/test splits are unnecessary when using cross-validation</button>
+  </div>
+  <div class="quiz-exp"><strong>a.</strong> Even label-free statistics leak distributional information across the split (means, spread, outlier locations). Usually a small crime — but the same habit with target encoding or time-series is catastrophic. Pipelines make the discipline automatic.</div>
+</div>
+
+<h2>Go deeper</h2>
+<ul class="resources">
+  <li><a href="https://www.statlearning.com/">An Introduction to Statistical Learning (free PDF)</a><div class="rwhat">The core text for this whole topic: Ch. 3–4 (regression/classification), Ch. 8 (trees &amp; ensembles), Ch. 9 (SVM), Ch. 12 (unsupervised). Do the labs.</div></li>
+  <li><a href="https://scikit-learn.org/stable/user_guide.html">scikit-learn User Guide</a><div class="rwhat">The reference implementation of everything on this page; read "Common pitfalls and recommended practices" for the leakage material.</div></li>
+  <li><a href="https://www.microsoft.com/en-us/research/publication/pattern-recognition-machine-learning/">Bishop PRML (free PDF)</a><div class="rwhat">Ch. 9 for GMM/EM done properly, Ch. 12 for PCA including probabilistic PCA.</div></li>
+  <li><a href="https://distill.pub/2016/misread-tsne/">Distill — How to Use t-SNE Effectively</a><div class="rwhat">Interactive demonstration of every t-SNE distortion; mandatory before you ever screenshot an embedding plot into a slide deck.</div></li>
+  <li><a href="https://arxiv.org/abs/1603.02754">XGBoost paper (Chen &amp; Guestrin, 2016)</a><div class="rwhat">§2 for the regularized objective and second-order boosting — the one boosting formulation worth reading in the original.</div></li>
+  <li><a href="https://developers.google.com/machine-learning/crash-course">Google ML Crash Course</a><div class="rwhat">The classification and generalization modules are excellent quick drills with built-in exercises.</div></li>
+</ul>
+
+<div class="page-footer"></div>
+</main>
+
+<script>
+document.addEventListener("caie:ready", () => {
+  // ================= playground =================
+  (function () {
+    const canvas = document.getElementById("p-canvas");
+    let pts = [], model = "knn", dataset = "moons";
+    const rand = CAIE.rng(7);
+    function genData() {
+      pts = [];
+      const g = () => CAIE.gauss(rand);
+      if (dataset === "blobs") {
+        for (let i = 0; i < 40; i++) pts.push({ x: -1.1 + 0.45 * g(), y: -0.5 + 0.45 * g(), c: 0 });
+        for (let i = 0; i < 40; i++) pts.push({ x: 1.1 + 0.45 * g(), y: 0.5 + 0.45 * g(), c: 1 });
+      } else if (dataset === "moons") {
+        for (let i = 0; i < 45; i++) {
+          const t = Math.PI * rand();
+          pts.push({ x: Math.cos(t) - 0.5 + 0.14 * g(), y: Math.sin(t) - 0.25 + 0.14 * g(), c: 0 });
+        }
+        for (let i = 0; i < 45; i++) {
+          const t = Math.PI * rand();
+          pts.push({ x: 0.5 - Math.cos(t) + 0.14 * g(), y: 0.25 - Math.sin(t) + 0.14 * g(), c: 1 });
+        }
+      } else {
+        for (let i = 0; i < 80; i++) {
+          const x = (rand() * 2 - 1) * 1.6, y = (rand() * 2 - 1) * 1.6;
+          pts.push({ x, y, c: (x * y > 0) ? 1 : 0 });
+        }
+      }
+    }
+    // --- models ---
+    function knnProb(x, y, k) {
+      const d = pts.map(p => ({ d: (p.x - x) ** 2 + (p.y - y) ** 2, c: p.c }));
+      d.sort((a, b) => a.d - b.d);
+      let s = 0; for (let i = 0; i < Math.min(k, d.length); i++) s += d[i].c;
+      return s / Math.min(k, d.length);
+    }
+    function trainLogreg() {
+      let w0 = 0, w1 = 0, b = 0;
+      for (let it = 0; it < 400; it++) {
+        let g0 = 0, g1 = 0, gb = 0;
+        for (const p of pts) {
+          const z = w0 * p.x + w1 * p.y + b;
+          const pr = 1 / (1 + Math.exp(-z));
+          const e = pr - p.c;
+          g0 += e * p.x; g1 += e * p.y; gb += e;
+        }
+        const n = pts.length;
+        w0 -= 0.5 * g0 / n; w1 -= 0.5 * g1 / n; b -= 0.5 * gb / n;
+      }
+      return (x, y) => 1 / (1 + Math.exp(-(w0 * x + w1 * y + b)));
+    }
+    function trainTree(maxDepth) {
+      function gini(items) {
+        if (!items.length) return 0;
+        const p = items.reduce((s, it) => s + it.c, 0) / items.length;
+        return 2 * p * (1 - p);
+      }
+      function build(items, depth) {
+        const p = items.length ? items.reduce((s, it) => s + it.c, 0) / items.length : 0.5;
+        if (depth >= maxDepth || items.length < 4 || p === 0 || p === 1) return { leaf: true, p };
+        let best = null;
+        for (const dim of ["x", "y"]) {
+          const vals = items.map(it => it[dim]).sort((a, b) => a - b);
+          for (let i = 4; i < vals.length - 4; i += 2) {
+            const t = (vals[i] + vals[i + 1]) / 2;
+            const L = items.filter(it => it[dim] <= t), R = items.filter(it => it[dim] > t);
+            const score = (L.length * gini(L) + R.length * gini(R)) / items.length;
+            if (!best || score < best.score) best = { score, dim, t, L, R };
+          }
+        }
+        if (!best || best.score >= gini(items) - 1e-6) return { leaf: true, p };
+        return { leaf: false, dim: best.dim, t: best.t, L: build(best.L, depth + 1), R: build(best.R, depth + 1) };
+      }
+      const root = build(pts, 0);
+      return (x, y) => {
+        let n = root;
+        while (!n.leaf) n = ((n.dim === "x" ? x : y) <= n.t) ? n.L : n.R;
+        return n.p;
+      };
+    }
+    const R = 2.0; // world half-range
+    function draw() {
+      const k = +document.getElementById("p-k").value;
+      const depth = +document.getElementById("p-depth").value;
+      let prob;
+      const t0 = performance.now();
+      if (model === "knn") prob = (x, y) => knnProb(x, y, k);
+      else if (model === "logreg") { const f = trainLogreg(); prob = f; }
+      else { const f = trainTree(depth); prob = f; }
+      const pal = CAIE.pal();
+      const W = Math.min(640, canvas.parentNode.clientWidth - 4);
+      const { ctx, w, h } = CAIE.setupCanvas(canvas, W, 380);
+      const X = x => (x + R) / (2 * R) * w, Y = y => h - (y + R) / (2 * R) * h;
+      const nx = 72, ny = 44;
+      for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+        const x = -R + (i + 0.5) / nx * 2 * R, y = -R + (j + 0.5) / ny * 2 * R;
+        const p = prob(x, y);
+        ctx.fillStyle = CAIE.div(2 * (0.5 - p)); // blue class0, red-side... use div: + = blue
+        ctx.fillRect(i / nx * w, h - (j + 1) / ny * h, w / nx + 0.5, h / ny + 0.5);
+      }
+      // points
+      for (const p of pts) {
+        ctx.fillStyle = p.c === 0 ? pal.s[0] : pal.s[7];
+        ctx.strokeStyle = pal.surface; ctx.lineWidth = 1.6;
+        ctx.beginPath(); ctx.arc(X(p.x), Y(p.y), 5, 0, 7); ctx.fill(); ctx.stroke();
+      }
+      // training accuracy
+      let correct = 0;
+      for (const p of pts) if ((prob(p.x, p.y) > 0.5 ? 1 : 0) === p.c) correct++;
+      document.getElementById("p-readout").innerHTML =
+        "training accuracy: <b>" + (100 * correct / pts.length).toFixed(1) + "%</b>" +
+        "<span>points: <b>" + pts.length + "</b></span><span>fit+render: <b>" + (performance.now() - t0).toFixed(0) + " ms</b></span>" +
+        "<span style='color:var(--muted)'>blue field = class ● blue; red field = class ● pink</span>";
+    }
+    canvas.addEventListener("click", e => {
+      const r = canvas.getBoundingClientRect();
+      const x = (e.clientX - r.left) / r.width * 2 * R - R;
+      const y = R - (e.clientY - r.top) / r.height * 2 * R;
+      pts.push({ x, y, c: e.shiftKey ? 1 : 0 });
+      draw();
+    });
+    document.getElementById("p-data").addEventListener("change", e => { dataset = e.target.value; genData(); draw(); });
+    document.getElementById("p-model").addEventListener("change", e => {
+      model = e.target.value;
+      document.getElementById("p-kl").style.display = model === "knn" ? "" : "none";
+      document.getElementById("p-dl").style.display = model === "tree" ? "" : "none";
+      draw();
+    });
+    document.getElementById("p-k").addEventListener("input", () => { document.getElementById("p-k-v").textContent = document.getElementById("p-k").value; draw(); });
+    document.getElementById("p-depth").addEventListener("input", () => { document.getElementById("p-depth-v").textContent = document.getElementById("p-depth").value; draw(); });
+    document.getElementById("p-reset").addEventListener("click", () => { genData(); draw(); });
+    document.getElementById("p-k-v").textContent = "5";
+    document.getElementById("p-depth-v").textContent = "3";
+    CAIE.onTheme(draw); window.addEventListener("resize", draw);
+    genData(); draw();
+  })();
+
+  // ================= k-means =================
+  (function () {
+    const canvas = document.getElementById("km-canvas");
+    let data = [], cents = [], assign = [], phase = "assign", seedN = 1;
+    const baseRand = CAIE.rng(11);
+    (function gen() {
+      const g = () => CAIE.gauss(baseRand);
+      for (let i = 0; i < 40; i++) data.push([-1.2 + 0.3 * g(), 0.9 + 0.3 * g()]);
+      for (let i = 0; i < 40; i++) data.push([1.3 + 0.3 * g(), 0.8 + 0.3 * g()]);
+      for (let i = 0; i < 40; i++) data.push([0.1 + 0.3 * g(), -1.0 + 0.3 * g()]);
+      for (let i = 0; i < 50; i++) { const t = baseRand() * 2 - 1; data.push([t * 1.8, 0.05 + 0.35 * t + 0.12 * g()]); }
+    })();
+    function seed() {
+      const r = CAIE.rng(100 + seedN * 13);
+      const k = +document.getElementById("km-k").value;
+      cents = [];
+      for (let i = 0; i < k; i++) cents.push(data[Math.floor(r() * data.length)].slice());
+      assign = data.map(() => -1);
+      phase = "assign";
+    }
+    function stepOnce() {
+      const k = cents.length;
+      if (phase === "assign") {
+        assign = data.map(p => {
+          let bi = 0, bd = 1e9;
+          cents.forEach((c, i) => { const d = (p[0] - c[0]) ** 2 + (p[1] - c[1]) ** 2; if (d < bd) { bd = d; bi = i; } });
+          return bi;
+        });
+        phase = "update";
+        return true;
+      } else {
+        let moved = 0;
+        for (let i = 0; i < k; i++) {
+          const mine = data.filter((_, j) => assign[j] === i);
+          if (!mine.length) continue;
+          const nx = mine.reduce((s, p) => s + p[0], 0) / mine.length;
+          const ny = mine.reduce((s, p) => s + p[1], 0) / mine.length;
+          moved += Math.hypot(nx - cents[i][0], ny - cents[i][1]);
+          cents[i] = [nx, ny];
+        }
+        phase = "assign";
+        return moved > 1e-4;
+      }
+    }
+    function inertia() {
+      let s = 0;
+      data.forEach((p, j) => {
+        const c = cents[assign[j] >= 0 ? assign[j] : 0];
+        s += (p[0] - c[0]) ** 2 + (p[1] - c[1]) ** 2;
+      });
+      return s;
+    }
+    function draw() {
+      const pal = CAIE.pal();
+      const W = Math.min(640, canvas.parentNode.clientWidth - 4);
+      const { ctx, w, h } = CAIE.setupCanvas(canvas, W, 340);
+      const R2 = 2.3;
+      const X = x => (x + R2) / (2 * R2) * w, Y = y => h - (y + R2) / (2 * R2) * h;
+      ctx.clearRect(0, 0, w, h);
+      data.forEach((p, j) => {
+        ctx.fillStyle = assign[j] >= 0 ? pal.s[assign[j] % 8] : pal.muted;
+        ctx.beginPath(); ctx.arc(X(p[0]), Y(p[1]), 4, 0, 7); ctx.fill();
+      });
+      cents.forEach((c, i) => {
+        ctx.strokeStyle = pal.ink; ctx.fillStyle = pal.s[i % 8]; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(X(c[0]), Y(c[1]), 9, 0, 7); ctx.fill(); ctx.stroke();
+      });
+      document.getElementById("km-readout").innerHTML =
+        "next step: <b>" + phase + "</b><span>inertia: <b>" + (assign[0] >= 0 ? inertia().toFixed(1) : "—") + "</b></span>";
+    }
+    document.getElementById("km-step").addEventListener("click", () => { stepOnce(); draw(); });
+    document.getElementById("km-run").addEventListener("click", () => {
+      let guard = 0;
+      while (stepOnce() && guard++ < 200) {}
+      // finish with an assign pass so colors match final centroids
+      if (phase === "assign") stepOnce();
+      draw();
+    });
+    document.getElementById("km-seed").addEventListener("click", () => { seedN++; seed(); draw(); });
+    document.getElementById("km-k").addEventListener("input", () => { document.getElementById("km-k-v").textContent = document.getElementById("km-k").value; seed(); draw(); });
+    document.getElementById("km-k-v").textContent = "3";
+    CAIE.onTheme(draw); window.addEventListener("resize", draw);
+    seed(); draw();
+  })();
+
+  // ================= ROC =================
+  (function () {
+    const cvs = document.getElementById("r-canvas"), roc = document.getElementById("r-roc");
+    function phi(z) { return Math.exp(-0.5 * z * z) / Math.sqrt(2 * Math.PI); }
+    function Phi(z) { // standard normal CDF (Abramowitz–Stegun)
+      const t = 1 / (1 + 0.2316419 * Math.abs(z));
+      const d = phi(z);
+      let p = d * t * (0.319381530 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))));
+      return z >= 0 ? 1 - p : p;
+    }
+    function draw() {
+      const sep = +document.getElementById("r-sep").value;
+      const thr = +document.getElementById("r-thr").value;
+      const prev = +document.getElementById("r-prev").value;
+      document.getElementById("r-sep-v").textContent = sep.toFixed(2);
+      document.getElementById("r-thr-v").textContent = thr.toFixed(2);
+      document.getElementById("r-prev-v").textContent = (prev * 100).toFixed(0) + "%";
+      const pal = CAIE.pal();
+      // distributions: neg ~ N(0,1), pos ~ N(sep+? ,1) -> center pos at sep
+      const TPR = 1 - Phi(thr - sep), FPR = 1 - Phi(thr);
+      const TP = prev * TPR, FN = prev - TP, FP = (1 - prev) * FPR, TN = (1 - prev) - FP;
+      const prec = TP / Math.max(1e-9, TP + FP), rec = TPR;
+      const f1 = 2 * prec * rec / Math.max(1e-9, prec + rec);
+      const acc = TP + TN;
+      const auc = Phi(sep / Math.SQRT2);
+      document.getElementById("r-prec").textContent = (100 * prec).toFixed(1) + "%";
+      document.getElementById("r-rec").textContent = (100 * rec).toFixed(1) + "%";
+      document.getElementById("r-f1").textContent = (100 * f1).toFixed(1) + "%";
+      document.getElementById("r-acc").textContent = (100 * acc).toFixed(1) + "%";
+      document.getElementById("r-auc").textContent = auc.toFixed(3);
+      // left: densities
+      const P = CAIE.plot(cvs, { w: Math.min(380, cvs.parentNode.clientWidth - 4), h: 260, xmin: -3.5, xmax: sep + 3.5, ymin: 0, ymax: 0.45, pad: { l: 34, r: 8, t: 10, b: 26 } });
+      P.clear(); P.axes("score", "", { yfmt: v => v.toFixed(1), xfmt: v => v.toFixed(0) });
+      P.fn(x => phi(x), pal.muted, 2);
+      P.fn(x => phi(x - sep), pal.s[0], 2.5);
+      // threshold
+      P.ctx.strokeStyle = pal.s[5]; P.ctx.lineWidth = 2; P.ctx.setLineDash([5, 4]);
+      P.ctx.beginPath(); P.ctx.moveTo(P.X(thr), P.pad.t); P.ctx.lineTo(P.X(thr), P.Y(0)); P.ctx.stroke();
+      P.ctx.setLineDash([]);
+      P.label(thr + 0.08, 0.42, "threshold", pal.s[5]);
+      P.label(-2.9, 0.40, "negatives", pal.muted);
+      P.label(sep + 1.2, 0.40, "positives", pal.s[0]);
+      // right: ROC
+      const Q = CAIE.plot(roc, { w: Math.min(240, roc.parentNode.clientWidth - 4), h: 260, xmin: 0, xmax: 1, ymin: 0, ymax: 1, pad: { l: 34, r: 8, t: 10, b: 26 } });
+      Q.clear(); Q.axes("FPR", "TPR", { xticks: 2, yticks: 2, yfmt: v => v.toFixed(1), xfmt: v => v.toFixed(1) });
+      Q.line([[0, 0], [1, 1]], pal.grid, 1.5);
+      const pts = [];
+      for (let t = -5; t <= sep + 5; t += 0.05) pts.push([1 - Phi(t), 1 - Phi(t - sep)]);
+      Q.line(pts, pal.s[0], 2.5);
+      Q.dot(FPR, TPR, 6, pal.s[5], true);
+    }
+    ["r-sep", "r-thr", "r-prev"].forEach(id => document.getElementById(id).addEventListener("input", draw));
+    CAIE.onTheme(draw); window.addEventListener("resize", draw);
+    draw();
+  })();
+
+  // ================= bias-variance =================
+  (function () {
+    const fitC = document.getElementById("bv-fit"), errC = document.getElementById("bv-err");
+    let seedNum = 3;
+    const truth = x => Math.sin(2.2 * x) + 0.4 * x;
+    function makeData() {
+      const r = CAIE.rng(seedNum);
+      const tr = [], te = [];
+      for (let i = 0; i < 30; i++) { const x = -2 + 4 * r(); tr.push([x, truth(x) + 0.35 * CAIE.gauss(r)]); }
+      for (let i = 0; i < 200; i++) { const x = -2 + 4 * r(); te.push([x, truth(x) + 0.35 * CAIE.gauss(r)]); }
+      return { tr, te };
+    }
+    function polyfit(data, deg) {
+      // normal equations with ridge eps for stability; features x^0..x^deg (x scaled /2)
+      const n = deg + 1;
+      const A = Array.from({ length: n }, () => new Array(n).fill(0));
+      const b = new Array(n).fill(0);
+      for (const [x0, y] of data) {
+        const x = x0 / 2;
+        const phi = []; let v = 1;
+        for (let j = 0; j < n; j++) { phi.push(v); v *= x; }
+        for (let j = 0; j < n; j++) { b[j] += phi[j] * y; for (let k2 = 0; k2 < n; k2++) A[j][k2] += phi[j] * phi[k2]; }
+      }
+      for (let j = 0; j < n; j++) A[j][j] += 1e-8;
+      // gaussian elimination
+      for (let col = 0; col < n; col++) {
+        let piv = col;
+        for (let r2 = col + 1; r2 < n; r2++) if (Math.abs(A[r2][col]) > Math.abs(A[piv][col])) piv = r2;
+        [A[col], A[piv]] = [A[piv], A[col]]; [b[col], b[piv]] = [b[piv], b[col]];
+        for (let r2 = col + 1; r2 < n; r2++) {
+          const f = A[r2][col] / (A[col][col] || 1e-12);
+          for (let c2 = col; c2 < n; c2++) A[r2][c2] -= f * A[col][c2];
+          b[r2] -= f * b[col];
+        }
+      }
+      const w = new Array(n).fill(0);
+      for (let r2 = n - 1; r2 >= 0; r2--) {
+        let s = b[r2];
+        for (let c2 = r2 + 1; c2 < n; c2++) s -= A[r2][c2] * w[c2];
+        w[r2] = s / (A[r2][r2] || 1e-12);
+      }
+      return x0 => { const x = x0 / 2; let s = 0, v = 1; for (let j = 0; j < n; j++) { s += w[j] * v; v *= x; } return s; };
+    }
+    const mse = (f, data) => data.reduce((s, [x, y]) => s + (f(x) - y) ** 2, 0) / data.length;
+    function draw() {
+      const deg = +document.getElementById("bv-deg").value;
+      document.getElementById("bv-deg-v").textContent = deg;
+      const { tr, te } = makeData();
+      const pal = CAIE.pal();
+      const f = polyfit(tr, deg);
+      const P = CAIE.plot(fitC, { w: Math.min(380, fitC.parentNode.clientWidth - 4), h: 260, xmin: -2.1, xmax: 2.1, ymin: -2.6, ymax: 2.6, pad: { l: 30, r: 8, t: 10, b: 26 } });
+      P.clear(); P.axes("x", "y", { xfmt: v => v.toFixed(0), yfmt: v => v.toFixed(0) });
+      P.fn(truth, pal.grid, 2);
+      P.fn(x => Math.max(-3, Math.min(3, f(x))), pal.s[0], 2.5);
+      for (const [x, y] of tr) P.dot(x, y, 3.5, pal.s[2]);
+      // error curve across degrees
+      const degs = [], trE = [], teE = [];
+      for (let d = 0; d <= 15; d++) {
+        const fd = polyfit(tr, d);
+        degs.push(d); trE.push(mse(fd, tr)); teE.push(mse(fd, te));
+      }
+      const ymax2 = Math.min(2, Math.max(...teE) * 1.1);
+      const Q = CAIE.plot(errC, { w: Math.min(240, errC.parentNode.clientWidth - 4), h: 260, xmin: 0, xmax: 15, ymin: 0, ymax: ymax2, pad: { l: 34, r: 8, t: 10, b: 26 } });
+      Q.clear(); Q.axes("degree", "MSE", { xticks: 5, xfmt: v => Math.round(v), yfmt: v => v.toFixed(1) });
+      Q.line(degs.map((d, i) => [d, Math.min(trE[i], ymax2)]), pal.s[1], 2);
+      Q.line(degs.map((d, i) => [d, Math.min(teE[i], ymax2)]), pal.s[5], 2.5);
+      Q.dot(deg, Math.min(teE[deg], ymax2), 5, pal.s[5], true);
+      Q.label(7, ymax2 * 0.92, "test", pal.s[5]);
+      Q.label(7, ymax2 * 0.78, "train", pal.s[1]);
+    }
+    document.getElementById("bv-deg").addEventListener("input", draw);
+    document.getElementById("bv-resample").addEventListener("click", () => { seedNum++; draw(); });
+    CAIE.onTheme(draw); window.addEventListener("resize", draw);
+    draw();
+  })();
+});
+</script>
+</body>
+</html>

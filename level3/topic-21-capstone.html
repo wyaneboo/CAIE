@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Topic 21 — Capstone System Design · CAIE Course</title>
+<link rel="stylesheet" href="../assets/course.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<script defer src="../assets/course.js"></script>
+</head>
+<body data-page="t21" data-root="..">
+<a class="skip" href="#main">Skip to content</a>
+<header class="topbar">
+  <button id="navToggle" class="iconbtn" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html">CAIE<span>·</span>Course</a>
+  <span class="topbar-title">Level III · Topic 21 · Capstone System Design</span>
+  <button id="themeToggle" class="iconbtn" aria-label="Toggle theme">◐</button>
+</header>
+<nav id="sidebar"></nav>
+
+<main id="main">
+<div class="kicker">Level III · Topic 21 · Exam weight 16%</div>
+<h1>Capstone System Design</h1>
+<p class="lead">
+  This is the exam's integrative core, and the one that most resembles the real job: you're handed a
+  multi-page business scenario and must produce a written design — end to end, with justified
+  tradeoffs, quantitative estimates, and a risk and rollout plan. There is no answer key. You're
+  graded like a CFA Level III essay, on the <em>quality and defensibility of your reasoning</em>.
+  Everything you learned across the twenty preceding topics converges here; the skill this page
+  builds is the <em>method</em> for turning a vague brief into a defensible architecture — and the
+  discipline of naming every tradeoff you accept.
+</p>
+
+<div class="box los">
+  <div class="box-title">What a capstone answer must cover</div>
+  <ul>
+    <li>Requirements elicitation and constraint identification — including the unstated ones.</li>
+    <li>End-to-end architecture: data → training/selection → serving → monitoring.</li>
+    <li>Model and infrastructure selection with justified tradeoffs.</li>
+    <li>Cost, latency, and reliability analysis with quantitative estimates.</li>
+    <li>Risk, safety, and ethics assessment.</li>
+    <li>A staged rollout and evaluation plan.</li>
+  </ul>
+</div>
+
+<h2>21.1 The method — how to attack any capstone brief</h2>
+<p>
+  The single most common failure is jumping to a solution before understanding the problem. Work the
+  brief in this order, and show the work:
+</p>
+<ol>
+  <li><strong>Elicit requirements and surface the hidden constraints.</strong> What is the actual
+  job-to-be-done? Then the constraints that decide everything: latency target, request volume and
+  its shape (peaks), budget, accuracy/quality bar, privacy and regulatory regime, data availability,
+  team size, and time-to-market. The <em>unstated</em> constraints are where marks are won — "the
+  brief says healthcare, so HIPAA and human-in-the-loop are non-negotiable," "it says consumer chat,
+  so p95 &lt; 2 s or users leave."</li>
+  <li><strong>Identify the binding constraint.</strong> One usually dominates. Latency-bound problems
+  and cost-bound problems and accuracy-bound problems have <em>different</em> optimal architectures;
+  name which one you're solving before you draw a box.</li>
+  <li><strong>Choose the approach for the problem <em>type</em>.</strong> Is this a
+  knowledge problem (→ RAG, Topic 14), a behavior/skill problem (→ fine-tuning, Topic 17), a
+  well-scoped classification (→ maybe a small classical model, Topic 4, not an LLM at all)? The
+  strongest answers sometimes reject the fancy option: "this is a structured extraction task at
+  massive volume — a fine-tuned small model beats an LLM API on both cost and latency."</li>
+  <li><strong>Design end to end, and quantify.</strong> Data pipeline → model/infra selection →
+  serving pattern → monitoring, with 6ND and memory math (Topic 12), cost/token and SLO math
+  (Topic 20), and named numbers. Estimates with stated assumptions beat vague adjectives every
+  time.</li>
+  <li><strong>Assess risk, safety, and ethics — then stage the rollout.</strong> What can go wrong
+  (drift, injection, bias, cost blowup, provider dependency), how you'd detect it, and a staged plan
+  (shadow → canary → GA, Topic 13) with monitored thresholds and a rollback trigger.</li>
+  <li><strong>State your tradeoffs explicitly.</strong> The graded sentence is always "I chose X over
+  Y, accepting cost Z, because constraint C dominates." A design with no acknowledged tradeoffs reads
+  as a design that didn't understand the problem.</li>
+</ol>
+<div class="box note">
+  <div class="box-title">The rubric, in one line</div>
+  <p>
+    Graders reward: <em>a correctly identified binding constraint</em>, <em>an architecture that
+    follows from it</em>, <em>quantitative estimates with stated assumptions</em>, <em>explicitly
+    named tradeoffs</em>, and <em>a risk/rollout plan</em>. They penalize: unjustified technology
+    choices ("we'll use an agent"), missing constraints (no privacy analysis on health data), hand-
+    waved numbers, and one-word deploy/don't decisions. Note there is no reward for picking the
+    "right" model — there isn't one; the reward is for the reasoning.
+  </p>
+</div>
+
+<h2>21.2 A worked capstone — reasoning made visible</h2>
+<p>
+  <strong>Brief:</strong> A national bank wants an AI assistant for its 12M retail customers to
+  answer questions about <em>their own</em> accounts and the bank's products, in-app, 24/7.
+  Regulated environment; answers about a customer's data must be accurate and auditable; peak load
+  ~3,000 requests/second; p95 latency budget ~2.5 s; a mistake that leaks another customer's data is
+  a catastrophic, reportable incident. Design it.
+</p>
+<p>
+  <strong>Binding constraints (elicited):</strong> (1) <em>correctness + auditability</em> on
+  personal financial data — this dominates; a plausible-but-wrong answer is worse than no answer.
+  (2) <em>privacy/isolation</em> — customer A must never see customer B's data. (3) <em>regulatory</em>
+  — audit trail, human escalation, explainability. (4) latency and cost at 3k rps are real but
+  secondary to the above.
+</p>
+<p>
+  <strong>Approach and architecture:</strong> This is a <em>knowledge + strict-grounding</em>
+  problem, not a behavior problem, so the core is <strong>RAG</strong> (Topic 14), not fine-tuning
+  the facts in — knowledge is per-customer and changes constantly, and RAG gives citations for the
+  audit trail. Per-customer data is fetched through the <em>existing, permissioned</em> account APIs
+  at request time (never pre-embedded into a shared index — that's the isolation guarantee); product
+  docs live in a vector index. A mid-size instruction-tuned model (Topic 17), possibly fine-tuned for
+  the bank's <em>tone and refusal behavior</em> (behavior, legitimately) but not its facts. Strict
+  grounding: answer only from retrieved context, cite sources, and <strong>refuse/escalate</strong>
+  when confidence or grounding is low — a faithfulness gate (Topic 14) before any answer ships.
+</p>
+<p>
+  <strong>Quantify:</strong> 3k rps × ~2.5 s budget ⇒ heavy use of batching and prefix-caching of
+  the shared system prompt (Topic 20); estimate GPUs from throughput and cost/token; a fast fallback
+  model and cached FAQ answers for graceful degradation. <strong>Risk/safety:</strong> prompt
+  injection via product docs (treat as data, Topic 18/15); the data-leak failure is contained
+  <em>architecturally</em> by per-request permissioned fetch + least privilege, not by trusting the
+  model. <strong>Rollout:</strong> shadow on real traffic (log, don't answer) → employee dogfood →
+  canary to 1% behind groundedness/latency/complaint guardrails → GA, with a kill-switch and a
+  human-escalation path throughout. <strong>Named tradeoff:</strong> "RAG over fine-tuning the facts,
+  accepting retrieval-stack complexity and latency, because auditability and freshness dominate and
+  fine-tuning offers neither citations nor per-customer isolation."
+</p>
+<p>
+  Notice what made that answer strong: the constraint drove the architecture, every choice named its
+  cost, and the catastrophic failure was contained by <em>system design</em> rather than model
+  behavior. Now build one yourself.
+</p>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Interactive — capstone design studio</div>
+    <div class="wsub">Pick a brief, then make the six core decisions. The rubric scores your design the way a grader would — on fit to the binding constraint and named tradeoffs, not on a single "right" answer. Aim for a coherent, defensible whole.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label>Brief
+        <select id="cap-brief">
+          <option value="0">Bank customer assistant (regulated, high-stakes)</option>
+          <option value="1">Startup: summarize 100M news articles/day (cost-bound)</option>
+          <option value="2">Hospital triage note drafting (safety-critical)</option>
+          <option value="3">Consumer coding copilot (latency-bound, huge scale)</option>
+        </select>
+      </label>
+    </div>
+    <div id="cap-brief-text" class="box note" style="margin:8px 0"></div>
+    <div id="cap-decisions"></div>
+    <button class="btn" id="cap-score" style="margin-top:10px">Score my design</button>
+    <div class="readout" id="cap-readout" style="margin-top:10px"></div>
+    <div id="cap-detail" style="margin-top:8px"></div>
+    <p class="wcaption">
+      Things to try: (1) Deliberately over-engineer — pick a big agent and fine-tune everything for
+      the cost-bound summarization brief — and watch the rubric dock you for a constraint mismatch
+      and unnamed cost. (2) Match the approach to the binding constraint (RAG for the knowledge
+      brief, a small fine-tuned model for the high-volume extraction one) and the score climbs.
+      (3) There's no single perfect answer — several coherent designs score well. The feedback
+      explains <em>why</em>, which is the exam skill.
+    </p>
+  </div>
+</div>
+
+<h2>21.3 Common capstone traps</h2>
+<ul>
+  <li><strong>Solution-first.</strong> Naming a technology (agent, RAG, fine-tune) before the
+  constraint that justifies it. The order is problem → constraint → approach, always.</li>
+  <li><strong>Reaching for the biggest hammer.</strong> An LLM agent for a job a fine-tuned
+  classifier or even a rules engine does better, cheaper, and more reliably. Sophistication is not
+  the goal; fit is.</li>
+  <li><strong>Ignoring the unstated constraints.</strong> No privacy analysis on personal data, no
+  latency budget on a consumer product, no cost estimate at scale — the silent constraints are
+  usually the binding ones.</li>
+  <li><strong>Hand-waved numbers.</strong> "It'll be fast and cheap" earns nothing; "≈X GPUs at Y
+  utilization ⇒ $Z/month, p95 ≈ W ms" earns the marks, even if your assumptions are rough — state
+  them.</li>
+  <li><strong>No tradeoffs.</strong> A design where everything is optimal is a design that didn't
+  engage the constraints. Every real choice costs something; say what.</li>
+  <li><strong>No rollout or rollback.</strong> "Then we deploy it" ignores the entire staged-delivery
+  and reliability apparatus (Topics 13, 20). The plan to <em>ship safely</em> is part of the design.</li>
+</ul>
+
+<h2>21.4 The map — where every topic lands in a capstone</h2>
+<p>
+  The capstone is a lens that focuses the whole course. When you read a brief, this is the mental
+  checklist of which topics each stage draws on:
+</p>
+<div class="tablewrap"><table>
+  <thead><tr><th>Design stage</th><th>Draws on</th></tr></thead>
+  <tbody>
+    <tr><td>Requirements &amp; constraints</td><td>Ethics I/III (7, 22), Responsible AI (15), Reliability &amp; governance (20)</td></tr>
+    <tr><td>Data pipeline</td><td>Data engineering (6), LLM data (17), RAG indexing (14)</td></tr>
+    <tr><td>Model selection / training</td><td>Classical ML (4), Deep learning (5), Architectures (8), Scaling laws (16), Fine-tuning/alignment (17)</td></tr>
+    <tr><td>Serving &amp; infra</td><td>ML systems (12), MLOps (13), Reliability &amp; economics (20)</td></tr>
+    <tr><td>Agentic / retrieval layer</td><td>RAG (14), Agentic systems (18)</td></tr>
+    <tr><td>Monitoring &amp; evaluation</td><td>MLOps (13), RAG eval (14), Responsible AI (15), Safety evals (19)</td></tr>
+    <tr><td>Risk, safety &amp; rollout</td><td>Responsible AI (15), Safety (19), Reliability/governance (20), Ethics (22)</td></tr>
+  </tbody>
+</table></div>
+<p>
+  If a stage of your design touches none of these, you've probably skipped it. A complete capstone
+  answer visits every row.
+</p>
+
+<h2>Self-check</h2>
+<div class="quiz" data-answer="b">
+  <p class="quiz-q">1. A capstone brief describes a high-volume, well-defined task: classify 50M incoming support emails/day into 20 categories, p99 &lt; 100 ms, tight budget. A strong answer likely:</p>
+  <div class="opts">
+    <button data-opt="a">deploys a frontier LLM agent with tools for maximum flexibility</button>
+    <button data-opt="b">uses a small fine-tuned classifier (or distilled model): the task is narrow and the binding constraints are cost and latency at scale — an LLM API would be far slower and more expensive for no quality benefit</button>
+    <button data-opt="c">builds a multi-agent system for robustness</button>
+    <button data-opt="d">RAG over the email history</button>
+  </div>
+  <div class="quiz-exp"><strong>b.</strong> Matching approach to problem type and binding constraint. A bounded classification at 50M/day with a 100 ms budget is exactly where a small fine-tuned model wins on both axes. Reaching for the LLM agent (a, c) is the "biggest hammer" trap; RAG (d) solves a knowledge problem this isn't.</div>
+</div>
+<div class="quiz" data-answer="d">
+  <p class="quiz-q">2. Two candidates design the bank assistant. Candidate A writes "we'll use RAG and a good model." Candidate B writes "RAG over fine-tuning because knowledge is per-customer, fresh, and needs citations for audit — accepting retrieval-stack complexity — with per-request permissioned fetch to guarantee isolation." B scores higher mainly because:</p>
+  <div class="opts">
+    <button data-opt="a">B used more technical terms</button>
+    <button data-opt="b">B chose a better model</button>
+    <button data-opt="c">B's answer is longer</button>
+    <button data-opt="d">B justified the choice against the binding constraints and named the tradeoff accepted; the rubric grades defensible reasoning, not the technology label</button>
+  </div>
+  <div class="quiz-exp"><strong>d.</strong> Both chose RAG; only B <em>earned</em> it. The graded content is the chain constraint → choice → named tradeoff, plus the architectural isolation guarantee. This is the entire difference between a pass and a strong pass at Level III.</div>
+</div>
+<div class="quiz" data-answer="a">
+  <p class="quiz-q">3. Your capstone design is elegant but you've written nothing about what happens after "deploy." The clearest gap a grader will flag:</p>
+  <div class="opts">
+    <button data-opt="a">no staged rollout, monitoring, or rollback plan — shipping safely (shadow → canary → GA with guardrails and a kill-switch) is part of the design, not an afterthought</button>
+    <button data-opt="b">the font of the diagram</button>
+    <button data-opt="c">not enough model options compared</button>
+    <button data-opt="d">missing a literature review</button>
+  </div>
+  <div class="quiz-exp"><strong>a.</strong> "Then we deploy" discards Topics 13 and 20 entirely. A complete answer includes detection, staged delivery with monitored thresholds, and a rollback trigger — the operational half of system design that separates a demo from a production plan.</div>
+</div>
+<div class="quiz" data-answer="c">
+  <p class="quiz-q">4. Mid-design you realize two constraints conflict: the p95 latency budget pushes toward a small model, but the accuracy bar pushes toward a large one. The Level III move is to:</p>
+  <div class="opts">
+    <button data-opt="a">pick the large model and ignore the latency budget</button>
+    <button data-opt="b">pick the small model and ignore the accuracy bar</button>
+    <button data-opt="c">surface the tension explicitly and resolve it with a defensible mechanism — e.g., a router that sends easy queries to the small model and escalates hard ones, or speculative decoding — stating the tradeoff and how you'd validate it</button>
+    <button data-opt="d">state that the requirements are impossible and stop</button>
+  </div>
+  <div class="quiz-exp"><strong>c.</strong> Constraint conflicts are the point of the exercise, not a failure of the brief. Naming the tension and resolving it with a concrete mechanism (routing, cascades, speculative decoding, caching) plus a validation plan is precisely the reasoning being graded. Ignoring either constraint (a, b) or giving up (d) forfeits the question.</div>
+</div>
+
+<h2>Go deeper</h2>
+<ul class="resources">
+  <li><a href="https://github.com/donnemartin/system-design-primer">The System Design Primer</a><div class="rwhat">The general (non-ML) system-design method — requirements, back-of-envelope estimates, tradeoffs — that the capstone applies to AI. Internalize the estimation habit.</div></li>
+  <li><a href="https://www.oreilly.com/library/view/designing-machine-learning/9781098107956/">Chip Huyen — Designing Machine Learning Systems</a><div class="rwhat">End-to-end ML system design with the exact structure of a capstone answer; the best single book to model your reasoning on.</div></li>
+  <li><a href="https://www.oreilly.com/library/view/ai-engineering/9781098166298/">Chip Huyen — AI Engineering (2024)</a><div class="rwhat">The LLM-era companion: evaluation, RAG, agents, cost, and deployment as an integrated design discipline (syllabus Level III text).</div></li>
+  <li><a href="https://dataintensive.com/">Kleppmann — Designing Data-Intensive Applications</a><div class="rwhat">The systems-thinking foundation (syllabus Level III text): how to reason about reliability, scalability, and tradeoffs from first principles.</div></li>
+  <li><a href="https://huyenchip.com/mlops/">Chip Huyen — ML interviews &amp; case studies</a><div class="rwhat">Worked ML-system design cases you can practice against; treat each as a capstone and grade yourself with §21.1's rubric.</div></li>
+  <li><a href="https://eugeneyan.com/writing/">Eugene Yan — applied ML system write-ups</a><div class="rwhat">Real production designs with their tradeoffs made explicit — models of the reasoning the capstone rewards.</div></li>
+</ul>
+
+<div class="page-footer"></div>
+</main>
+
+<script>
+document.addEventListener("caie:ready", () => {
+  // ================== capstone design studio ==================
+  (function () {
+    const briefText = document.getElementById("cap-brief-text");
+    const decisionsEl = document.getElementById("cap-decisions");
+    const readout = document.getElementById("cap-readout");
+    const detail = document.getElementById("cap-detail");
+
+    // Each brief: text, binding constraints, and scoring weights for each decision option.
+    // decisions: approach, model, serving, safety, rollout, tradeoff-named
+    const DECS = [
+      { id: "approach", q: "Core approach", opts: ["RAG (retrieve knowledge)", "Fine-tune facts into the model", "Small fine-tuned task model", "Prompt a frontier API only"] },
+      { id: "serving", q: "Serving strategy", opts: ["Batched real-time + caching", "One request at a time, no cache", "Nightly batch scoring", "Frontier API per request, no optimization"] },
+      { id: "safety", q: "Primary safety mechanism", opts: ["Grounding gate + least-privilege + human escalation", "Trust the model's training", "Output length limit only", "Keyword filter on outputs"] },
+      { id: "rollout", q: "Rollout plan", opts: ["Shadow → canary → GA + kill-switch", "Deploy to 100% at launch", "Internal demo then GA", "Continuous auto-deploy, no gates"] }
+    ];
+    // per-brief best-fit index for each decision + a note
+    const BRIEFS = [
+      { title: "Bank customer assistant",
+        text: "<strong>Bank customer assistant.</strong> 12M customers, in-app, 24/7, answering about their own accounts + products. Regulated; answers must be accurate &amp; auditable; ~3,000 rps peak; p95 &lt; 2.5 s; leaking another customer's data is catastrophic.",
+        binding: "correctness + auditability + per-customer isolation (regulated)",
+        best: { approach: 0, serving: 0, safety: 0, rollout: 0 },
+        why: { approach: "RAG: per-customer, fresh, needs citations for audit — fine-tuning gives neither. Isolation via per-request permissioned fetch.",
+               serving: "3k rps under 2.5 s ⇒ batching + prefix-caching the shared prompt.",
+               safety: "The data-leak catastrophe must be contained architecturally, not by trusting the model.",
+               rollout: "High-stakes regulated system ⇒ shadow → canary behind groundedness guardrails, kill-switch always." } },
+      { title: "News summarization at scale",
+        text: "<strong>Startup: summarize 100M news articles/day.</strong> Cost is the make-or-break constraint; quality must be decent, not perfect; latency is relaxed (batch is fine); no per-user personalization.",
+        binding: "cost per document at extreme volume (latency relaxed)",
+        best: { approach: 2, serving: 2, safety: 2, rollout: 0 },
+        why: { approach: "A small fine-tuned/distilled summarizer — a frontier API at 100M/day is ruinous, and summarization quality from a small tuned model is ample.",
+               serving: "Latency is relaxed ⇒ nightly/continuous batch scoring maximizes utilization and minimizes cost.",
+               safety: "Low individual stakes; basic output constraints suffice — over-investing here wastes the cost budget.",
+               rollout: "Still stage it, but the risk profile is low; a light shadow→GA is fine." } },
+      { title: "Hospital triage note drafting",
+        text: "<strong>Hospital triage note drafting.</strong> Drafts clinical triage notes for nurse review. Safety-critical; a wrong note can harm a patient; HIPAA; must keep a human in the loop; moderate volume.",
+        binding: "patient safety + privacy (HIPAA) + mandatory human-in-the-loop",
+        best: { approach: 0, serving: 0, safety: 0, rollout: 0 },
+        why: { approach: "RAG over the patient's record + guidelines for grounded, cited drafts; never a fact-baked model for changing clinical data.",
+               serving: "Moderate volume, but real-time for the clinician ⇒ batched real-time with caching.",
+               safety: "Human-in-the-loop is non-negotiable; grounding gate + least privilege on PHI + escalation.",
+               rollout: "Safety-critical ⇒ shadow (draft, don't surface) → supervised canary → GA, kill-switch." } },
+      { title: "Consumer coding copilot",
+        text: "<strong>Consumer coding copilot.</strong> Inline code completions for millions of developers. p99 &lt; 300 ms is the product; cost matters at scale; quality is competitive pressure; no strict regulatory regime.",
+        binding: "latency (p99 &lt; 300 ms) at very large scale",
+        best: { approach: 2, serving: 0, safety: 2, rollout: 0 },
+        why: { approach: "A specialized/distilled code model tuned for completion — latency forbids a huge frontier model per keystroke; route hard requests up.",
+               serving: "Aggressive batching, KV + prefix caching, speculative decoding to hit 300 ms cheaply.",
+               safety: "Lower stakes; guard against insecure-code suggestions and injection via context, but keep the path fast.",
+               rollout: "Huge scale ⇒ canary hard on latency/quality guardrails before GA." } }
+    ];
+    let brief = 0;
+    const choice = {};
+    function buildDecisions() {
+      decisionsEl.innerHTML = "";
+      DECS.forEach(d => {
+        if (!(d.id in choice)) choice[d.id] = -1;
+        const wrap = document.createElement("div");
+        wrap.style.margin = "10px 0";
+        let html = '<div style="font-weight:600;margin-bottom:6px">' + d.q + '</div><div class="opts" style="display:grid;gap:6px">';
+        d.opts.forEach((o, i) => {
+          html += '<button class="cap-opt" data-d="' + d.id + '" data-i="' + i + '" style="text-align:left;padding:8px 12px;border:1px solid var(--baseline);border-radius:8px;background:var(--surface);color:var(--ink-2);cursor:pointer">' + o + "</button>";
+        });
+        html += "</div>";
+        wrap.innerHTML = html;
+        decisionsEl.appendChild(wrap);
+      });
+      decisionsEl.querySelectorAll(".cap-opt").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const d = btn.dataset.d, i = +btn.dataset.i;
+          choice[d] = i;
+          decisionsEl.querySelectorAll('.cap-opt[data-d="' + d + '"]').forEach(b => {
+            const sel = +b.dataset.i === i;
+            b.style.borderColor = sel ? "var(--accent)" : "var(--baseline)";
+            b.style.background = sel ? CAIE.alpha(CAIE.css("--s1"), 0.14) : "var(--surface)";
+            b.style.color = sel ? "var(--ink)" : "var(--ink-2)";
+          });
+        });
+      });
+    }
+    function setBrief(b) {
+      brief = b;
+      for (const k in choice) delete choice[k];
+      briefText.innerHTML = BRIEFS[b].text + '<div style="margin-top:6px;color:var(--muted)"><em>Binding constraint (yours to identify): ' + BRIEFS[b].binding + "</em></div>";
+      buildDecisions();
+      readout.innerHTML = ""; detail.innerHTML = "";
+    }
+    function score() {
+      const B = BRIEFS[brief];
+      let pts = 0, max = DECS.length;
+      const rows = [];
+      DECS.forEach(d => {
+        const picked = choice[d.id];
+        if (picked < 0) { rows.push(["○ " + d.q + ": <em>no choice made</em>", "muted"]); return; }
+        const good = B.best[d.id] === picked;
+        if (good) pts++;
+        rows.push([(good ? "✓ " : "✗ ") + d.q + ": " + DECS.find(x => x.id === d.id).opts[picked] +
+          " — " + B.why[d.id], good ? "good" : "critical"]);
+      });
+      const pct = Math.round(100 * pts / max);
+      const grade = pct >= 90 ? "strong pass" : pct >= 60 ? "pass" : pct >= 35 ? "marginal" : "fails to fit the constraint";
+      const color = pct >= 90 ? "var(--good)" : pct >= 60 ? "var(--serious)" : "var(--critical)";
+      readout.innerHTML = "binding constraint: <strong>" + B.binding + "</strong> · design fit: <strong style='color:" + color + "'>" +
+        pct + "% — " + grade + "</strong>. " +
+        (pct >= 90 ? "The design coheres around the binding constraint and names its tradeoffs — a strong Level III answer."
+                   : pct >= 60 ? "Coherent, but some choices don't follow from the binding constraint — tighten the justification."
+                   : "The architecture doesn't follow from the binding constraint. Re-read the brief, identify what dominates, and let it drive every box.");
+      detail.innerHTML = '<div class="box" style="margin:0"><div style="font-weight:600;margin-bottom:6px">Grader notes</div>' +
+        rows.map(([t, c]) => '<div style="margin:4px 0;color:' + (c === "good" ? "var(--good)" : c === "critical" ? "var(--critical)" : "var(--muted)") + '">' + t + "</div>").join("") +
+        '<div style="margin-top:8px;color:var(--muted)"><em>Note: more than one coherent design can score well — the rubric rewards fit and named tradeoffs, not a single "correct" stack.</em></div></div>';
+    }
+    document.getElementById("cap-brief").addEventListener("change", e => setBrief(+e.target.value));
+    document.getElementById("cap-score").addEventListener("click", score);
+    setBrief(0);
+  })();
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Topic 16 — Scaling Laws &amp; Frontier Architecture · CAIE Course</title>
+<link rel="stylesheet" href="../assets/course.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<script defer src="../assets/course.js"></script>
+</head>
+<body data-page="t16" data-root="..">
+<a class="skip" href="#main">Skip to content</a>
+<header class="topbar">
+  <button id="navToggle" class="iconbtn" aria-label="Menu">☰</button>
+  <a class="brand" href="../index.html">CAIE<span>·</span>Course</a>
+  <span class="topbar-title">Level III · Topic 16 · Scaling Laws &amp; Frontier Architecture</span>
+  <button id="themeToggle" class="iconbtn" aria-label="Toggle theme">◐</button>
+</header>
+<nav id="sidebar"></nav>
+
+<main id="main">
+<div class="kicker">Level III · Topic 16 · Exam weight 16%</div>
+<h1>Scaling Laws &amp; Frontier System Architecture</h1>
+<p class="lead">
+  Level III stops asking you to build and starts asking you to <em>decide</em> — and to defend the
+  decision in writing against a rubric, CFA-essay style. This topic is where the money is spent:
+  a frontier training run is a multi-million-dollar bet placed <em>before</em> the run, justified
+  entirely by an empirical regularity. Scaling laws are that regularity — the closest thing ML has
+  to a law of physics: loss falls as a clean power law in compute, data, and parameters, over ten
+  orders of magnitude. Knowing how to allocate a fixed compute budget across model size and data,
+  and when to spend it on a sparse (MoE) architecture instead, is the core competence here.
+</p>
+
+<div class="box los">
+  <div class="box-title">Learning outcomes</div>
+  <ul>
+    <li>State and apply scaling laws; use the Chinchilla rule to allocate a fixed FLOPs budget.</li>
+    <li>Reason about the compute / data / parameter tradeoff, including inference-aware ("over-training") deviations.</li>
+    <li>Describe Mixture-of-Experts: routing, load balancing, sparse activation, and its costs.</li>
+    <li>Explain long-context techniques and their architectural price.</li>
+    <li>Design and <em>defend</em> an architecture for a target capability, latency, and hardware budget.</li>
+  </ul>
+</div>
+
+<h2>16.1 The scaling laws — loss as a power law</h2>
+<p>
+  The empirical finding (Kaplan et al. 2020; refined by Hoffmann et al. 2022, "Chinchilla"): test
+  loss of a transformer is well fit by a power law in each of model parameters \(N\), training
+  tokens \(D\), and compute \(C\), as long as the other two aren't bottlenecks. The Chinchilla
+  parametric form:
+  $$L(N, D) = E + \frac{A}{N^{\alpha}} + \frac{B}{D^{\beta}}$$
+  with \(\alpha \approx \beta \approx 0.34\) and \(E\) an irreducible floor (the entropy of natural
+  language — Topic 2; you cannot predict text better than its inherent randomness). Two ideas the
+  exam wants you to internalize: loss is <em>predictable</em> in advance from small-scale fits (you
+  extrapolate the power law and place your bet), and it has <em>diminishing returns</em> — each
+  10× of anything buys a fixed <em>additive</em> drop in loss, never a fixed <em>fractional</em>
+  one.
+</p>
+<div class="box bridge">
+  <div class="box-title">⚛ Physics bridge</div>
+  <p>
+    A power law with no characteristic scale is the signature of <em>scale invariance</em> — the
+    same self-similarity you know from critical phenomena and renormalization. \(L - E \sim N^{-\alpha}\)
+    is a straight line on a log–log plot, and the exponent \(\alpha\) is a critical exponent: a
+    dimensionless number that characterizes the whole family of models, the way \(\nu\) or \(\gamma\)
+    characterizes a universality class. That a $100M training run's loss can be read off a curve
+    fit to $10k runs is exactly the physicist's faith that critical exponents measured small
+    predict behavior large.
+  </p>
+</div>
+
+<h2>16.2 Chinchilla — how to spend a fixed compute budget</h2>
+<p>
+  Here is the decision that made Chinchilla famous. Compute is fixed at \(C \approx 6ND\) (Topic
+  12). You can spend it on a <em>bigger model trained on less data</em>, or a <em>smaller model
+  trained on more data</em>. Minimize \(L(N, D)\) subject to \(6ND = C\), and the optimum has a
+  strikingly simple form: <strong>scale \(N\) and \(D\) in equal proportion</strong> — every
+  doubling of compute should go half to a bigger model, half to more tokens. Empirically this lands
+  near
+  $$D_{\text{opt}} \approx 20\,N_{\text{opt}},$$
+  about 20 tokens per parameter. GPT-3 (175B params, 300B tokens ⇒ ~1.7 tokens/param) was
+  massively <em>over-parameterized and under-trained</em>; Chinchilla (70B params, 1.4T tokens)
+  used the <em>same</em> compute, obeyed the rule, and beat it — the single most cited "we were
+  doing it wrong" result in the field.
+</p>
+<div class="box warn">
+  <div class="box-title">The inference-aware correction — where Level III diverges from the formula</div>
+  <p>
+    Chinchilla minimizes <em>training</em> loss per training FLOP. But a deployed model's compute
+    is dominated by <em>inference</em>, run billions of times. A smaller model that is
+    "over-trained" past the Chinchilla point (LLaMA-style: 7B params on 1–2T+ tokens, far past 20×)
+    costs more to train but is permanently cheaper to serve. So the compute-optimal answer and the
+    <em>deployment</em>-optimal answer differ — and choosing between them, given your expected
+    inference volume, is exactly the kind of judgment call Level III grades. The formula is the
+    start of the argument, not the end.
+  </p>
+</div>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Interactive — the Chinchilla compute-optimal allocator</div>
+    <div class="wsub">Fix a compute budget. The curve is predicted loss across every way of splitting it between model size and tokens (all on the C = 6ND line). Find the minimum; see how far off GPT-3-style and LLaMA-style allocations sit.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label>Compute budget (FLOPs) <input type="range" id="ch-c" min="18" max="26" step="0.25" value="22"><span class="val" id="ch-c-v"></span></label>
+      <label>Your choice: params N <input type="range" id="ch-n" min="8" max="12.5" step="0.05" value="10"><span class="val" id="ch-n-v"></span></label>
+    </div>
+    <div class="tiles" id="ch-tiles"></div>
+    <canvas id="ch-canvas" width="760" height="280"></canvas>
+    <div class="readout" id="ch-readout"></div>
+    <p class="wcaption">
+      Things to try: (1) The loss curve is a shallow valley — being 3× off in model size costs
+      surprisingly little loss, which is why "over-training" for cheaper inference is nearly free in
+      quality. (2) Drag N to the far right (huge model, few tokens): that's the GPT-3 regime, and
+      the loss penalty is visible. (3) Read the tokens-per-param at your choice against the "≈20×"
+      marker — the Chinchilla optimum sits right where the two power-law terms balance, exactly as
+      the physics-bridge symmetry argument predicts.
+    </p>
+  </div>
+</div>
+
+<h2>16.3 Mixture-of-Experts — decoupling capacity from cost</h2>
+<p>
+  Scaling laws reward more parameters, but every parameter in a dense model runs on every token,
+  so cost tracks capacity one-to-one. <strong>Mixture-of-Experts (MoE)</strong> breaks that
+  coupling. Replace each dense feed-forward block with \(E\) parallel "expert" FFNs plus a small
+  <strong>router</strong> that, per token, sends it to only the top-\(k\) experts (typically
+  \(k=1\) or 2). A model can then hold, say, 8× the parameters while activating the same FLOPs per
+  token — <em>sparse activation</em>. Mixtral, GPT-4-class systems, and DeepSeek are MoE.
+</p>
+<p>
+  The price is engineering, not free lunch:
+</p>
+<ul>
+  <li><strong>Load balancing.</strong> Left alone, the router collapses — a few popular experts get
+  all the tokens (rich get richer), the rest starve, and you've paid for parameters you don't use.
+  An <strong>auxiliary load-balancing loss</strong> penalizes uneven routing, pushing tokens toward
+  a uniform spread. Watch this failure and its fix in the widget.</li>
+  <li><strong>Capacity factor &amp; token dropping.</strong> Experts run on fixed-size hardware
+  buffers; if too many tokens route to one expert, the overflow is <em>dropped</em> (skips the
+  layer). The capacity factor trades wasted compute (padding) against dropped tokens (lost
+  computation).</li>
+  <li><strong>Memory &amp; communication.</strong> All experts must be <em>stored</em> (the full
+  parameter count in memory even if sparsely used), and in distributed training the tokens must be
+  <strong>all-to-all</strong> shuffled to their experts' devices and back — a communication pattern
+  as demanding as Topic 12's tensor parallelism.</li>
+</ul>
+<p>
+  The exam-ready summary: MoE buys parameter capacity (hence quality) at fixed <em>active</em>
+  FLOPs, paying in total memory, communication complexity, and training instability. It is the
+  right tool when you are memory-and-bandwidth rich but latency-and-FLOP constrained.
+</p>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Interactive — MoE routing and the load-balancing loss</div>
+    <div class="wsub">A router sends a stream of tokens to 8 experts (top-1). Turn the load-balancing loss on and off, and watch expert utilization go from collapsed to balanced — and the "dropped token" rate respond to the capacity factor.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label>Load-balance loss weight <input type="range" id="moe-lb" min="0" max="1" step="0.05" value="0"><span class="val" id="moe-lb-v"></span></label>
+      <label>Capacity factor <input type="range" id="moe-cap" min="1" max="2.5" step="0.1" value="1.25"><span class="val" id="moe-cap-v"></span></label>
+      <button class="btn" id="moe-step">Route 2,000 tokens</button>
+      <button class="btn ghost" id="moe-reset">Reset router</button>
+    </div>
+    <canvas id="moe-canvas" width="760" height="260"></canvas>
+    <div class="readout" id="moe-readout"></div>
+    <p class="wcaption">
+      Things to try: (1) Loss weight 0: route a few batches and the distribution collapses — two or
+      three experts hoard the tokens, the rest idle. That's the rich-get-richer instability every
+      MoE paper warns about. (2) Raise the loss weight and reset: utilization flattens toward
+      uniform. (3) At low capacity factor, the popular experts overflow and <em>drop</em> tokens
+      (red) — those tokens skip the layer entirely; raising the factor cuts drops at the cost of
+      padding compute.
+    </p>
+  </div>
+</div>
+
+<h2>16.4 Long context — and why it isn't free</h2>
+<p>
+  Context length is a headline capability (whole codebases, book-length documents), but attention's
+  cost is quadratic in sequence length \(s\): the score matrix is \(s \times s\). Doubling context
+  quadruples attention compute and — for the KV-cache at inference (Topic 8) — doubles memory that
+  must be held for <em>every</em> token generated. The architectural responses, each with a price:
+</p>
+<ul>
+  <li><strong>Efficient attention:</strong> FlashAttention (Topic 8) removes the memory term by
+  tiling but keeps the \(s^2\) compute; sparse/sliding-window attention (Longformer, Mistral) makes
+  it linear by attending only locally, sacrificing some global reach.</li>
+  <li><strong>Position encoding that extrapolates:</strong> RoPE (Topic 8) with interpolation or
+  NTK-scaling lets a model trained at 4k generalize to 32k+ — cheaply, but with quality decay you
+  must evaluate, not assume.</li>
+  <li><strong>KV-cache compression:</strong> GQA/MQA (Topic 8), and quantizing or evicting cache
+  entries — trading recall of distant tokens for memory.</li>
+</ul>
+<p>
+  And a capability caveat that belongs in any Level III answer: a large context <em>window</em> is
+  not large context <em>competence</em>. "Lost in the middle" (Topic 14) and needle-in-a-haystack
+  evals routinely show models with 200k windows using the middle 150k poorly. Advertised context
+  length is a spec; usable context is an empirical result.
+</p>
+
+<h2>16.5 Designing and defending an architecture — the Level III move</h2>
+<p>
+  A Level III answer never just names a technique — it <em>justifies</em> the choice against the
+  stated constraints and <em>acknowledges the tradeoff it accepts</em>. The reasoning skeleton:
+</p>
+<ol>
+  <li><strong>Extract the binding constraint.</strong> Latency-bound? Memory-bound? Cost-per-query
+  bound? Data-limited? The constraint selects the architecture; state it explicitly.</li>
+  <li><strong>Compute the budget.</strong> Use 6ND, the memory math (Topic 12), and the scaling
+  law to turn the constraint into numbers — a defensible design shows arithmetic.</li>
+  <li><strong>Choose, and name the cost.</strong> "MoE for capacity at fixed active FLOPs,
+  accepting the memory and all-to-all communication burden"; "over-train a small dense model past
+  Chinchilla because inference volume dominates lifetime compute." The named tradeoff is what
+  earns the marks.</li>
+  <li><strong>State how you'd validate.</strong> Which eval decides whether the bet paid off —
+  before committing the full run.</li>
+</ol>
+<p>
+  The self-check below is written in this format on purpose: not "what is the answer" but "which
+  reasoning survives contact with the constraints."
+</p>
+
+<div class="box jargon">
+  <div class="box-title">Jargon decoder</div>
+  <dl>
+    <dt>scaling law</dt><dd>Empirical power law: test loss ≈ E + A/N^α + B/D^β; predictable and extrapolable across orders of magnitude.</dd>
+    <dt>Chinchilla-optimal</dt><dd>The N, D split minimizing loss at fixed compute; roughly D ≈ 20N (equal scaling of params and tokens).</dd>
+    <dt>over-training</dt><dd>Deliberately training a smaller model past the Chinchilla point for cheaper inference; the deployment-optimal, not compute-optimal, choice.</dd>
+    <dt>Mixture-of-Experts (MoE)</dt><dd>Many expert FFNs + a router; each token uses only top-k. Big parameter count, small active FLOPs.</dd>
+    <dt>router / top-k</dt><dd>The small network choosing which experts a token visits; k=1–2 is typical.</dd>
+    <dt>load-balancing loss</dt><dd>Auxiliary penalty forcing even expert usage; without it the router collapses onto a few experts.</dd>
+    <dt>capacity factor</dt><dd>Sizing of per-expert token buffers; too low drops tokens, too high wastes compute on padding.</dd>
+    <dt>sparse activation</dt><dd>Only a fraction of parameters run per token — the property that decouples MoE capacity from cost.</dd>
+    <dt>all-to-all</dt><dd>The collective that ships tokens to their experts' devices and back; MoE's dominant communication cost.</dd>
+    <dt>irreducible loss (E)</dt><dd>The scaling-law floor — the entropy of the data; no model beats it.</dd>
+  </dl>
+</div>
+
+<h2>Self-check</h2>
+<div class="quiz" data-answer="c">
+  <p class="quiz-q">1. You have a fixed compute budget and want the lowest possible <em>training</em> loss. Someone proposes GPT-3's recipe: a very large model on relatively few tokens. Chinchilla says:</p>
+  <div class="opts">
+    <button data-opt="a">correct — bigger models always win at fixed compute</button>
+    <button data-opt="b">correct — data quality matters more than quantity</button>
+    <button data-opt="c">suboptimal — at fixed compute you should scale parameters and tokens together (D ≈ 20N); GPT-3 was under-trained, and a smaller model on more tokens reaches lower loss for the same FLOPs</button>
+    <button data-opt="d">it doesn't matter; only total compute sets the loss</button>
+  </div>
+  <div class="quiz-exp"><strong>c.</strong> The headline Chinchilla result. The two power-law terms A/N^α and B/D^β are balanced at the optimum; GPT-3 over-spent on N and starved D. Note (d) is half-true — total compute sets a <em>floor</em> on achievable loss, but only the optimal split reaches it.</div>
+</div>
+<div class="quiz" data-answer="a">
+  <p class="quiz-q">2. You'll serve a model to hundreds of millions of daily queries for years. Training compute is a one-time cost. The defensible allocation, versus strict Chinchilla-optimal:</p>
+  <div class="opts">
+    <button data-opt="a">over-train a smaller model well past D ≈ 20N — pay more at training time to make each of billions of inferences cheaper; lifetime compute is inference-dominated</button>
+    <button data-opt="b">use exactly the Chinchilla-optimal N and D — the formula is always right</button>
+    <button data-opt="c">use the largest model you can afford to train, ignoring inference</button>
+    <button data-opt="d">MoE is the only valid choice for high-volume serving</button>
+  </div>
+  <div class="quiz-exp"><strong>a.</strong> The inference-aware correction, and a textbook Level III judgment: Chinchilla minimizes training loss per training FLOP, but the deployed cost function is dominated by inference. The shallow loss valley (widget point 1) makes over-training nearly free in quality. Naming <em>why</em> you deviate from the formula is the graded skill.</div>
+</div>
+<div class="quiz" data-answer="d">
+  <p class="quiz-q">3. An MoE model's aggregate quality is disappointing; profiling shows 3 of 32 experts handle 70% of tokens while 12 experts see almost none. The root cause and fix:</p>
+  <div class="opts">
+    <button data-opt="a">the experts are too small; widen them</button>
+    <button data-opt="b">the context length is too short</button>
+    <button data-opt="c">top-k is too high; reduce to k=1</button>
+    <button data-opt="d">router collapse from insufficient load balancing — increase the auxiliary load-balancing loss (and check capacity factor) so tokens spread across all experts</button>
+  </div>
+  <div class="quiz-exp"><strong>d.</strong> The rich-get-richer routing instability, straight from the widget. Under-used experts are wasted capacity you paid to store. The load-balancing loss is the designed remedy; capacity factor governs whether overflow is dropped. Neither (a) nor (c) touches the routing distribution.</div>
+</div>
+<div class="quiz" data-answer="b">
+  <p class="quiz-q">4. A vendor advertises a 1M-token context window as evidence the model "never forgets." As a chartered engineer reviewing the claim, you should:</p>
+  <div class="opts">
+    <button data-opt="a">accept it — window length is a hard capability guarantee</button>
+    <button data-opt="b">treat window length as a spec, not competence: run needle-in-a-haystack and lost-in-the-middle evals, because usable context is an empirical result and attention degrades over distance</button>
+    <button data-opt="c">reject it — long context is impossible</button>
+    <button data-opt="d">assume quality scales linearly with window size</button>
+  </div>
+  <div class="quiz-exp"><strong>b.</strong> §16.4's caveat and §14's "lost in the middle." The window is the size of the input the model <em>accepts</em>; whether it <em>uses</em> the middle is measured, not assumed. Demanding evidence over spec sheets is the Level III professional stance.</div>
+</div>
+
+<h2>Go deeper</h2>
+<ul class="resources">
+  <li><a href="https://arxiv.org/abs/2203.15556">Hoffmann et al. — Training Compute-Optimal LLMs (Chinchilla, 2022)</a><div class="rwhat">The paper behind §16.2. §3 derives the N/D allocation three ways; Table 3 is the tokens-per-param result.</div></li>
+  <li><a href="https://arxiv.org/abs/2001.08361">Kaplan et al. — Scaling Laws for Neural Language Models (2020)</a><div class="rwhat">The original power laws; Fig. 1 is the log–log straight lines that started it all. Read alongside Chinchilla to see what got corrected.</div></li>
+  <li><a href="https://arxiv.org/abs/2401.04088">Jiang et al. — Mixtral of Experts (2024)</a><div class="rwhat">A clean, open MoE: §2 for top-2 routing over 8 experts; the reference architecture for §16.3.</div></li>
+  <li><a href="https://arxiv.org/abs/2101.03961">Fedus et al. — Switch Transformer (2021)</a><div class="rwhat">§2–3: top-1 routing, the load-balancing loss, and capacity factor — the mechanics the MoE widget simulates.</div></li>
+  <li><a href="https://www.harmdevries.com/post/model-size-vs-compute-overhead/">Harm de Vries — Go smaller: the case for over-training</a><div class="rwhat">The inference-aware argument of the warning box, worked out with numbers; essential for the Level III judgment.</div></li>
+  <li><a href="https://arxiv.org/abs/2307.03172">Liu et al. — Lost in the Middle (2023)</a><div class="rwhat">The empirical case that context window ≠ context competence (§16.4).</div></li>
+  <li><a href="https://www.dwarkeshpatel.com/">Interviews with frontier-lab researchers (Dwarkesh Patel podcast)</a><div class="rwhat">How practitioners actually reason about scaling bets and architecture — the tacit judgment Level III tests.</div></li>
+</ul>
+
+<div class="page-footer"></div>
+</main>
+
+<script>
+document.addEventListener("caie:ready", () => {
+  // ================== Chinchilla allocator ==================
+  (function () {
+    const canvas = document.getElementById("ch-canvas");
+    const tiles = document.getElementById("ch-tiles");
+    const readout = document.getElementById("ch-readout");
+    // Chinchilla loss L = E + A/N^a + B/D^b, D = C/(6N)
+    const E = 1.69, A = 406.4, B = 410.7, a = 0.34, b = 0.28;
+    function loss(N, D) { return E + A / Math.pow(N, a) + B / Math.pow(D, b); }
+    function optN(C) {
+      // scan for the minimum-loss N on the C=6ND line
+      let bestN = 1e9, bestL = Infinity;
+      for (let e = 8; e <= 12.5; e += 0.01) {
+        const N = Math.pow(10, e), D = C / (6 * N);
+        if (D < 1e6) continue;
+        const L = loss(N, D);
+        if (L < bestL) { bestL = L; bestN = N; }
+      }
+      return { N: bestN, L: bestL };
+    }
+    function draw() {
+      const C = Math.pow(10, +document.getElementById("ch-c").value);
+      const N = Math.pow(10, +document.getElementById("ch-n").value);
+      const D = C / (6 * N);
+      const L = loss(N, D);
+      const opt = optN(C);
+      const Dopt = C / (6 * opt.N);
+      tiles.innerHTML =
+        tile(CAIE.fmt.si(N), "your params N") +
+        tile(CAIE.fmt.si(D), "→ tokens D (= C/6N)") +
+        tile((D / N).toFixed(0) + "×", "tokens / param") +
+        tile(L.toFixed(3), "predicted loss");
+      const pal = CAIE.pal();
+      const maxW = Math.min(760, canvas.parentNode.clientWidth - 4);
+      // curve of loss vs log10 N along the compute line
+      const xs = [], pts = [];
+      let ymin = Infinity, ymax = -Infinity;
+      for (let e = 8; e <= 12.5; e += 0.03) {
+        const n = Math.pow(10, e), d = C / (6 * n);
+        if (d < 1e6) continue;
+        const l = loss(n, d);
+        pts.push([e, l]); ymin = Math.min(ymin, l); ymax = Math.max(ymax, l);
+      }
+      const P = CAIE.plot(canvas, { w: maxW, h: 280, xmin: 8, xmax: 12.5, ymin: ymin - 0.02, ymax: Math.min(ymax, ymin + 0.6) });
+      P.clear();
+      P.axes("model size N (log₁₀ params)", "predicted loss", {
+        xticks: 9, xfmt: v => CAIE.fmt.si(Math.pow(10, v)), yticks: 4, yfmt: v => v.toFixed(2)
+      });
+      P.line(pts, pal.s[0], 2.5);
+      // optimum
+      P.dot(Math.log10(opt.N), opt.L, 5, pal.good, true);
+      P.label(Math.log10(opt.N), opt.L, "Chinchilla optimum · " + (Dopt / opt.N).toFixed(0) + "×", pal.good, "center");
+      // your choice
+      P.dot(Math.log10(N), L, 5, pal.s[1], true);
+      readout.innerHTML =
+        "budget C = <strong>" + CAIE.fmt.si(C) + " FLOPs</strong> · optimum at N ≈ <strong>" +
+        CAIE.fmt.si(opt.N) + "</strong>, D ≈ <strong>" + CAIE.fmt.si(Dopt) + "</strong> (" +
+        (Dopt / opt.N).toFixed(0) + " tokens/param) · your loss is <strong>" +
+        (L - opt.L < 0.001 ? "at the optimum" : "+" + (L - opt.L).toFixed(3) + " above optimum") + "</strong> — " +
+        (D / N < 5 ? "under-trained (GPT-3 regime): too big, too little data" :
+         D / N > 60 ? "over-trained: costs more to train, cheaper to serve — a valid deployment choice" :
+         "near the compute-optimal band");
+    }
+    function tile(v, k) { return '<div class="tile"><div class="tv">' + v + '</div><div class="tl">' + k + "</div></div>"; }
+    CAIE.bindQuiet("ch-c", draw, v => CAIE.fmt.si(Math.pow(10, v)));
+    CAIE.bindQuiet("ch-n", draw, v => CAIE.fmt.si(Math.pow(10, v)));
+    CAIE.onTheme(draw);
+    window.addEventListener("resize", draw);
+    draw();
+  })();
+
+  // ================== MoE routing ==================
+  (function () {
+    const canvas = document.getElementById("moe-canvas");
+    const readout = document.getElementById("moe-readout");
+    const NE = 8;
+    let counts = new Array(NE).fill(0);
+    let dropped = 0, total = 0;
+    // latent per-expert affinity bias (some experts naturally attract more) to create collapse pressure
+    const rand = CAIE.rng(21);
+    const bias = [];
+    for (let i = 0; i < NE; i++) bias.push(0.5 * CAIE.gauss(rand));
+    function route(nTokens) {
+      const lb = +document.getElementById("moe-lb").value;
+      const cap = +document.getElementById("moe-cap").value;
+      const r = CAIE.rng(1000 + total);
+      const capPerExpert = Math.ceil(cap * nTokens / NE);
+      const batchCounts = new Array(NE).fill(0);
+      for (let t = 0; t < nTokens; t++) {
+        // router logits: token affinity + expert bias − load-balance discouragement of busy experts
+        const frac = counts.map(c => c / Math.max(1, total));
+        let best = 0, bestS = -Infinity;
+        const tokFeat = [];
+        for (let e = 0; e < NE; e++) tokFeat.push(CAIE.gauss(r));
+        for (let e = 0; e < NE; e++) {
+          const s = tokFeat[e] + bias[e] - lb * 8 * frac[e];
+          if (s > bestS) { bestS = s; best = e; }
+        }
+        if (batchCounts[best] >= capPerExpert) { dropped++; }
+        else { batchCounts[best]++; counts[best]++; }
+        total++;
+      }
+    }
+    function draw() {
+      const pal = CAIE.pal();
+      const maxW = Math.min(760, canvas.parentNode.clientWidth - 4);
+      const { ctx, w, h } = CAIE.setupCanvas(canvas, maxW, 260);
+      ctx.clearRect(0, 0, w, h);
+      const padL = 40, padR = 16, padT = 20, padB = 40;
+      const bw = (w - padL - padR) / NE;
+      const maxC = Math.max(...counts, 1);
+      const ideal = total / NE;
+      // ideal line
+      const plotH = h - padT - padB;
+      const Yc = c => padT + plotH - c / maxC * plotH;
+      ctx.strokeStyle = pal.warning; ctx.setLineDash([4, 4]); ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(padL, Yc(ideal)); ctx.lineTo(w - padR, Yc(ideal)); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = pal.warning; ctx.font = "11px " + CAIE.css("--sans");
+      ctx.textAlign = "left"; ctx.textBaseline = "bottom";
+      ctx.fillText("perfectly balanced", padL + 4, Yc(ideal) - 3);
+      for (let e = 0; e < NE; e++) {
+        const x = padL + e * bw + 4, bh = counts[e] / maxC * plotH;
+        const over = counts[e] > ideal * 1.5;
+        ctx.fillStyle = over ? pal.s[6] : pal.s[0];
+        ctx.fillRect(x, padT + plotH - bh, bw - 8, bh);
+        ctx.fillStyle = pal.ink2; ctx.textAlign = "center"; ctx.textBaseline = "top";
+        ctx.font = "11px " + CAIE.css("--sans");
+        ctx.fillText("E" + e, padL + e * bw + bw / 2, h - padB + 6);
+        if (total) {
+          ctx.fillStyle = pal.muted;
+          ctx.fillText((100 * counts[e] / total).toFixed(0) + "%", padL + e * bw + bw / 2, padT + plotH - bh - 15);
+        }
+      }
+      // coefficient of variation as an imbalance metric
+      const mean = total / NE;
+      const varr = counts.reduce((a, c) => a + (c - mean) ** 2, 0) / NE;
+      const cv = mean > 0 ? Math.sqrt(varr) / mean : 0;
+      readout.innerHTML = total === 0 ?
+        "Router initialized. Press <strong>Route 2,000 tokens</strong> to send traffic through the experts." :
+        "routed <strong>" + total + "</strong> tokens · imbalance (CV) <strong>" + cv.toFixed(2) +
+        "</strong> " + (cv > 0.6 ? "— <strong style='color:var(--critical)'>collapsed</strong>: a few experts dominate" :
+          cv > 0.25 ? "— uneven" : "— well balanced") +
+        " · dropped tokens: <strong>" + dropped + "</strong> (" + (100 * dropped / total).toFixed(1) +
+        "%)" + (dropped > 0 ? " — overflow past capacity skips the layer" : "");
+    }
+    document.getElementById("moe-step").addEventListener("click", () => { route(2000); draw(); });
+    document.getElementById("moe-reset").addEventListener("click", () => { counts = new Array(NE).fill(0); dropped = 0; total = 0; draw(); });
+    CAIE.bindQuiet("moe-lb", () => {}, v => v.toFixed(2));
+    CAIE.bindQuiet("moe-cap", () => {}, v => v.toFixed(1) + "×");
+    CAIE.onTheme(draw);
+    window.addEventListener("resize", draw);
+    draw();
+  })();
+});
+</script>
+</body>
+</html>
