@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Topic 4 — Classical Machine Learning · CAIE Course</title>
+<link rel="icon" href="data:,">
 <link rel="stylesheet" href="../assets/course.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
@@ -24,10 +25,11 @@
 <div class="kicker">Level I · Topic 4 · Exam weight 18%</div>
 <h1>Classical Machine Learning</h1>
 <p class="lead">
-  Before transformers there were twenty years of algorithms that still win on tabular data, still
-  run half the world's fraud detection and credit scoring, and still supply the <em>vocabulary</em> —
-  overfitting, regularization, evaluation — that every deep-learning conversation is conducted in. A
-  senior engineer who reaches for a neural net on 5,000 rows of tabular data has failed this topic.
+  Classical machine learning turns rows of measurements into predictions or compact descriptions of
+  structure. These models remain exceptionally strong on tabular data, are usually quick to train,
+  and make the central ideas of loss, regularization, generalization, and evaluation visible. This
+  chapter builds those ideas from notation to calculation, then shows where each method succeeds and
+  where its assumptions break.
 </p>
 
 <div class="box los">
@@ -40,65 +42,331 @@
   </ul>
 </div>
 
+<p><strong>Orientation — read the data before the algorithm</strong></p>
+<p>
+  A <strong>sample</strong> is one case: one patient, loan, image, or experimental run. A
+  <strong>feature</strong> is a measured input such as age, temperature, or intensity. With \(n\)
+  samples and \(d\) features, place the inputs in the <strong>design matrix</strong>
+  \(X\in\mathbb{R}^{n\times d}\): row \(i\), written \(x_i^\top\), describes sample \(i\), while
+  column \(j\) contains feature \(j\). A <strong>label</strong> or <strong>target</strong> is the answer
+  to predict; collect the targets in \(y\). Regression targets are numerical, while classification
+  targets are categories such as \(y_i\in\{0,1\}\).
+</p>
+<div class="tablewrap">
+  <table>
+    <thead><tr><th>Term</th><th>Plain-language meaning</th><th>Example</th></tr></thead>
+    <tbody>
+      <tr><td>Parameter</td><td>A quantity learned from training data</td><td>A regression weight \(w_j\), intercept \(b\), or tree split</td></tr>
+      <tr><td>Hyperparameter</td><td>A setting chosen around training</td><td>Regularization \(\lambda\), tree depth, number of neighbors \(k\)</td></tr>
+      <tr><td>Training</td><td>Fit parameters by optimizing an objective on known examples</td><td>Minimize mean squared error</td></tr>
+      <tr><td>Inference</td><td>Apply the fitted model to a new sample</td><td>Compute a probability for a new loan</td></tr>
+      <tr><td>Supervised learning</td><td>Learn a mapping \(X\mapsto y\) from labeled examples</td><td>Predict default or house price</td></tr>
+      <tr><td>Unsupervised learning</td><td>Describe patterns in \(X\) without supplied labels</td><td>Find clusters or principal directions</td></tr>
+    </tbody>
+  </table>
+</div>
+<div class="box note">
+  <div class="box-title">The three-way split</div>
+  <p>
+    The <strong>training set</strong> fits parameters. The <strong>validation set</strong> compares
+    models, tunes hyperparameters, and chooses thresholds. The <strong>test set</strong> is opened once
+    at the end to estimate performance on untouched data. Repeatedly consulting the test result turns
+    it into another validation result and makes the final estimate optimistic.
+  </p>
+</div>
+<p><strong>A common workflow</strong></p>
+<pre><code>split cases into training, validation, and final test sets
+fit preprocessing using training data only
+for each candidate model and hyperparameter setting:
+    fit parameters on training data
+    score on validation data
+choose the setting that meets the real decision objective
+refit according to the agreed protocol
+evaluate once on the untouched test set
+deploy, monitor drift, and revalidate when the data changes</code></pre>
+
 <h2>4.1 Supervised learning — the workhorses</h2>
+<h3>Linear regression — fit a numerical response</h3>
 <p>
-  <strong>Linear regression</strong> models \(y = w^\top x + b\) and minimizes squared error. Setting
-  the gradient to zero gives the closed-form <em>normal equations</em>
-  \(w = (X^\top X)^{-1} X^\top y\) — one of the few ML problems with an exact solution (and an MLE
-  under Gaussian noise, connecting to Topic 2). <strong>Logistic regression</strong> pushes the
-  linear score through a sigmoid, \(p = \sigma(w^\top x) = 1/(1+e^{-w^\top x})\), and maximizes
-  likelihood — equivalently minimizes cross-entropy. No closed form, but the loss is convex, so
-  gradient descent finds <em>the</em> global optimum. Despite the name it is a classifier, and it
-  remains the default first model for any binary problem: fast, calibrated, interpretable.
+  <strong>Purpose.</strong> Linear regression estimates how a numerical target changes with its
+  features and provides a transparent baseline. It predicts
+  \(\hat y_i=w^\top x_i+b\). The <strong>residual</strong>
+  \(r_i=\hat y_i-y_i\) is the signed prediction error: positive means the model predicted too high.
+  Squaring residuals makes large misses expensive and produces a smooth objective.
 </p>
 <p>
-  <strong>Regularization</strong> adds a penalty on weight size:
-  <em>L2 (ridge)</em> adds \(\lambda\|w\|_2^2\) and shrinks all weights smoothly toward zero;
-  <em>L1 (lasso)</em> adds \(\lambda\|w\|_1\) and drives many weights <em>exactly</em> to zero,
-  performing feature selection. Geometric reason: the L1 ball has corners on the axes, and optima
-  land on corners. In MAP terms (Topic 2): Gaussian vs Laplace priors.
+  With mean squared error written as
+  \(J(w,b)=\frac{1}{2n}\sum_{i=1}^{n}(w^\top x_i+b-y_i)^2\), the gradients are
+  \(\nabla_wJ=\frac1nX^\top(Xw+b\mathbf1-y)\) and
+  \(\partial J/\partial b=\frac1n\sum_i r_i\). Gradient descent repeatedly moves against these
+  slopes. If \(\widetilde X=[\mathbf1\;X]\) includes the intercept column, a least-squares solution
+  satisfies the normal equations
+  \(\widetilde X^\top\widetilde X\,\theta=\widetilde X^\top y\), where
+  \(\theta=(b,w^\top)^\top\).
+</p>
+<div class="box warn">
+  <div class="box-title">Numerical stability</div>
+  <p>
+    The formula \((\widetilde X^\top\widetilde X)^{-1}\widetilde X^\top y\) describes a solution
+    when the inverse exists, but production code should not form that inverse explicitly. Solve the
+    system with QR, SVD, or a suitable linear solver; SVD also gives a minimum-norm solution when
+    features are collinear. Standardize features before gradient descent when their scales differ.
+  </p>
+</div>
+<div class="box note">
+  <div class="box-title">Worked calculation</div>
+  <p>
+    For points \((x,y)=(0,1),(1,3),(2,5)\), the line \(\hat y=2x+1\) has residuals
+    \((0,0,0)\), hence MSE \(0\). Starting instead at \(w=b=0\), the residuals are
+    \((-1,-3,-5)\), so \(\partial J/\partial w=-13/3\) and
+    \(\partial J/\partial b=-3\). A learning-rate \(0.1\) step gives
+    \(w=0.433\), \(b=0.300\): one move toward the fitted line, not the final answer.
+  </p>
+</div>
+<pre><code>initialize w and b
+repeat until the validation score stops improving:
+    predictions = X w + b
+    residuals = predictions - y
+    gradient_w = X^T residuals / number_of_samples
+    gradient_b = mean(residuals)
+    w = w - learning_rate * gradient_w
+    b = b - learning_rate * gradient_b</code></pre>
+<p>
+  <strong>Assumptions and use.</strong> The model assumes an additive linear mean response. Gaussian,
+  constant-variance, independent residual assumptions matter for classical confidence intervals, not
+  for merely computing predictions. Inspect residual plots for curvature, unequal spread, groups, and
+  outliers. Use linear regression when interpretability and a defensible baseline matter, or when the
+  relationship is plausibly linear after sensible transformations.
+</p>
+
+<h3>Logistic regression — turn a score into a class probability</h3>
+<p>
+  <strong>Purpose and intuition.</strong> A linear score can range over all real numbers, whereas a
+  probability must stay between \(0\) and \(1\). Logistic regression models the
+  <strong>log-odds</strong> as a line,
+  \(\log\frac{p_i}{1-p_i}=w^\top x_i+b\), then applies the sigmoid
+  \(p_i=\sigma(z_i)=1/(1+e^{-z_i})\). A one-unit increase in feature \(j\), holding the others
+  fixed, multiplies the odds by \(e^{w_j}\).
 </p>
 <p>
-  <strong>Decision trees</strong> recursively split the feature space with axis-aligned thresholds,
-  choosing at each node the split that most purifies the classes — maximum reduction in
-  <em>Gini impurity</em> \(\sum_k p_k(1-p_k)\) or in <em>entropy</em> \(-\sum_k p_k \log p_k\>\)
-  (information gain). Trees are interpretable and handle mixed feature types, but a deep tree
-  memorizes noise — high variance. The fixes are ensembles:
+  For binary labels, minimize cross-entropy
+  \(J(w,b)=-\frac1n\sum_i[y_i\log p_i+(1-y_i)\log(1-p_i)]\). Its weight gradient is
+  \(\nabla_wJ=\frac1nX^\top(p-y)\), the same "prediction minus observation" pattern as linear
+  regression. The fitted probability is converted to an action by a chosen threshold; \(0.5\) is a
+  convention, not a law.
 </p>
-<ul>
-  <li><strong>Bagging</strong>: train many trees on bootstrap resamples and average. Averaging \(B\)
-  weakly-correlated estimators divides variance by nearly \(B\) — pure Topic 2 statistics.
-  <strong>Random forests</strong> add feature subsampling per split to decorrelate the trees further.</li>
-  <li><strong>Boosting</strong> is sequential instead of parallel: each new small tree is fit to the
-  <em>errors</em> of the ensemble so far. AdaBoost reweights misclassified points; <strong>gradient
-  boosting</strong> generalizes this — each tree fits the negative gradient of the loss (for squared
-  error, literally the residuals). <strong>XGBoost/LightGBM</strong> are engineered implementations
-  with regularization and second-order steps; they remain the strongest default on tabular data, and
-  knowing that <em>is</em> exam material.</li>
-</ul>
+<div class="box note">
+  <div class="box-title">Worked calculation</div>
+  <p>
+    If the fitted score for a sample is \(z=1.2\), then
+    \(p=1/(1+e^{-1.2})\approx0.768\). A threshold of \(0.5\) predicts the positive class; a
+    threshold of \(0.8\) does not. The score and probability did not change—the decision policy did.
+  </p>
+</div>
+<pre><code>initialize w and b
+repeat:
+    scores = X w + b
+    probabilities = sigmoid(scores)
+    w = w - learning_rate * X^T(probabilities - y) / n
+    b = b - learning_rate * mean(probabilities - y)
+choose a threshold using validation data and decision costs</code></pre>
 <p>
-  <strong>SVMs</strong> choose the separating hyperplane that maximizes the <em>margin</em> — the
-  distance to the nearest points (the support vectors). The optimization only ever touches data
-  through inner products \(\langle x_i, x_j \rangle\), so you can swap in a kernel
-  \(k(x_i, x_j) = \langle \phi(x_i), \phi(x_j)\rangle\) and implicitly work in a huge (even
-  infinite-dimensional, for RBF) feature space without computing \(\phi\) — the
-  <strong>kernel trick</strong>. That "Gram matrix of pairwise similarities" pattern is the same
-  algebra you'll meet again as attention scores in Topic 8.
+  With ordinary full-rank data and a finite optimum, the logistic loss is convex, so optimization does
+  not have competing local minima. Perfectly separable unregularized data can drive coefficient norms
+  toward infinity rather than yield a finite optimum. Probabilities are often reasonably calibrated
+  when the log-odds model is appropriate, but calibration is empirical: check a reliability plot and
+  recalibrate on held-out data when probability quality matters.
+</p>
+
+<h3>L1 and L2 regularization — trade a little fit for stability</h3>
+<p>
+  Flexible models can chase noise or assign huge, unstable coefficients to correlated features.
+  Regularization adds a cost for coefficient size. For a data loss \(L(w,b)\), ridge uses
+  \(J_{L2}=L+\frac{\lambda}{2}\|w\|_2^2\), while lasso uses
+  \(J_{L1}=L+\lambda\|w\|_1\). The intercept is normally left unpenalized. Because a penalty acts on
+  numerical coefficient size, standardize continuous features <em>inside each training fold</em>
+  before comparing their penalties.
+</p>
+<div class="tablewrap">
+  <table>
+    <thead><tr><th>Property</th><th>L2 / ridge</th><th>L1 / lasso</th></tr></thead>
+    <tbody>
+      <tr><td>Weight effect</td><td>Smooth shrinkage; usually nonzero</td><td>Can create exact zeros</td></tr>
+      <tr><td>Correlated features</td><td>Tends to share weight</td><td>May select one and change selection across samples</td></tr>
+      <tr><td>Main benefit</td><td>Stability and lower variance</td><td>Sparse model and possible feature selection</td></tr>
+      <tr><td>Caution</td><td>Still retains every feature in most fits</td><td>Does not guarantee a requested feature count or causal relevance</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Guided calculation — L1 versus L2 shrinkage</div>
+    <div class="wsub">Minimize a one-coefficient loss and compare the two exact optima. Change the unregularized target \(a\) and penalty \(\lambda\).</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label for="reg-a">unregularized optimum \(a\)</label>
+      <input type="number" id="reg-a" value="3" step="0.25">
+      <label for="reg-lambda">penalty λ</label>
+      <input type="number" id="reg-lambda" value="1" min="0" step="0.25">
+    </div>
+    <div class="tiles">
+      <div class="tile"><div class="tv" id="reg-l1-w">–</div><div class="tl">L1 optimum \(w\)</div></div>
+      <div class="tile"><div class="tv" id="reg-l2-w">–</div><div class="tl">L2 optimum \(w\)</div></div>
+    </div>
+    <div class="readout" id="reg-readout" aria-live="polite"></div>
+    <p class="wcaption">
+      Here \(J_{L1}=\tfrac12(w-a)^2+\lambda|w|\), giving soft-thresholding
+      \(w^*=\operatorname{sign}(a)\max(|a|-\lambda,0)\). For
+      \(J_{L2}=\tfrac12(w-a)^2+\tfrac\lambda2w^2\), \(w^*=a/(1+\lambda)\).
+      At \(a=3,\lambda=1\), L1 gives \(2\) and L2 gives \(1.5\).
+    </p>
+  </div>
+</div>
+
+<h3>Decision trees — learn questions one split at a time</h3>
+<p>
+  A classification tree partitions the feature space with rules such as "temperature ≤ 18". At a
+  node containing class proportions \(p_k\), Gini impurity is
+  \(G=1-\sum_kp_k^2\), and entropy is \(H=-\sum_kp_k\log_2p_k\), with \(0\log0=0\).
+  For left and right children, the split improvement is
+  \(\Delta I=I(\text{parent})-\frac{n_L}{n}I(L)-\frac{n_R}{n}I(R)\). The weights matter: a tiny
+  pure child should not outweigh a large mixed child.
+</p>
+<div class="box note">
+  <div class="box-title">Worked split</div>
+  <p>
+    Suppose the left child contains \(4\) positives and \(0\) negatives, while the right contains
+    \(2\) positives and \(4\) negatives. The parent has \(6/10\) positives, so its Gini impurity is
+    \(0.48\). The weighted children have impurity
+    \((4/10)(0)+(6/10)[1-(2/6)^2-(4/6)^2]=0.267\). The gain is therefore \(0.213\).
+  </p>
+</div>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Guided calculation — tree split quality</div>
+    <div class="wsub">Enter the two class counts in each proposed child, then compare the parent impurity with the size-weighted children.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label for="split-lp">left positives</label><input type="number" id="split-lp" value="4" min="0" step="1">
+      <label for="split-ln">left negatives</label><input type="number" id="split-ln" value="0" min="0" step="1">
+      <label for="split-rp">right positives</label><input type="number" id="split-rp" value="2" min="0" step="1">
+      <label for="split-rn">right negatives</label><input type="number" id="split-rn" value="4" min="0" step="1">
+      <label for="split-criterion">criterion</label>
+      <select id="split-criterion">
+        <option value="gini" selected>Gini impurity</option>
+        <option value="entropy">entropy</option>
+      </select>
+    </div>
+    <div class="tiles">
+      <div class="tile"><div class="tv" id="split-parent">–</div><div class="tl">parent impurity</div></div>
+      <div class="tile"><div class="tv" id="split-children">–</div><div class="tl">weighted children</div></div>
+      <div class="tile"><div class="tv" id="split-gain">–</div><div class="tl">impurity reduction / split gain</div></div>
+    </div>
+    <div class="readout" id="split-readout" aria-live="polite"></div>
+  </div>
+</div>
+
+<pre><code>grow(node):
+    examine candidate feature thresholds
+    compute parent impurity - weighted child impurity
+    choose the candidate with greatest positive gain
+    stop if a depth, sample-count, or improvement rule is reached
+    otherwise grow(left child) and grow(right child)</code></pre>
+<p>
+  A fully grown tree can memorize idiosyncrasies. Control variance with maximum depth, minimum samples
+  per leaf, minimum impurity decrease, or post-pruning selected by validation. Trees do not require
+  feature scaling and naturally express interactions, but ordinary axis-aligned trees can be unstable:
+  a small data change may produce a different sequence of splits.
+</p>
+
+<h3>Ensembles — many trees, two different strategies</h3>
+<div class="tablewrap">
+  <table>
+    <thead><tr><th>Method</th><th>How learners are built</th><th>Main idea</th><th>Watch for</th></tr></thead>
+    <tbody>
+      <tr><td>Bagging</td><td>In parallel on bootstrap samples</td><td>Average unstable learners to reduce variance</td><td>Correlated learners limit the gain</td></tr>
+      <tr><td>Random forest</td><td>Bagged trees plus random feature subsets per split</td><td>Decorrelate trees before averaging</td><td>Less compact and interpretable than one tree</td></tr>
+      <tr><td>AdaBoost</td><td>Sequentially; emphasize previously misclassified cases</td><td>Combine weak classifiers with learned votes</td><td>Can focus on noisy or mislabeled cases</td></tr>
+      <tr><td>Gradient boosting</td><td>Sequentially fit negative loss gradients</td><td>Functional gradient descent; residuals for squared error</td><td>Depth, learning rate, and number of trees interact</td></tr>
+      <tr><td>XGBoost</td><td>Regularized gradient-boosted trees with second-order information</td><td>Efficient implementation, shrinkage, row/column sampling, missing-value handling</td><td>Still needs sound validation and tuning</td></tr>
+    </tbody>
+  </table>
+</div>
+<p>
+  If individual estimators have variance \(\sigma^2\) and pairwise correlation ρ, the average of
+  \(B\) has variance \(\rho\sigma^2+(1-\rho)\sigma^2/B\). Variance falls nearly as \(1/B\) only when
+  errors are nearly uncorrelated; a shared correlated component remains. Boosting often reduces bias
+  and variance together in practice, so "bagging equals variance, boosting equals bias" is a useful
+  first intuition, not a universal accounting identity.
+</p>
+
+<h3>Support vector machines — maximize a robust separating margin</h3>
+<p>
+  With labels \(y_i\in\{-1,+1\}\), a linear soft-margin SVM minimizes
+  \(\frac12\|w\|^2+C\sum_i\max(0,1-y_i(w^\top x_i+b))\). The hinge-loss term penalizes points on
+  the wrong side or inside the unit margin; \(C\) controls how strongly violations are penalized.
+  Large \(C\) prioritizes training fit and can narrow the margin, while small \(C\) accepts more
+  violations for stronger regularization.
 </p>
 <p>
-  <strong>k-NN</strong> classifies by voting among the k nearest training points — no training at
-  all, all cost at query time. It exposes the <strong>curse of dimensionality</strong>: in high
-  dimensions, volume concentrates in shells; the ratio between nearest and farthest neighbor
-  distances → 1, and "nearest" stops meaning anything. Rule of thumb: distance-based methods degrade
-  badly beyond a few dozen raw dimensions unless the data lies on a low-dimensional manifold —
-  which, fortunately, real data usually does (that's why embeddings in Topic 14 work at 768-d:
-  the <em>intrinsic</em> dimension is far lower).
+  In the dual formulation, examples interact through inner products. Replacing
+  \(x_i^\top x_j\) with a valid kernel \(k(x_i,x_j)=\langle\phi(x_i),\phi(x_j)\rangle\) gives a
+  nonlinear boundary without explicitly constructing φ. For the RBF kernel
+  \(e^{-\gamma\|x-x'\|^2}\), large γ makes similarity very local and can create a wiggly boundary;
+  small γ makes it smoother. Scale features before distance-based kernels. Points with nonzero dual
+  coefficients are support vectors; with soft margins, these include points on or inside the margin,
+  not only points lying exactly on two geometric lines.
 </p>
+
+<h3>k-nearest neighbors — predict from local examples</h3>
+<p>
+  k-NN stores the training data. At inference, compute a distance from a query to each stored point,
+  select the \(k\) nearest, then use a majority or distance-weighted vote for classification (or a
+  mean for regression). Small \(k\) follows local detail but is sensitive to noise; large \(k\)
+  smooths the decision and can erase minority regions. Choose \(k\), the distance, and any weighting
+  on validation data.
+</p>
+<p>
+  Distances are meaningless when one feature's units dominate, so scale features and treat categorical
+  variables deliberately. A direct query costs roughly \(O(nd)\), although spatial indexes can help
+  in favorable low dimensions. As dimension grows, data becomes sparse and neighbor distances can
+  become less distinguishable—the <strong>curse of dimensionality</strong>. There is no universal
+  dimensional cutoff: sample size, metric, noise, sparsity, and intrinsic dimension all matter.
+</p>
+
+<div class="box bridge">
+  <div class="box-title">⚛ Physics bridge</div>
+  <p>
+    Linear regression is least-squares parameter estimation; ridge is Tikhonov regularization. An SVM
+    margin resembles finding the widest energy-free corridor between two populations, while a kernel
+    is a Gram matrix of pairwise overlaps. In each case, the algorithm is easier to understand when
+    you ask what objective is minimized and what geometry the objective prefers.
+  </p>
+</div>
+
+<h3>Which supervised model should you try first?</h3>
+<div class="tablewrap">
+  <table>
+    <thead><tr><th>Need</th><th>Strong first candidate</th><th>Reason</th></tr></thead>
+    <tbody>
+      <tr><td>Transparent numerical baseline</td><td>Linear or ridge regression</td><td>Coefficients and residuals are inspectable</td></tr>
+      <tr><td>Transparent binary baseline</td><td>Regularized logistic regression</td><td>Fast scores with interpretable log-odds</td></tr>
+      <tr><td>Rules and interactions</td><td>Shallow decision tree</td><td>Readable nonlinear partitions</td></tr>
+      <tr><td>Strong tabular performance with modest tuning</td><td>Random forest or gradient-boosted trees</td><td>Handles nonlinearities and interactions</td></tr>
+      <tr><td>Medium-sized data with a meaningful similarity</td><td>SVM</td><td>Margin control and kernels</td></tr>
+      <tr><td>A local, instance-based baseline</td><td>k-NN</td><td>Almost no fitting; predictions can cite neighbors</td></tr>
+    </tbody>
+  </table>
+</div>
 
 <div class="widget">
   <div class="widget-head">
     <div class="wtitle">Interactive — decision-boundary playground</div>
-    <div class="wsub">Three classifiers, three datasets. The shaded field is each model's predicted probability. Click on the canvas to add points (left-click = blue class, shift-click = orange class) and watch the boundary react.</div>
+    <div class="wsub">Three classifiers, three datasets. The shading is a class score: logistic output is a modeled probability, while neighbor fractions and tree-leaf fractions are score estimates that may need calibration. Choose a class, then click or tap the chart; keyboard users can enter coordinates and use Add point.</div>
   </div>
   <div class="widget-body">
     <div class="controls">
@@ -118,57 +386,77 @@
       </label>
       <label id="p-kl">k <input type="range" id="p-k" min="1" max="25" step="2" value="5"><span class="val" id="p-k-v"></span></label>
       <label id="p-dl" style="display:none">max depth <input type="range" id="p-depth" min="1" max="8" step="1" value="3"><span class="val" id="p-depth-v"></span></label>
+      <label>new-point class
+        <select id="p-add-class">
+          <option value="0" selected>blue (class 0)</option>
+          <option value="1">orange (class 1)</option>
+        </select>
+      </label>
+      <label for="p-add-x">x</label><input type="number" id="p-add-x" min="-2" max="2" step="0.1" value="0">
+      <label for="p-add-y">y</label><input type="number" id="p-add-y" min="-2" max="2" step="0.1" value="0">
+      <button class="btn" id="p-add-point">Add point</button>
       <button class="btn ghost" id="p-reset">Reset points</button>
     </div>
-    <canvas id="p-canvas" width="640" height="380" style="cursor:crosshair"></canvas>
-    <div class="readout" id="p-readout"></div>
+    <canvas id="p-canvas" width="640" height="380" style="cursor:crosshair" role="img" aria-label="Classifier decision boundary and training samples. Model scores and validation accuracy are reported below.">Interactive classifier decision-boundary chart.</canvas>
+    <div class="readout" id="p-readout" aria-live="polite"></div>
     <p class="wcaption">
       Things to try: (1) logistic regression on XOR — it's structurally incapable (a line can't cut
-      XOR), the lesson that motivated neural networks. (2) k-NN with k=1: the boundary chases every
+      XOR without added nonlinear features). (2) k-NN with k=1: the boundary chases every
       point, including ones you add in silly places — variance made visible; k=25 smooths it — bias.
-      (3) Decision tree: depth 1 vs 8 — watch axis-aligned rectangles memorize your clicks.
+      (3) Decision tree: depth 1 vs 8 — watch axis-aligned rectangles memorize your clicks. The
+      displayed training accuracy describes these visible training points; choose depth or \(k\) from
+      separate validation data, because a flexible model can score perfectly here and generalize poorly.
     </p>
   </div>
 </div>
 
 <h2>4.2 Unsupervised learning — structure without labels</h2>
 <p>
-  <strong>k-means</strong> alternates two steps: assign each point to its nearest centroid; move each
-  centroid to the mean of its points. Each step can only decrease the total within-cluster squared
-  distance (the "inertia"), and there are finitely many assignments, so it always converges — but
-  only to a <em>local</em> optimum that depends on initialization (hence k-means++ seeding and
-  multiple restarts). Failure modes: you must pick k; it assumes round, similar-size clusters
-  (it's secretly a hard-assignment Gaussian mixture with equal spherical covariances); it shreds
-  elongated or nested shapes.
+  Unsupervised methods do not discover a single hidden truth automatically. They impose a definition
+  of structure—compact groups, dense regions, Gaussian components, or high-variance directions—and
+  expose the pattern favored by that definition. Always connect a cluster or component back to domain
+  variables before giving it a substantive name.
 </p>
+
+<h3>k-means — compact groups around representative centers</h3>
 <p>
-  <strong>The relatives.</strong> <em>Hierarchical clustering</em> greedily merges nearest clusters,
-  producing a dendrogram — no k needed until you cut it. <em>DBSCAN</em> defines clusters as dense
-  regions (points with ≥ minPts neighbors within ε), discovers the number of clusters itself, finds
-  arbitrary shapes, and labels sparse points as noise — but struggles when densities vary.
-  <em>Gaussian Mixture Models</em> replace hard assignments with soft ones and fit with the
-  <strong>EM algorithm</strong>: E-step computes responsibilities \(P(\text{cluster}\mid x)\)
-  (a Bayes-rule step), M-step re-fits each Gaussian's weight, mean, covariance from its responsibility-weighted
-  points. EM monotonically increases likelihood; k-means is its zero-covariance limit.
+  <strong>Purpose and objective.</strong> Given a requested number of clusters \(k\), k-means finds
+  assignments \(c_i\in\{1,\ldots,k\}\) and centroids \(\mu\) that minimize the within-cluster sum of
+  squares, also called inertia:
+  $$J(c,\mu)=\sum_{i=1}^{n}\|x_i-\mu_{c_i}\|_2^2.$$
+  It alternates the two steps of Lloyd's algorithm because optimizing assignments with fixed centroids
+  and optimizing centroids with fixed assignments are both easy.
 </p>
-<div class="box bridge">
-  <div class="box-title">⚛ Physics bridge</div>
+<pre><code>choose k initial centroids
+repeat:
+    assignment step:
+        assign every sample to its nearest centroid
+    update step:
+        replace each centroid by the mean of its assigned samples
+        if a cluster is empty, apply a declared recovery rule
+until assignments stop changing or improvement is below tolerance
+repeat from several seeds; keep the run with lowest inertia</code></pre>
+<p>
+  Each exact assignment or mean-update step cannot increase inertia. With deterministic tie handling,
+  the finite set of assignments leads to a fixed point; numerical implementations usually stop at a
+  tolerance or iteration limit. This is convergence of the procedure, <em>not</em> a guarantee of the
+  globally best clustering. k-means++ spreads initial centers to improve the starting solution, and
+  multiple restarts reduce sensitivity further.
+</p>
+<div class="box warn">
+  <div class="box-title">Scaling and failure modes</div>
   <p>
-    EM is a mean-field self-consistency loop: responsibilities given parameters, parameters given
-    responsibilities, iterate to a fixed point — the same structure as Hartree–Fock or solving for a
-    mean field magnetization. And PCA you already know cold: diagonalize the covariance matrix, keep
-    the largest-eigenvalue modes. "Fraction of variance retained" is the ratio of kept eigenvalues to
-    the trace — exactly how you'd truncate a normal-mode expansion.
+    Squared Euclidean distance lets large-unit features dominate, so standardize or otherwise choose
+    scales that express domain importance. Means are sensitive to outliers. k-means favors compact,
+    roughly spherical, similar-density groups and may cut an elongated band into pieces. Empty
+    clusters can occur after assignment; an implementation must keep the old center, reseed it, or
+    move it to a high-error point rather than silently divide by zero.
   </p>
 </div>
 <p>
-  <strong>PCA</strong> projects data onto the top eigenvectors of its covariance (equivalently, the
-  top right-singular vectors of the centered data matrix — Topic 1's SVD). It is linear, fast,
-  deterministic, and the right first move for compression and decorrelation.
-  <strong>t-SNE and UMAP</strong> are nonlinear <em>visualization</em> maps: they try to preserve
-  local neighborhoods when squashing to 2-D. Both distort: cluster <em>sizes</em> and
-  <em>inter-cluster distances</em> in a t-SNE plot are essentially meaningless, and perplexity /
-  n_neighbors settings can manufacture or merge clusters. Use them to explore, never to measure.
+  Choose \(k\) with a mix of domain usefulness and validation: inspect an elbow in inertia, silhouette
+  scores, stability across resamples, and whether the resulting groups support the downstream task.
+  None of these rules makes \(k\) an objective fact about the world.
 </p>
 
 <div class="widget">
@@ -179,50 +467,334 @@
   <div class="widget-body">
     <div class="controls">
       <label>k <input type="range" id="km-k" min="2" max="6" step="1" value="3"><span class="val" id="km-k-v"></span></label>
+      <label for="km-init">initialization</label>
+      <select id="km-init">
+        <option value="random">random samples</option>
+        <option value="kmeans++" selected>k-means++</option>
+      </select>
       <button class="btn" id="km-step">Step</button>
       <button class="btn" id="km-run">Run to convergence</button>
       <button class="btn ghost" id="km-seed">Re-seed</button>
     </div>
-    <canvas id="km-canvas" width="640" height="340"></canvas>
-    <div class="readout" id="km-readout"></div>
+    <canvas id="km-canvas" width="640" height="340" role="img" aria-label="K-means points and centroids. The current phase and inertia are reported below.">Interactive k-means chart.</canvas>
+    <div class="readout" id="km-readout" aria-live="polite"></div>
     <p class="wcaption">
-      The dataset has three true blobs plus one elongated band — try k=3 and k=4 and notice how the
-      band gets butchered into round pieces regardless. That's the spherical-cluster assumption
-      showing through.
+      The dataset has three visually apparent compact groups plus one elongated band — try k=3 and k=4 and notice how the
+      band gets cut into compact pieces. The readout separates assignment from update, counts full
+      iterations, reports the inertia change, and states the empty-cluster policy. Re-seed several
+      times: the lowest final inertia is preferable mathematically, but domain meaning still matters.
     </p>
   </div>
 </div>
 
-<h2>4.3 Model evaluation — where careers are made and lost</h2>
+<h3>Hierarchical clustering — a tree of possible groupings</h3>
 <p>
-  For binary classification, everything flows from the confusion matrix: true/false positives and
-  negatives. <strong>Precision</strong> = TP/(TP+FP): of the things I flagged, how many were real?
-  <strong>Recall</strong> = TP/(TP+FN): of the real things, how many did I catch?
-  <strong>F1</strong> is their harmonic mean. <strong>Accuracy</strong> is the fraction correct —
-  and is <em>worthless under class imbalance</em>: a fraud model that says "never fraud" is 99.8%
-  accurate. The <strong>ROC curve</strong> traces (false-positive rate, true-positive rate) as the
-  decision threshold sweeps; its area, <strong>ROC-AUC</strong>, is the probability a random positive
-  scores above a random negative. Under heavy imbalance even ROC-AUC flatters (FPR's denominator is
-  the huge negative class), so precision-recall curves and <strong>PR-AUC</strong> are the honest
-  view for rare-event problems. Choosing the metric <em>is</em> the engineering decision; the
-  threshold that trades precision against recall is a <em>business</em> decision — that framing
-  returns in Topics 7 and 13.
+  Agglomerative hierarchical clustering begins with one cluster per sample and repeatedly merges the
+  nearest pair. A <strong>dendrogram</strong> records which clusters merged and at what dissimilarity;
+  cutting it at a chosen height produces a flat clustering. You can inspect several resolutions
+  without rerunning the algorithm, but you still choose a distance, a linkage, and eventually a cut.
+</p>
+<div class="tablewrap">
+  <table>
+    <thead><tr><th>Linkage</th><th>Distance between two clusters</th><th>Typical behavior</th></tr></thead>
+    <tbody>
+      <tr><td>Single</td><td>Closest pair of points</td><td>Can recover chains; vulnerable to bridges</td></tr>
+      <tr><td>Complete</td><td>Farthest pair of points</td><td>Prefers compact groups; sensitive to extremes</td></tr>
+      <tr><td>Average</td><td>Average cross-cluster distance</td><td>Compromise between chaining and compactness</td></tr>
+      <tr><td>Ward</td><td>Increase in within-cluster squared error</td><td>Compact variance-minimizing groups with Euclidean geometry</td></tr>
+    </tbody>
+  </table>
+</div>
+<p>
+  Use hierarchical clustering when the hierarchy itself is meaningful or when the dataset is small
+  enough to inspect a dendrogram. Scale features first when their units are not comparable. Early
+  greedy merges are not revisited, and a dendrogram's vertical scale is linkage dissimilarity—not a
+  probability that two groups are genuinely distinct. Storing pairwise distances typically requires
+  \(O(n^2)\) memory, and runtime is often at least quadratic depending on linkage and implementation,
+  so full dendrogram methods do not scale like k-means.
+</p>
+
+<h3>DBSCAN — clusters as connected dense regions</h3>
+<p>
+  DBSCAN uses a radius ε and a neighborhood count <code>min_samples</code>. A
+  <strong>core point</strong> has at least that many samples in its ε-neighborhood (conventions
+  normally count the point itself). A <strong>border point</strong> is reachable from a core point but
+  is not itself core. A point not density-reachable from any core is labeled <strong>noise</strong>.
+  Connected core neighborhoods form clusters, allowing curved shapes and no predeclared number of
+  clusters.
+</p>
+<div class="box note">
+  <div class="box-title">How to reason about the two controls</div>
+  <p>
+    Increasing ε connects more points and tends to merge groups or absorb noise. Increasing
+    <code>min_samples</code> demands stronger local evidence and tends to create more noise. Inspect a
+    sorted nearest-neighbor-distance plot as a diagnostic, then test stability. One global ε often
+    fails when densities vary, and distance concentration creates trouble in high dimensions.
+  </p>
+</div>
+
+<h3>Gaussian mixtures and EM — soft membership in overlapping groups</h3>
+<p>
+  A Gaussian mixture models a density
+  \(p(x)=\sum_{j=1}^{k}\pi_j\,\mathcal N(x\mid\mu_j,\Sigma_j)\), where mixture weights π are
+  nonnegative and sum to one. Rather than assign a point completely to one group, it computes a
+  <strong>responsibility</strong>
+  $$r_{ij}=P(z_i=j\mid x_i)=
+  \frac{\pi_j\mathcal N(x_i\mid\mu_j,\Sigma_j)}
+  {\sum_\ell\pi_\ell\mathcal N(x_i\mid\mu_\ell,\Sigma_\ell)}.$$
+</p>
+<pre><code>initialize mixture weights, means, and covariances
+repeat:
+    E-step: compute every responsibility r[i,j]
+    M-step:
+        N[j] = sum_i r[i,j]
+        weight[j] = N[j] / n
+        mean[j] = sum_i r[i,j] * x[i] / N[j]
+        covariance[j] = responsibility-weighted residual covariance
+until log-likelihood improvement is below tolerance
+run several initializations and compare held-out likelihood or a model criterion</code></pre>
+<p>
+  Each exact EM iteration does not decrease the observed-data likelihood, but it may finish at a local
+  maximum or saddle point. A component can collapse around too few samples and make a covariance
+  nearly singular; covariance regularization, minimum component sizes, and multiple starts are common
+  safeguards. Spherical, diagonal, tied, and full covariance choices trade flexibility against data
+  and computation. Use a GMM when elliptical overlap and soft membership are meaningful, not merely
+  because the scatterplot looks clustered.
+</p>
+
+<h3>PCA — compress along the directions of greatest variance</h3>
+<p>
+  Start by centering each feature: \(X_c=X-\mathbf1\mu^\top\). Standardize as well when feature units
+  are arbitrary and variance should not imply importance; do not standardize automatically when
+  physical variance in common units is the signal. If
+  \(S=X_c^\top X_c/(n-1)=V\Lambda V^\top\), the columns of \(V\) are orthonormal principal
+  directions and eigenvalues λ give variance along them. Equivalently, obtain the same directions
+  from the SVD of \(X_c\).
+</p>
+<p>
+  Keeping \(r\) components gives scores \(Z=X_cV_r\) and the reconstruction
+  \(\widehat X=ZV_r^\top+\mathbf1\mu^\top\). The entries of \(V_r\) are
+  <strong>loadings</strong>: they show how original features contribute to each direction. The
+  explained-variance ratio of component \(j\) is
+  \(\lambda_j/\sum_\ell\lambda_\ell\), and the retained fraction is the sum over kept components.
+  Eigenvector signs are arbitrary: flipping a loading vector and its scores changes no geometry.
+</p>
+<div class="box note">
+  <div class="box-title">Worked calculation</div>
+  <p>
+    If the covariance eigenvalues are \(5,2,1\), total variance is \(8\). The first component explains
+    \(5/8=62.5\%\); the first two explain \((5+2)/8=87.5\%\). PCA would therefore retain \(87.5\%\)
+    with two components and discard \(12.5\%\) of the measured variance.
+  </p>
+</div>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Guided calculation — PCA explained variance</div>
+    <div class="wsub">Edit three covariance eigenvalues and choose how many sorted principal components to retain.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label for="pca-e1">eigenvalue 1</label><input type="number" id="pca-e1" value="5" min="0" step="0.25">
+      <label for="pca-e2">eigenvalue 2</label><input type="number" id="pca-e2" value="2" min="0" step="0.25">
+      <label for="pca-e3">eigenvalue 3</label><input type="number" id="pca-e3" value="1" min="0" step="0.25">
+      <label for="pca-r">components retained</label>
+      <select id="pca-r">
+        <option value="1">1</option>
+        <option value="2" selected>2</option>
+        <option value="3">3</option>
+      </select>
+    </div>
+    <div class="tiles">
+      <div class="tile"><div class="tv" id="pca-total">–</div><div class="tl">total variance</div></div>
+      <div class="tile"><div class="tv" id="pca-retained">–</div><div class="tl">cumulative retained</div></div>
+    </div>
+    <div id="pca-bars"></div>
+    <div class="readout" id="pca-readout" aria-live="polite"></div>
+  </div>
+</div>
+<p>
+  PCA is linear and sensitive to outliers; maximum variance need not be the direction relevant to a
+  later prediction. Use it for compression, visualization baselines, de-correlation, denoising, or to
+  make subsequent computation cheaper. Fit centering, scaling, and PCA inside the training fold when
+  it belongs to a supervised pipeline.
+</p>
+
+<div class="box bridge">
+  <div class="box-title">⚛ Physics bridge</div>
+  <p>
+    EM is a self-consistency loop: infer latent responsibilities from parameters, then infer
+    parameters from responsibilities—the same alternating structure seen in mean-field iterations.
+    PCA is normal-mode analysis of a covariance matrix: diagonalize it, retain the largest-eigenvalue
+    directions, and quantify the discarded fluctuation through the omitted eigenvalues.
+  </p>
+</div>
+
+<h3>PCA, t-SNE, and UMAP — three maps with different promises</h3>
+<div class="tablewrap">
+  <table>
+    <thead><tr><th>Method</th><th>Primary promise</th><th>Good use</th><th>Do not assume</th></tr></thead>
+    <tbody>
+      <tr><td>PCA</td><td>Linear directions with maximum retained variance</td><td>Compression, baseline plots, reconstruction</td><td>Curved manifolds will unfold or labels will separate</td></tr>
+      <tr><td>t-SNE</td><td>Preserve selected local neighbor probabilities</td><td>Exploratory 2-D views of local neighborhoods</td><td>Cluster area, gap, density, or global distance is faithful</td></tr>
+      <tr><td>UMAP</td><td>Preserve a neighborhood graph under its modeling choices</td><td>Exploration and sometimes reusable embeddings</td><td>Global geometry or apparent clusters are ground truth</td></tr>
+    </tbody>
+  </table>
+</div>
+<div class="box warn">
+  <div class="box-title">Safe-reading checklist for nonlinear maps</div>
+  <ul>
+    <li>Scale and preprocess for a domain-appropriate distance before embedding.</li>
+    <li>Repeat several random seeds and neighborhood settings; trust only stable qualitative patterns.</li>
+    <li>Compare with PCA and with neighbor-quality diagnostics in the original space.</li>
+    <li>Do not infer cluster prevalence from blob area or separation from a large visual gap.</li>
+    <li>Do not cluster a 2-D picture merely because the algorithm drew islands; validate in original space.</li>
+  </ul>
+</div>
+
+<h3>Clustering decision guide</h3>
+<div class="tablewrap">
+  <table>
+    <thead><tr><th>If the useful structure is…</th><th>Start with</th><th>Key validation</th></tr></thead>
+    <tbody>
+      <tr><td>Compact groups and \(k\) is meaningful</td><td>k-means</td><td>Restarts, stability, scale sensitivity</td></tr>
+      <tr><td>A hierarchy at several resolutions</td><td>Hierarchical clustering</td><td>Linkage and dendrogram stability</td></tr>
+      <tr><td>Connected dense shapes plus noise</td><td>DBSCAN</td><td>ε sensitivity and varying densities</td></tr>
+      <tr><td>Overlapping elliptical populations</td><td>GMM</td><td>Held-out likelihood, starts, covariance health</td></tr>
+      <tr><td>Low-dimensional linear summary</td><td>PCA</td><td>Retained variance and reconstruction utility</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2>4.3 Model evaluation — where careers are made and lost</h2>
+<h3>Design the evaluation before fitting the model</h3>
+<p>
+  Evaluation estimates performance on the population and decision process that will actually be
+  encountered. Split by the unit that must generalize independently, not automatically by row. A
+  random row split is sound only when rows are sufficiently independent and identically distributed.
+</p>
+<div class="tablewrap">
+  <table>
+    <thead><tr><th>Data situation</th><th>Split strategy</th><th>What it prevents</th></tr></thead>
+    <tbody>
+      <tr><td>Independent cases with unequal class shares</td><td>Stratified split or stratified folds</td><td>Accidental folds with very different prevalence</td></tr>
+      <tr><td>Many rows per patient, device, user, or site</td><td>Grouped split; keep each entity in one side</td><td>Recognizing the same entity instead of generalizing</td></tr>
+      <tr><td>Prediction moves forward through time</td><td>Chronological or rolling-origin split</td><td>Training on information from the future</td></tr>
+      <tr><td>Limited independent data</td><td>k-fold cross-validation with appropriate grouping/stratification</td><td>Depending on one lucky validation split</td></tr>
+    </tbody>
+  </table>
+</div>
+<p>
+  In \(K\)-fold cross-validation, train on \(K-1\) folds and validate on the remaining fold, rotate the
+  held-out fold, and summarize both the mean and spread. Hyperparameter comparison happens through
+  these validation results; an untouched test set still supplies the final estimate. If model choice
+  itself must be evaluated with very limited data, nested cross-validation separates the inner tuning
+  loop from the outer performance estimate.
+</p>
+<pre><code>reserve an untouched final test set using the deployment split rule
+for each cross-validation fold on the remaining development data:
+    fit imputation, scaling, and feature selection on fold-training only
+    transform fold-training and fold-validation with only those fitted transforms
+    resample or apply SMOTE to processed fold-training only
+    fit the model on processed fold-training
+    score the unchanged processed fold-validation with predeclared metrics
+choose model settings from aggregated fold results
+evaluate the locked procedure once on the final test set</code></pre>
+
+<h3>The confusion matrix — count the four possible outcomes</h3>
+<p>
+  For a chosen positive class and threshold, predictions fall into true positives (TP), false
+  positives (FP), false negatives (FN), and true negatives (TN). From these counts:
+  $$\text{accuracy}=\frac{TP+TN}{N},\quad
+    \text{precision}=\frac{TP}{TP+FP},\quad
+    \text{recall}=\frac{TP}{TP+FN},$$
+  $$\text{specificity}=\frac{TN}{TN+FP},\quad
+    \text{FPR}=\frac{FP}{FP+TN},\quad
+    F_1=\frac{2\,\text{precision}\,\text{recall}}
+    {\text{precision}+\text{recall}}.$$
+  Accuracy is informative when class frequencies and error costs make it appropriate; it is
+  misleading when a large majority class hides poor minority performance.
+</p>
+<div class="box note">
+  <div class="box-title">Worked rare-event example</div>
+  <p>
+    With TP=60, FP=140, FN=40, and TN=9,760, there are 100 positives among 10,000 cases. Accuracy is
+    \(9,820/10,000=98.2\%\), precision is \(60/200=30\%\), recall is \(60/100=60\%\), specificity
+    is \(9,760/9,900\approx98.6\%\), FPR is \(140/9,900\approx1.4\%\), and F1 is \(40\%\). High
+    accuracy coexists with about \(2.3\) false alerts for every true alert.
+  </p>
+</div>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Guided calculation — confusion-matrix metrics</div>
+    <div class="wsub">Edit the four counts. A ratio is shown as undefined when its denominator is zero rather than being silently forced to zero.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label for="cm-tp">TP</label><input type="number" id="cm-tp" value="60" min="0" step="1">
+      <label for="cm-fp">FP</label><input type="number" id="cm-fp" value="140" min="0" step="1">
+      <label for="cm-fn">FN</label><input type="number" id="cm-fn" value="40" min="0" step="1">
+      <label for="cm-tn">TN</label><input type="number" id="cm-tn" value="9760" min="0" step="1">
+    </div>
+    <div class="tiles">
+      <div class="tile"><div class="tv" id="cm-acc">–</div><div class="tl">accuracy</div></div>
+      <div class="tile"><div class="tv" id="cm-prec">–</div><div class="tl">precision</div></div>
+      <div class="tile"><div class="tv" id="cm-rec">–</div><div class="tl">recall</div></div>
+      <div class="tile"><div class="tv" id="cm-spec">–</div><div class="tl">specificity</div></div>
+      <div class="tile"><div class="tv" id="cm-fpr">–</div><div class="tl">false-positive rate</div></div>
+      <div class="tile"><div class="tv" id="cm-f1">–</div><div class="tl">F1</div></div>
+    </div>
+    <div class="readout" id="cm-readout" aria-live="polite"></div>
+  </div>
+</div>
+
+<h3>Thresholds, ranking, and calibration answer different questions</h3>
+<div class="tablewrap">
+  <table>
+    <thead><tr><th>Question</th><th>Useful measures</th><th>Depends on one threshold?</th></tr></thead>
+    <tbody>
+      <tr><td>How good are today's actions?</td><td>Precision, recall, specificity, F1, expected cost</td><td>Yes</td></tr>
+      <tr><td>How well are positives ranked above negatives?</td><td>ROC-AUC, precision-recall curve, AP / PR-AUC</td><td>No; they sweep thresholds</td></tr>
+      <tr><td>Does a quoted 0.8 mean about 80% occur?</td><td>Reliability diagram, Brier score, log loss</td><td>No; this is calibration</td></tr>
+    </tbody>
+  </table>
+</div>
+<p>
+  The ROC curve plots TPR against FPR as the threshold moves. ROC-AUC equals the probability that a
+  randomly selected positive receives a higher score than a randomly selected negative, with half
+  credit for ties. It measures discrimination and, for fixed class-conditional score distributions,
+  does not change merely because prevalence changes. That prevalence invariance can make ROC-AUC less
+  aligned with rare-event workload—not mathematically "inflated," but incomplete for that decision.
+</p>
+<p>
+  A precision-recall curve plots precision against recall. Its no-skill precision baseline is the
+  positive prevalence, so it directly exposes alert quality under imbalance and changes when
+  prevalence changes. <strong>Average precision (AP)</strong> and trapezoidal PR-AUC are different
+  summaries and need not be numerically identical; report which convention is used. Thresholds should
+  be chosen from validation data using costs or operational constraints, then checked for calibration
+  and subgroup behavior.
 </p>
 
 <div class="widget">
   <div class="widget-head">
     <div class="wtitle">Interactive — one threshold, every metric</div>
-    <div class="wsub">Two score distributions — negatives (gray) and positives (blue) — with an adjustable decision threshold and class imbalance. Left: distributions; right: the ROC curve with your operating point.</div>
+    <div class="wsub">Two score distributions with an adjustable threshold and prevalence. Compare the ROC view with the precision-recall view, its prevalence baseline, and expected counts for 10,000 cases.</div>
   </div>
   <div class="widget-body">
     <div class="controls">
-      <label>separation <input type="range" id="r-sep" min="0.3" max="3" step="0.05" value="1.4"><span class="val" id="r-sep-v"></span></label>
+      <label>separation <input type="range" id="r-sep" min="0" max="3" step="0.05" value="1.4"><span class="val" id="r-sep-v"></span></label>
       <label>threshold <input type="range" id="r-thr" min="-3" max="5" step="0.05" value="1"><span class="val" id="r-thr-v"></span></label>
       <label>positives share <input type="range" id="r-prev" min="0.01" max="0.5" step="0.01" value="0.2"><span class="val" id="r-prev-v"></span></label>
+      <label for="r-view">curve</label>
+      <select id="r-view">
+        <option value="roc" selected>ROC</option>
+        <option value="pr">precision–recall</option>
+      </select>
     </div>
     <div style="display:flex;gap:14px;flex-wrap:wrap">
-      <canvas id="r-canvas" width="380" height="260"></canvas>
-      <canvas id="r-roc" width="240" height="260"></canvas>
+      <canvas id="r-canvas" width="380" height="260" role="img" aria-label="Negative and positive score distributions with a decision threshold.">Score-distribution chart.</canvas>
+      <canvas id="r-roc" width="240" height="260" role="img" aria-label="ROC curve and selected operating point.">ROC or precision-recall chart.</canvas>
     </div>
     <div class="tiles">
       <div class="tile"><div class="tv" id="r-prec">–</div><div class="tl">precision</div></div>
@@ -230,27 +802,59 @@
       <div class="tile"><div class="tv" id="r-f1">–</div><div class="tl">F1</div></div>
       <div class="tile"><div class="tv" id="r-acc">–</div><div class="tl">accuracy</div></div>
       <div class="tile"><div class="tv" id="r-auc">–</div><div class="tl">ROC-AUC</div></div>
+      <div class="tile"><div class="tv" id="r-ap">–</div><div class="tl">average precision</div></div>
     </div>
+    <div class="tablewrap">
+      <table aria-label="Expected confusion matrix for 10,000 cases">
+        <thead><tr><th>Actual \ Predicted</th><th>Positive</th><th>Negative</th></tr></thead>
+        <tbody>
+          <tr><th>Positive</th><td id="r-count-tp">TP –</td><td id="r-count-fn">FN –</td></tr>
+          <tr><th>Negative</th><td id="r-count-fp">FP –</td><td id="r-count-tn">TN –</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="readout" id="r-counts" aria-live="polite"></div>
     <p class="wcaption">
       Things to try: (1) drop positives to 1% and watch accuracy stay high while precision collapses
-      — the imbalance trap. (2) Note AUC doesn't move when you drag the threshold: AUC is a property
-      of the <em>scorer</em>, the threshold picks your <em>operating point</em> on it. (3) Push
-      separation to 3 — this is what "a better model" means: the whole tradeoff curve improves.
+      and the PR baseline becomes 1%. (2) Raise the threshold: predicted positives and recall do not
+      increase, although precision need not move monotonically in every finite dataset. (3) Change
+      prevalence: ROC-AUC stays fixed in this class-conditional model, while precision and AP change.
+      (4) Reduce separation toward zero and see ROC-AUC approach \(0.5\), random ranking.
     </p>
   </div>
 </div>
 
+<h3>Regression metrics — define what a costly miss means</h3>
+<div class="box note">
+  <div class="box-title">Three common summaries</div>
+  <p>
+    <strong>MAE</strong> \(=n^{-1}\sum_i|y_i-\hat y_i|\) measures a typical absolute miss in target
+    units and is less dominated by extremes. <strong>RMSE</strong>
+    \(=\sqrt{n^{-1}\sum_i(y_i-\hat y_i)^2}\) is also in target units but gives large errors more
+    influence. <strong>R²</strong> \(=1-\sum_i(y_i-\hat y_i)^2/\sum_i(y_i-\bar y)^2\) compares squared
+    error with predicting the evaluation-set mean; it can be negative on new data. Report a metric
+    whose penalty matches the application, often alongside residual plots and a simple baseline.
+  </p>
+</div>
+
+<h3>Learning curves are not validation curves</h3>
 <p>
-  <strong>Overfitting vs underfitting</strong> is diagnosed from <em>learning curves</em>: training
-  and validation error vs model capacity (or data size). Underfit: both errors high and close —
-  add capacity or features. Overfit: training error low, validation error high and rising with
-  capacity — regularize, simplify, or get data. The widget below makes the whole story one slider.
+  A <strong>learning curve</strong> plots training and validation performance against the amount of
+  training data. If both errors plateau high and close, the model is underfitting; more data alone may
+  not repair insufficient features or capacity. If training error is low and validation error is
+  materially worse, more representative data or stronger regularization may reduce variance.
+</p>
+<p>
+  A <strong>validation curve</strong> plots training and validation performance against one model
+  setting such as polynomial degree, tree depth, \(C\), or \(\lambda\). It diagnoses which capacity setting
+  generalizes best. The chart below varies degree, so it is a validation curve. In either chart,
+  interpret uncertainty across folds or resamples rather than overreading a single jagged point.
 </p>
 
 <div class="widget">
   <div class="widget-head">
-    <div class="wtitle">Interactive — bias–variance with one slider</div>
-    <div class="wsub">Polynomial regression on 30 noisy samples of a smooth function. Left: the fit; right: train vs test error as degree grows — the canonical U-curve.</div>
+    <div class="wtitle">Interactive — polynomial validation curve</div>
+    <div class="wsub">Polynomial regression on 30 noisy training samples. Left: the fitted curve; right: training versus validation MSE as degree changes.</div>
   </div>
   <div class="widget-body">
     <div class="controls">
@@ -258,88 +862,228 @@
       <button class="btn ghost" id="bv-resample">New noise sample</button>
     </div>
     <div style="display:flex;gap:14px;flex-wrap:wrap">
-      <canvas id="bv-fit" width="380" height="260"></canvas>
-      <canvas id="bv-err" width="240" height="260"></canvas>
+      <canvas id="bv-fit" width="380" height="260" role="img" aria-label="Polynomial fit against the underlying function and training samples.">Polynomial fit chart.</canvas>
+      <canvas id="bv-err" width="240" height="260" role="img" aria-label="Training and validation error across polynomial degree.">Polynomial validation-curve chart.</canvas>
     </div>
     <p class="wcaption">
-      Degree 0–1 underfits (high bias): the model can't bend. Degree 12+ overfits (high variance):
+      Degree 0–1 underfits (high bias): the model can't bend. The MSE axis uses a \(\log_{10}\) scale so large high-degree errors remain visible rather than being clipped. Degree 12+ overfits (high variance):
       press "new noise sample" repeatedly and watch the high-degree fit thrash while degree 4 barely
-      moves — variance is literally sensitivity to the training draw. The test-error minimum sits at
-      moderate capacity. Every regularizer in this course is a way of buying that sweet spot.
+      moves — variance is sensitivity to the training draw. Choose degree near the validation-error
+      minimum, then reserve the untouched final test set for the one-time performance estimate.
     </p>
   </div>
 </div>
 
+<h3>Class imbalance — change training and decisions without falsifying evaluation</h3>
 <p>
-  <strong>Class imbalance strategies:</strong> resample (oversample minority — e.g. SMOTE — or
-  undersample majority), reweight the loss (class weights inversely proportional to frequency), or
-  use <em>focal loss</em>, which down-weights already-easy examples so training focuses on the hard
-  minority. And always report PR-AUC, not accuracy.
+  Imbalance matters because a scarce positive class may receive too little influence during fitting
+  and because operational precision depends strongly on prevalence. Keep validation and test sets at
+  the deployment distribution unless the evaluation question explicitly specifies another population.
+  Apply any data-level balancing to training partitions only.
 </p>
+<div class="tablewrap">
+  <table>
+    <thead><tr><th>Strategy</th><th>What it changes</th><th>Main caution</th></tr></thead>
+    <tbody>
+      <tr><td>Random oversampling / undersampling</td><td>Class representation in training</td><td>Duplicates add no new information; undersampling discards majority information</td></tr>
+      <tr><td>SMOTE-like interpolation</td><td>Creates synthetic minority training points</td><td>Can create unrealistic points or bridge class regions; run inside each fold</td></tr>
+      <tr><td>Class-weighted loss</td><td>Cost of errors from each class</td><td>Weights must reflect the objective, not blindly inverse frequency</td></tr>
+      <tr><td>Focal loss</td><td>Uses \(-\alpha_t(1-p_t)^\gamma\log p_t\): \(p_t\) is the probability of the true class, \(\gamma\) controls focusing, and optional \(\alpha_t\) supplies class weight</td><td>Focuses on hard cases, not inherently the minority; can affect calibration</td></tr>
+      <tr><td>Threshold adjustment</td><td>Which scores trigger action</td><td>Changes the operating point, not the ranking or learned representation</td></tr>
+    </tbody>
+  </table>
+</div>
 <p>
-  <strong>Data leakage</strong> is the silent career-ender: information from outside the training
-  window contaminating training. Canonical forms: normalizing with statistics computed on the full
-  dataset <em>before</em> splitting; features that encode the label (e.g., "charged-off fees" when
-  predicting default); random splits of time-series (the model peeks at the future); duplicate or
-  near-duplicate rows straddling the split. Symptom: validation metrics too good to be true, then a
-  production faceplant. Rule: <em>fit every preprocessing step inside the training fold only</em> —
-  pipelines exist to enforce this.
+  Oversampling or weighting can change the relationship between raw scores and real-world event
+  probabilities. When probabilities matter, assess and if necessary recalibrate on held-out data with
+  natural prevalence. Report the metric family that answers the decision: PR curves are often useful
+  for rare alerts, ROC curves describe ranking across both classes, and threshold metrics or expected
+  cost describe the deployed action.
 </p>
+
+<h3>Data leakage — protect the direction of information flow</h3>
+<p>
+  Leakage occurs when model development uses information that would not be available for a genuinely
+  new prediction. It can enter through features, preprocessing, splitting, or repeated model selection.
+  An implausibly strong validation score is a clue, but plausible scores do not prove the pipeline safe.
+</p>
+<div class="tablewrap">
+  <table>
+    <thead><tr><th>Leakage route</th><th>Example</th><th>Safe design</th></tr></thead>
+    <tbody>
+      <tr><td>Preprocessing</td><td>Scale or impute using all rows before splitting</td><td>Fit each transformation on fold-training only</td></tr>
+      <tr><td>Target leakage</td><td>Use a field created after the outcome, or target encoding computed with the row's own label</td><td>Audit feature availability time; use out-of-fold encodings</td></tr>
+      <tr><td>Temporal leakage</td><td>Randomly mix future observations into training</td><td>Reproduce the real forecast horizon and information cutoff</td></tr>
+      <tr><td>Entity leakage</td><td>Rows from one patient or device appear on both sides</td><td>Split by the entity that must generalize</td></tr>
+      <tr><td>Duplicate leakage</td><td>Copies or near-copies straddle partitions</td><td>Deduplicate or group related records before splitting</td></tr>
+      <tr><td>Test reuse</td><td>Choose features or models after repeatedly checking test results</td><td>Lock the procedure before one final test evaluation</td></tr>
+    </tbody>
+  </table>
+</div>
+<pre><code>define prediction time and the independent split unit
+create development and final-test partitions first
+for every development fold:
+    fit imputer -> scaler -> feature selector on fold-training
+    apply only those fitted transforms to fold-validation without refitting
+    resample or apply SMOTE to processed fold-training only
+    train on processed, optionally resampled fold-training
+    evaluate on processed fold-validation
+lock features, hyperparameters, threshold rule, and metric
+run the locked pipeline once on the untouched final test partition</code></pre>
+<div class="box warn">
+  <div class="box-title">A pipeline helps, but cannot decide causality</div>
+  <p>
+    Software pipelines can enforce fold-local fitting, yet they cannot know that a feature arrives
+    after the event, that two identifiers belong to one person, or that the deployment population has
+    shifted. Preventing leakage also requires a data-lineage and time-of-availability review with
+    domain experts.
+  </p>
+</div>
+
+<h3>Evaluation decision guide</h3>
+<div class="tablewrap">
+  <table>
+    <thead><tr><th>Operational question</th><th>Lead measure</th><th>Pair it with</th></tr></thead>
+    <tbody>
+      <tr><td>Both class errors have similar cost</td><td>Accuracy; or balanced accuracy \(=(\text{recall}+\text{specificity})/2\) when each class should contribute equally</td><td>Confusion matrix and prevalence</td></tr>
+      <tr><td>False alerts consume scarce review capacity</td><td>Precision at a fixed recall or alert budget</td><td>Expected counts</td></tr>
+      <tr><td>Missing a positive is especially costly</td><td>Recall at an acceptable precision or FPR</td><td>Expected cost and subgroup recall</td></tr>
+      <tr><td>Compare rankers before choosing policy</td><td>ROC-AUC and/or AP</td><td>Full curves and uncertainty</td></tr>
+      <tr><td>Probabilities drive pricing or risk</td><td>Log loss, Brier score, calibration plot</td><td>Discrimination and decision utility</td></tr>
+      <tr><td>Numerical prediction</td><td>MAE or RMSE matched to cost</td><td>Residuals, baseline, and uncertainty</td></tr>
+    </tbody>
+  </table>
+</div>
 
 <div class="box jargon">
   <div class="box-title">Jargon decoder</div>
   <dl>
-    <dt>hyperparameter</dt><dd>A knob you set (k, depth, λ, learning rate), not learned from data. Tuned on a validation set, never the test set.</dd>
+    <dt>residual</dt><dd>Prediction minus observed numerical target; the signed error used by least squares.</dd>
+    <dt>hyperparameter</dt><dd>A setting you choose around fitting—\(k\), depth, \(\lambda\), or learning rate—using validation rather than final-test results.</dd>
     <dt>bootstrap</dt><dd>Resampling the dataset with replacement; "bagging" = bootstrap aggregating.</dd>
-    <dt>support vector</dt><dd>A training point lying on the margin — one of the few points that actually determine the SVM boundary.</dd>
+    <dt>support vector</dt><dd>A training sample with a nonzero dual coefficient; these influential samples lie on or within the margin in the usual soft-margin formulation.</dd>
     <dt>RBF kernel</dt><dd>Radial basis function \(e^{-\gamma\|x-x'\|^2}\) — similarity decaying with distance; implicitly infinite-dimensional features.</dd>
     <dt>SMOTE</dt><dd>Synthetic Minority Oversampling — creates synthetic minority points by interpolating between neighbors.</dd>
     <dt>inertia</dt><dd>k-means objective: total squared distance of points to their assigned centroid.</dd>
     <dt>dendrogram</dt><dd>The merge tree produced by hierarchical clustering.</dd>
-    <dt>calibration</dt><dd>Whether predicted probabilities match observed frequencies (of events given p=0.8, ~80% happen). Logistic regression is naturally well-calibrated; boosted trees and deep nets often aren't.</dd>
+    <dt>responsibility</dt><dd>A GMM's posterior probability that one mixture component generated a particular sample.</dd>
+    <dt>loading</dt><dd>A coefficient connecting an original feature to a principal component direction.</dd>
+    <dt>prevalence</dt><dd>The share of evaluation cases belonging to the positive class.</dd>
+    <dt>calibration</dt><dd>Agreement between predicted probabilities and observed frequencies: among comparable cases scored near 0.8, roughly 80% should be positive. It must be checked rather than assumed for any model family.</dd>
   </dl>
 </div>
 
 <h2>Self-check</h2>
-<div class="quiz" data-answer="b">
-  <p class="quiz-q">1. You need a model that uses at most 20 of 5,000 candidate features, for regulatory interpretability. The most direct tool:</p>
-  <div class="opts">
-    <button data-opt="a">L2 regularization with large λ</button>
-    <button data-opt="b">L1 regularization, tuning λ until ~20 weights remain nonzero</button>
-    <button data-opt="c">a deeper decision tree</button>
-    <button data-opt="d">k-NN with large k</button>
-  </div>
-  <div class="quiz-exp"><strong>b.</strong> L1's corners produce exact zeros — built-in feature selection. L2 shrinks everything but zeroes nothing.</div>
-</div>
+<p>Ten cumulative questions connect the equations, algorithms, and evaluation choices.</p>
+
 <div class="quiz" data-answer="c">
-  <p class="quiz-q">2. Random forests reduce error primarily by reducing ______; gradient boosting primarily by reducing ______.</p>
+  <p class="quiz-q">1. What is the safest way to compute an ordinary least-squares fit when the design matrix includes an intercept?</p>
   <div class="opts">
-    <button data-opt="a">bias; bias</button>
-    <button data-opt="b">variance; variance</button>
-    <button data-opt="c">variance; bias</button>
-    <button data-opt="d">noise; noise</button>
+    <button data-opt="a">Always form \((X^\top X)^{-1}\) explicitly</button>
+    <button data-opt="b">Drop the intercept so the matrix is square</button>
+    <button data-opt="c">Solve the least-squares system with QR/SVD or another stable solver</button>
+    <button data-opt="d">Use classification accuracy as the objective</button>
   </div>
-  <div class="quiz-exp"><strong>c.</strong> Bagging averages many overfit (low-bias, high-variance) trees — averaging kills variance. Boosting adds weak (high-bias) learners that sequentially correct systematic errors — reducing bias. This duality is a favorite exam item-set.</div>
+  <div class="quiz-exp"><strong>c.</strong> The normal equations characterize a solution, but an explicit inverse is unnecessary and can magnify conditioning problems. QR or SVD solves least squares more reliably; SVD also handles rank deficiency.</div>
 </div>
+
+<div class="quiz" data-answer="b">
+  <p class="quiz-q">2. A logistic model gives score \(z=1.2\), hence \(p\approx0.768\). What happens when the action threshold is \(0.8\)?</p>
+  <div class="opts">
+    <button data-opt="a">It predicts positive because \(z&gt;0\)</button>
+    <button data-opt="b">It predicts negative; the fitted probability remains \(0.768\)</button>
+    <button data-opt="c">The probability is recalibrated to \(0.8\)</button>
+    <button data-opt="d">The coefficients must be refitted</button>
+  </div>
+  <div class="quiz-exp"><strong>b.</strong> A threshold converts an unchanged score or probability into an action. Threshold selection is separate from fitting and should reflect validation evidence, costs, and constraints.</div>
+</div>
+
 <div class="quiz" data-answer="d">
-  <p class="quiz-q">3. Fraud is 0.2% of transactions. Which evaluation setup is sound?</p>
+  <p class="quiz-q">3. For \(a=3,\lambda=1\), compare \(\tfrac12(w-a)^2+\lambda|w|\) with \(\tfrac12(w-a)^2+\tfrac\lambda2w^2\).</p>
   <div class="opts">
-    <button data-opt="a">accuracy on a balanced 50/50 resampled test set</button>
-    <button data-opt="b">accuracy on the natural distribution</button>
-    <button data-opt="c">ROC-AUC alone, since it's threshold-free</button>
-    <button data-opt="d">PR-AUC on the natural distribution, plus precision/recall at the business-chosen threshold</button>
+    <button data-opt="a">Both optima are \(w=0\)</button>
+    <button data-opt="b">L1 gives \(1.5\); L2 gives \(2\)</button>
+    <button data-opt="c">Both optima are \(w=2\)</button>
+    <button data-opt="d">L1 gives \(2\); L2 gives \(1.5\)</button>
   </div>
-  <div class="quiz-exp"><strong>d.</strong> Test distributions must match reality (rebalancing the test set falsifies precision). Accuracy saturates at 99.8% for a useless model; ROC-AUC is inflated by the enormous negative class. PR-AUC + an explicit operating point is the professional answer.</div>
+  <div class="quiz-exp"><strong>d.</strong> L1 soft-thresholds to \(3-1=2\); L2 shrinks smoothly to \(3/(1+1)=1.5\). L1 can create exact zeros when \(|a|\le\lambda\), but it does not guarantee an arbitrary requested feature count.</div>
 </div>
+
 <div class="quiz" data-answer="a">
-  <p class="quiz-q">4. A colleague scales all features using the full dataset's mean/std, then splits train/test, and reports great results. The problem:</p>
+  <p class="quiz-q">4. Which statement about trees and their ensembles is technically sound?</p>
   <div class="opts">
-    <button data-opt="a">leakage — test-set statistics influenced training preprocessing; refit the scaler on the training fold only</button>
-    <button data-opt="b">none — scaling is label-free, so it can't leak</button>
-    <button data-opt="c">the scaler should have used median/IQR instead</button>
-    <button data-opt="d">train/test splits are unnecessary when using cross-validation</button>
+    <button data-opt="a">Random forests use bootstrap aggregation and feature subsampling to reduce correlation; boosting adds learners sequentially along loss gradients</button>
+    <button data-opt="b">Averaging \(B\) trees always divides variance exactly by \(B\)</button>
+    <button data-opt="c">Boosting can change bias but never variance</button>
+    <button data-opt="d">An unpruned tree cannot overfit because each split improves training impurity</button>
   </div>
-  <div class="quiz-exp"><strong>a.</strong> Even label-free statistics leak distributional information across the split (means, spread, outlier locations). Usually a small crime — but the same habit with target encoding or time-series is catastrophic. Pipelines make the discipline automatic.</div>
+  <div class="quiz-exp"><strong>a.</strong> Correlation leaves a variance floor for bagging, and boosting can affect both bias and variance. Training-impurity improvement does not guarantee validation improvement.</div>
+</div>
+
+<div class="quiz" data-answer="c">
+  <p class="quiz-q">5. Which preprocessing choice is most important for both RBF-SVM and ordinary Euclidean k-NN?</p>
+  <div class="opts">
+    <button data-opt="a">Sort samples by label</button>
+    <button data-opt="b">One-hot encode the target itself</button>
+    <button data-opt="c">Put features on intentional comparable scales</button>
+    <button data-opt="d">Force the number of features below a universal cutoff of 30</button>
+  </div>
+  <div class="quiz-exp"><strong>c.</strong> Both methods depend on distances, so a large-unit feature can dominate. Dimensional difficulty has no universal cutoff; it depends on sample size, metric, noise, and intrinsic geometry.</div>
+</div>
+
+<div class="quiz" data-answer="d">
+  <p class="quiz-q">6. Which description of unsupervised methods is correct?</p>
+  <div class="opts">
+    <button data-opt="a">k-means discovers the number of clusters and fits arbitrary connected shapes</button>
+    <button data-opt="b">DBSCAN minimizes k-means inertia for a user-specified \(k\)</button>
+    <button data-opt="c">EM guarantees the globally best Gaussian-mixture likelihood</button>
+    <button data-opt="d">k-means may reach a local solution; hierarchical clustering builds a dendrogram; DBSCAN uses density; GMM responsibilities are soft memberships</button>
+  </div>
+  <div class="quiz-exp"><strong>d.</strong> Each method defines structure differently. Lloyd steps do not increase inertia but can settle locally; EM likewise improves likelihood monotonically without guaranteeing its global maximum.</div>
+</div>
+
+<div class="quiz" data-answer="b">
+  <p class="quiz-q">7. PCA covariance eigenvalues are \(5,2,1\). What do two retained components explain, and what can a later t-SNE plot prove?</p>
+  <div class="opts">
+    <button data-opt="a">\(70\%\); every visible island is a real cluster</button>
+    <button data-opt="b">\(87.5\%\); t-SNE islands remain exploratory and must be checked in original space</button>
+    <button data-opt="c">\(62.5\%\); inter-island distance is globally faithful</button>
+    <button data-opt="d">\(100\%\); nonlinear maps preserve all pairwise distances</button>
+  </div>
+  <div class="quiz-exp"><strong>b.</strong> Retained variance is \((5+2)/(5+2+1)=87.5\%\). Nonlinear maps emphasize neighborhoods and can change substantially with settings and seeds; apparent area and separation are not direct measurements.</div>
+</div>
+
+<div class="quiz" data-answer="a">
+  <p class="quiz-q">8. For TP=60, FP=140, FN=40, TN=9,760, which metric set is correct?</p>
+  <div class="opts">
+    <button data-opt="a">accuracy \(98.2\%\), precision \(30\%\), recall \(60\%\), F1 \(40\%\)</button>
+    <button data-opt="b">accuracy \(60\%\), precision \(98.2\%\), recall \(30\%\), F1 \(40\%\)</button>
+    <button data-opt="c">accuracy \(98.2\%\), precision \(60\%\), recall \(30\%\), F1 \(45\%\)</button>
+    <button data-opt="d">accuracy \(99.0\%\), precision \(40\%\), recall \(60\%\), F1 \(98.2\%\)</button>
+  </div>
+  <div class="quiz-exp"><strong>a.</strong> The denominator for precision is predicted positives (200); for recall it is actual positives (100). The high accuracy reflects the many true negatives and does not summarize alert quality.</div>
+</div>
+
+<div class="quiz" data-answer="c">
+  <p class="quiz-q">9. Prevalence falls while the positive and negative score distributions stay unchanged. Which statement is correct?</p>
+  <div class="opts">
+    <button data-opt="a">ROC-AUC must fall because positives are rarer</button>
+    <button data-opt="b">Precision and average precision are prevalence-invariant</button>
+    <button data-opt="c">ROC-AUC stays the same, while precision and the PR baseline change</button>
+    <button data-opt="d">Changing the action threshold changes ROC-AUC</button>
+  </div>
+  <div class="quiz-exp"><strong>c.</strong> ROC-AUC depends on relative ranking between the conditional score distributions, whereas precision contains prevalence through the mix of positive and negative predictions. A threshold selects one operating point but does not change either full-curve area.</div>
+</div>
+
+<div class="quiz" data-answer="d">
+  <p class="quiz-q">10. Which end-to-end evaluation procedure is sound?</p>
+  <div class="opts">
+    <button data-opt="a">Scale and apply SMOTE to all data, then make cross-validation folds</button>
+    <button data-opt="b">Call error versus polynomial degree a learning curve and pick the final degree from repeated test checks</button>
+    <button data-opt="c">Randomly split rows from the same patient across folds to maximize sample size</button>
+    <button data-opt="d">Group or order splits as deployment requires; fit preprocessing and resampling inside fold-training; tune on validation; open the final test once</button>
+  </div>
+  <div class="quiz-exp"><strong>d.</strong> Degree produces a validation curve; training-set size produces a learning curve. Fold-local transformations, train-only resampling, entity/time-aware splits, and one-time final testing protect the estimate from leakage and adaptive overfitting.</div>
 </div>
 
 <h2>Go deeper</h2>
@@ -357,35 +1101,293 @@
 
 <script>
 document.addEventListener("caie:ready", () => {
+  // ================= L1 / L2 regularization calculator =================
+  (function () {
+    const aInput = document.getElementById("reg-a");
+    const lambdaInput = document.getElementById("reg-lambda");
+    if (!aInput || !lambdaInput) return;
+
+    const l1Output = document.getElementById("reg-l1-w");
+    const l2Output = document.getElementById("reg-l2-w");
+    const readout = document.getElementById("reg-readout");
+    const numericValue = input => input.value.trim() === "" ? NaN : Number(input.value);
+    const fmt = value => {
+      if (!Number.isFinite(value)) return "undefined";
+      const clean = Math.abs(value) < 5e-10 ? 0 : value;
+      return clean.toFixed(3).replace(/\.000$/, "");
+    };
+
+    function update() {
+      const a = numericValue(aInput);
+      const lambda = numericValue(lambdaInput);
+      if (!Number.isFinite(a) || !Number.isFinite(lambda) || lambda < 0) {
+        if (l1Output) l1Output.textContent = "undefined";
+        if (l2Output) l2Output.textContent = "undefined";
+        if (readout) readout.textContent = "Enter a finite target a and a nonnegative regularization strength lambda.";
+        return;
+      }
+
+      const wL1 = Math.sign(a) * Math.max(Math.abs(a) - lambda, 0);
+      const wL2 = a / (1 + lambda);
+      const l1Data = 0.5 * (wL1 - a) ** 2;
+      const l1Penalty = lambda * Math.abs(wL1);
+      const l2Data = 0.5 * (wL2 - a) ** 2;
+      const l2Penalty = 0.5 * lambda * wL2 ** 2;
+
+      if (l1Output) l1Output.textContent = fmt(wL1);
+      if (l2Output) l2Output.textContent = fmt(wL2);
+      if (readout) {
+        readout.innerHTML =
+          "L1: data loss <b>" + fmt(l1Data) + "</b>, penalty <b>" + fmt(l1Penalty) +
+          "</b>, total <b>" + fmt(l1Data + l1Penalty) + "</b>" +
+          "<span>L2: data loss <b>" + fmt(l2Data) + "</b>, penalty <b>" + fmt(l2Penalty) +
+          "</b>, total <b>" + fmt(l2Data + l2Penalty) + "</b></span>" +
+          "<span>" + (wL1 === 0 ? "L1 has reached an exact zero; " : "L1 uses soft-thresholding; ") +
+          "L2 shrinks smoothly.</span>";
+      }
+    }
+
+    [aInput, lambdaInput].forEach(input => input.addEventListener("input", update));
+    update();
+  })();
+
+  // ================= decision-tree split calculator =================
+  (function () {
+    const ids = ["split-lp", "split-ln", "split-rp", "split-rn", "split-criterion"];
+    const controls = ids.map(id => document.getElementById(id));
+    if (controls.some(control => !control)) return;
+
+    const [lpInput, lnInput, rpInput, rnInput, criterionInput] = controls;
+    const parentOutput = document.getElementById("split-parent");
+    const childrenOutput = document.getElementById("split-children");
+    const gainOutput = document.getElementById("split-gain");
+    const readout = document.getElementById("split-readout");
+    const fmt = value => Number.isFinite(value) ? value.toFixed(3) : "undefined";
+    const numericValue = input => input.value.trim() === "" ? NaN : Number(input.value);
+
+    function impurity(positive, negative, criterion) {
+      const total = positive + negative;
+      if (total <= 0) return undefined;
+      const probabilities = [positive / total, negative / total];
+      if (criterion === "entropy") {
+        return probabilities.reduce((sum, p) => sum - (p === 0 ? 0 : p * Math.log2(p)), 0);
+      }
+      return 1 - probabilities.reduce((sum, p) => sum + p * p, 0);
+    }
+
+    function setInvalid(message) {
+      [parentOutput, childrenOutput, gainOutput].forEach(output => {
+        if (output) output.textContent = "undefined";
+      });
+      if (readout) readout.textContent = message;
+    }
+
+    function update() {
+      const counts = [lpInput, lnInput, rpInput, rnInput].map(numericValue);
+      if (counts.some(value => !Number.isFinite(value) || value < 0 || !Number.isInteger(value))) {
+        setInvalid("Counts must be finite nonnegative integers.");
+        return;
+      }
+      const [lp, ln, rp, rn] = counts;
+      const leftN = lp + ln;
+      const rightN = rp + rn;
+      const total = leftN + rightN;
+      if (leftN === 0 || rightN === 0 || total === 0) {
+        setInvalid("Undefined split: both child nodes must contain at least one sample.");
+        return;
+      }
+
+      const criterion = criterionInput.value === "entropy" ? "entropy" : "gini";
+      const parent = impurity(lp + rp, ln + rn, criterion);
+      const left = impurity(lp, ln, criterion);
+      const right = impurity(rp, rn, criterion);
+      const weightedChildren = (leftN / total) * left + (rightN / total) * right;
+      const gain = parent - weightedChildren;
+
+      if (parentOutput) parentOutput.textContent = fmt(parent);
+      if (childrenOutput) childrenOutput.textContent = fmt(weightedChildren);
+      if (gainOutput) gainOutput.textContent = fmt(gain);
+      if (readout) {
+        readout.innerHTML =
+          "left impurity: <b>" + fmt(left) + "</b> at weight " + fmt(leftN / total) +
+          "<span>right impurity: <b>" + fmt(right) + "</b> at weight " + fmt(rightN / total) + "</span>" +
+          "<span>gain = parent - weighted children = <b>" + fmt(parent) + " - " +
+          fmt(weightedChildren) + " = " + fmt(gain) + "</b></span>";
+      }
+    }
+
+    controls.forEach(control => control.addEventListener(control === criterionInput ? "change" : "input", update));
+    update();
+  })();
+
+  // ================= PCA explained-variance calculator =================
+  (function () {
+    const eigenInputs = ["pca-e1", "pca-e2", "pca-e3"].map(id => document.getElementById(id));
+    const rInput = document.getElementById("pca-r");
+    if (eigenInputs.some(input => !input) || !rInput) return;
+
+    const totalOutput = document.getElementById("pca-total");
+    const retainedOutput = document.getElementById("pca-retained");
+    const bars = document.getElementById("pca-bars");
+    const readout = document.getElementById("pca-readout");
+    const fmt = value => value.toFixed(3).replace(/\.000$/, "");
+    const numericValue = input => input.value.trim() === "" ? NaN : Number(input.value);
+
+    function setInvalid(message) {
+      if (totalOutput) totalOutput.textContent = "undefined";
+      if (retainedOutput) retainedOutput.textContent = "undefined";
+      if (bars) {
+        bars.textContent = message;
+        bars.removeAttribute("role");
+        bars.removeAttribute("aria-label");
+      }
+      if (readout) readout.textContent = message;
+    }
+
+    function update() {
+      const values = eigenInputs.map(numericValue);
+      const retainedCount = numericValue(rInput);
+      if (values.some(value => !Number.isFinite(value) || value < 0)) {
+        setInvalid("Eigenvalues must be finite and nonnegative.");
+        return;
+      }
+      if (!Number.isInteger(retainedCount) || retainedCount < 1 || retainedCount > values.length) {
+        setInvalid("The retained-component count must be an integer from 1 to 3.");
+        return;
+      }
+      const sorted = values.slice().sort((a, b) => b - a);
+      const total = sorted.reduce((sum, value) => sum + value, 0);
+      if (total === 0) {
+        setInvalid("Explained-variance ratios are undefined when every eigenvalue is zero.");
+        return;
+      }
+      const ratios = sorted.map(value => value / total);
+      const retained = ratios.slice(0, retainedCount).reduce((sum, value) => sum + value, 0);
+
+      if (totalOutput) totalOutput.textContent = fmt(total);
+      if (retainedOutput) retainedOutput.textContent = (100 * retained).toFixed(1) + "%";
+      if (bars) {
+        bars.innerHTML = ratios.map((ratio, index) =>
+          "<div style='margin:.45rem 0'>" +
+            "<div style='display:flex;justify-content:space-between;gap:1rem'>" +
+              "<span>PC" + (index + 1) + (index < retainedCount ? " (retained)" : "") + "</span>" +
+              "<span>" + (100 * ratio).toFixed(1) + "%</span>" +
+            "</div>" +
+            "<div aria-hidden='true' style='height:.55rem;border-radius:999px;background:var(--grid,#d5d9e2);overflow:hidden'>" +
+              "<div style='height:100%;width:" + (100 * ratio).toFixed(2) + "%;background:var(--accent,#3662d8)'></div>" +
+            "</div>" +
+          "</div>"
+        ).join("");
+        bars.setAttribute("role", "img");
+        bars.setAttribute("aria-label", ratios.map((ratio, index) =>
+          "Principal component " + (index + 1) + ": " + (100 * ratio).toFixed(1) +
+          " percent" + (index < retainedCount ? ", retained" : "")
+        ).join("; "));
+      }
+      if (readout) {
+        readout.innerHTML =
+          "sorted eigenvalues: <b>" + sorted.map(fmt).join(", ") + "</b>" +
+          "<span>individual ratios: <b>" + ratios.map(value => (100 * value).toFixed(1) + "%").join(", ") + "</b></span>" +
+          "<span>top " + retainedCount + " retain <b>" + (100 * retained).toFixed(1) + "%</b> of the total variance</span>";
+      }
+    }
+
+    eigenInputs.forEach(input => input.addEventListener("input", update));
+    rInput.addEventListener("input", update);
+    rInput.addEventListener("change", update);
+    update();
+  })();
+
+  // ================= confusion-matrix calculator =================
+  (function () {
+    const countInputs = ["cm-tp", "cm-fp", "cm-fn", "cm-tn"].map(id => document.getElementById(id));
+    if (countInputs.some(input => !input)) return;
+
+    const outputs = {
+      accuracy: document.getElementById("cm-acc"),
+      precision: document.getElementById("cm-prec"),
+      recall: document.getElementById("cm-rec"),
+      specificity: document.getElementById("cm-spec"),
+      fpr: document.getElementById("cm-fpr"),
+      f1: document.getElementById("cm-f1")
+    };
+    const readout = document.getElementById("cm-readout");
+    const divide = (numerator, denominator) => denominator === 0 ? undefined : numerator / denominator;
+    const pct = value => value === undefined || !Number.isFinite(value) ? "undefined" : (100 * value).toFixed(1) + "%";
+    const numericValue = input => input.value.trim() === "" ? NaN : Number(input.value);
+
+    function update() {
+      const counts = countInputs.map(numericValue);
+      if (counts.some(value => !Number.isFinite(value) || value < 0 || !Number.isInteger(value))) {
+        Object.values(outputs).forEach(output => { if (output) output.textContent = "undefined"; });
+        if (readout) readout.textContent = "Counts must be finite nonnegative integers.";
+        return;
+      }
+      const [tp, fp, fn, tn] = counts;
+      const total = tp + fp + fn + tn;
+      const metrics = {
+        accuracy: divide(tp + tn, total),
+        precision: divide(tp, tp + fp),
+        recall: divide(tp, tp + fn),
+        specificity: divide(tn, tn + fp),
+        fpr: divide(fp, fp + tn),
+        f1: divide(2 * tp, 2 * tp + fp + fn)
+      };
+      Object.entries(outputs).forEach(([name, output]) => { if (output) output.textContent = pct(metrics[name]); });
+      const prevalence = divide(tp + fn, total);
+      if (readout) {
+        readout.innerHTML =
+          "N = <b>" + total.toLocaleString() + "</b>; prevalence = (TP + FN) / N = <b>" + pct(prevalence) + "</b>" +
+          "<span>accuracy <b>" + pct(metrics.accuracy) + "</b>; precision <b>" + pct(metrics.precision) +
+          "</b>; recall <b>" + pct(metrics.recall) + "</b>; specificity <b>" + pct(metrics.specificity) +
+          "</b>; FPR <b>" + pct(metrics.fpr) + "</b>; F1 <b>" + pct(metrics.f1) + "</b></span>" +
+          "<span>accuracy = (TP + TN) / N; precision = TP / (TP + FP); recall = TP / (TP + FN)</span>" +
+          "<span>specificity = TN / (TN + FP); FPR = FP / (FP + TN); F1 = 2TP / (2TP + FP + FN)</span>";
+      }
+    }
+
+    countInputs.forEach(input => input.addEventListener("input", update));
+    update();
+  })();
+
   // ================= playground =================
   (function () {
     const canvas = document.getElementById("p-canvas");
-    let pts = [], model = "knn", dataset = "moons";
-    const rand = CAIE.rng(7);
-    function genData() {
-      pts = [];
+    const addClassControl = document.getElementById("p-add-class");
+    const addXControl = document.getElementById("p-add-x");
+    const addYControl = document.getElementById("p-add-y");
+    const addPointButton = document.getElementById("p-add-point");
+    let pts = [], validationPts = [], model = "knn", dataset = "moons";
+    function makeData(rand) {
+      const generated = [];
       const g = () => CAIE.gauss(rand);
       if (dataset === "blobs") {
-        for (let i = 0; i < 40; i++) pts.push({ x: -1.1 + 0.45 * g(), y: -0.5 + 0.45 * g(), c: 0 });
-        for (let i = 0; i < 40; i++) pts.push({ x: 1.1 + 0.45 * g(), y: 0.5 + 0.45 * g(), c: 1 });
+        for (let i = 0; i < 40; i++) generated.push({ x: -1.1 + 0.45 * g(), y: -0.5 + 0.45 * g(), c: 0 });
+        for (let i = 0; i < 40; i++) generated.push({ x: 1.1 + 0.45 * g(), y: 0.5 + 0.45 * g(), c: 1 });
       } else if (dataset === "moons") {
         for (let i = 0; i < 45; i++) {
           const t = Math.PI * rand();
-          pts.push({ x: Math.cos(t) - 0.5 + 0.14 * g(), y: Math.sin(t) - 0.25 + 0.14 * g(), c: 0 });
+          generated.push({ x: Math.cos(t) - 0.5 + 0.14 * g(), y: Math.sin(t) - 0.25 + 0.14 * g(), c: 0 });
         }
         for (let i = 0; i < 45; i++) {
           const t = Math.PI * rand();
-          pts.push({ x: 0.5 - Math.cos(t) + 0.14 * g(), y: 0.25 - Math.sin(t) + 0.14 * g(), c: 1 });
+          generated.push({ x: 0.5 - Math.cos(t) + 0.14 * g(), y: 0.25 - Math.sin(t) + 0.14 * g(), c: 1 });
         }
       } else {
         for (let i = 0; i < 80; i++) {
           const x = (rand() * 2 - 1) * 1.6, y = (rand() * 2 - 1) * 1.6;
-          pts.push({ x, y, c: (x * y > 0) ? 1 : 0 });
+          generated.push({ x, y, c: (x * y > 0) ? 1 : 0 });
         }
       }
+      return generated;
+    }
+    function genData() {
+      const datasetOffset = dataset === "blobs" ? 0 : dataset === "moons" ? 100 : 200;
+      pts = makeData(CAIE.rng(7 + datasetOffset));
+      validationPts = makeData(CAIE.rng(7007 + datasetOffset));
     }
     // --- models ---
-    function knnProb(x, y, k) {
+    function knnScore(x, y, k) {
       const d = pts.map(p => ({ d: (p.x - x) ** 2 + (p.y - y) ** 2, c: p.c }));
       d.sort((a, b) => a.d - b.d);
       let s = 0; for (let i = 0; i < Math.min(k, d.length); i++) s += d[i].c;
@@ -436,14 +1438,21 @@ document.addEventListener("caie:ready", () => {
       };
     }
     const R = 2.0; // world half-range
+    const selectedPointClass = () => addClassControl && addClassControl.value === "1" ? 1 : 0;
+    function addPoint(x, y, classIndex) {
+      if (!Number.isFinite(x) || !Number.isFinite(y) || x < -R || x > R || y < -R || y > R) return false;
+      pts.push({ x, y, c: classIndex });
+      draw();
+      return true;
+    }
     function draw() {
       const k = +document.getElementById("p-k").value;
       const depth = +document.getElementById("p-depth").value;
-      let prob;
+      let score;
       const t0 = performance.now();
-      if (model === "knn") prob = (x, y) => knnProb(x, y, k);
-      else if (model === "logreg") { const f = trainLogreg(); prob = f; }
-      else { const f = trainTree(depth); prob = f; }
+      if (model === "knn") score = (x, y) => knnScore(x, y, k);
+      else if (model === "logreg") score = trainLogreg();
+      else score = trainTree(depth);
       const pal = CAIE.pal();
       const W = Math.min(640, canvas.parentNode.clientWidth - 4);
       const { ctx, w, h } = CAIE.setupCanvas(canvas, W, 380);
@@ -451,8 +1460,8 @@ document.addEventListener("caie:ready", () => {
       const nx = 72, ny = 44;
       for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
         const x = -R + (i + 0.5) / nx * 2 * R, y = -R + (j + 0.5) / ny * 2 * R;
-        const p = prob(x, y);
-        ctx.fillStyle = CAIE.div(2 * (0.5 - p)); // blue class0, red-side... use div: + = blue
+        const classScore = score(x, y);
+        ctx.fillStyle = CAIE.div(2 * (0.5 - classScore)); // blue class 0, pink class 1
         ctx.fillRect(i / nx * w, h - (j + 1) / ny * h, w / nx + 0.5, h / ny + 0.5);
       }
       // points
@@ -461,21 +1470,32 @@ document.addEventListener("caie:ready", () => {
         ctx.strokeStyle = pal.surface; ctx.lineWidth = 1.6;
         ctx.beginPath(); ctx.arc(X(p.x), Y(p.y), 5, 0, 7); ctx.fill(); ctx.stroke();
       }
-      // training accuracy
-      let correct = 0;
-      for (const p of pts) if ((prob(p.x, p.y) > 0.5 ? 1 : 0) === p.c) correct++;
+      const accuracy = examples => examples.reduce((correct, p) =>
+        correct + (((score(p.x, p.y) >= 0.5 ? 1 : 0) === p.c) ? 1 : 0), 0
+      ) / examples.length;
+      const trainingAccuracy = accuracy(pts);
+      const validationAccuracy = accuracy(validationPts);
       document.getElementById("p-readout").innerHTML =
-        "training accuracy: <b>" + (100 * correct / pts.length).toFixed(1) + "%</b>" +
-        "<span>points: <b>" + pts.length + "</b></span><span>fit+render: <b>" + (performance.now() - t0).toFixed(0) + " ms</b></span>" +
-        "<span style='color:var(--muted)'>blue field = class ● blue; red field = class ● pink</span>";
+        "training accuracy: <b>" + (100 * trainingAccuracy).toFixed(1) + "%</b>" +
+        "<span>held-out validation accuracy: <b>" + (100 * validationAccuracy).toFixed(1) + "%</b></span>" +
+        "<span>training points: <b>" + pts.length + "</b>; fit + render: <b>" + (performance.now() - t0).toFixed(0) + " ms</b></span>" +
+        "<span style='color:var(--muted)'>background = model class score (blue class 0; pink class 1), not a guaranteed calibrated probability</span>";
+      canvas.setAttribute("aria-label", model + " decision-boundary playground on the " + dataset +
+        " dataset; training accuracy " + (100 * trainingAccuracy).toFixed(1) +
+        " percent; held-out validation accuracy " + (100 * validationAccuracy).toFixed(1) + " percent");
     }
     canvas.addEventListener("click", e => {
       const r = canvas.getBoundingClientRect();
       const x = (e.clientX - r.left) / r.width * 2 * R - R;
       const y = R - (e.clientY - r.top) / r.height * 2 * R;
-      pts.push({ x, y, c: e.shiftKey ? 1 : 0 });
-      draw();
+      addPoint(x, y, e.shiftKey ? 1 : selectedPointClass());
     });
+    if (addPointButton && addXControl && addYControl) {
+      addPointButton.addEventListener("click", () => {
+        if (!addXControl.reportValidity() || !addYControl.reportValidity()) return;
+        addPoint(Number(addXControl.value), Number(addYControl.value), selectedPointClass());
+      });
+    }
     document.getElementById("p-data").addEventListener("change", e => { dataset = e.target.value; genData(); draw(); });
     document.getElementById("p-model").addEventListener("change", e => {
       model = e.target.value;
@@ -495,7 +1515,10 @@ document.addEventListener("caie:ready", () => {
   // ================= k-means =================
   (function () {
     const canvas = document.getElementById("km-canvas");
+    const initControl = document.getElementById("km-init");
     let data = [], cents = [], assign = [], phase = "assign", seedN = 1;
+    let iteration = 0, lastPhase = "initialization", currentInertia = null, inertiaDelta = null;
+    let emptyMessage = "none", converged = false;
     const baseRand = CAIE.rng(11);
     (function gen() {
       const g = () => CAIE.gauss(baseRand);
@@ -504,45 +1527,135 @@ document.addEventListener("caie:ready", () => {
       for (let i = 0; i < 40; i++) data.push([0.1 + 0.3 * g(), -1.0 + 0.3 * g()]);
       for (let i = 0; i < 50; i++) { const t = baseRand() * 2 - 1; data.push([t * 1.8, 0.05 + 0.35 * t + 0.12 * g()]); }
     })();
+
+    const distance2 = (a, b) => (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2;
+    function initializationMethod() {
+      const value = initControl ? initControl.value.toLowerCase() : "random";
+      return value.includes("++") ? "kmeans++" : "random";
+    }
+    function randomCentroids(k, rand) {
+      const available = data.map((_, index) => index);
+      const chosen = [];
+      for (let i = 0; i < k; i++) {
+        const position = Math.floor(rand() * available.length);
+        chosen.push(data[available.splice(position, 1)[0]].slice());
+      }
+      return chosen;
+    }
+    function plusPlusCentroids(k, rand) {
+      const chosen = [data[Math.floor(rand() * data.length)].slice()];
+      while (chosen.length < k) {
+        const weights = data.map(point => Math.min(...chosen.map(center => distance2(point, center))));
+        const total = weights.reduce((sum, value) => sum + value, 0);
+        if (total <= 0) return randomCentroids(k, rand);
+        let target = rand() * total;
+        let index = weights.length - 1;
+        for (let i = 0; i < weights.length; i++) {
+          target -= weights[i];
+          if (target <= 0) { index = i; break; }
+        }
+        chosen.push(data[index].slice());
+      }
+      return chosen;
+    }
     function seed() {
       const r = CAIE.rng(100 + seedN * 13);
       const k = +document.getElementById("km-k").value;
-      cents = [];
-      for (let i = 0; i < k; i++) cents.push(data[Math.floor(r() * data.length)].slice());
+      cents = initializationMethod() === "kmeans++" ? plusPlusCentroids(k, r) : randomCentroids(k, r);
       assign = data.map(() => -1);
       phase = "assign";
+      iteration = 0;
+      lastPhase = "initialization";
+      currentInertia = null;
+      inertiaDelta = null;
+      emptyMessage = "none";
+      converged = false;
+    }
+
+    function objective() {
+      if (assign.some(cluster => cluster < 0)) return null;
+      return data.reduce((sum, point, index) => sum + distance2(point, cents[assign[index]]), 0);
+    }
+    function assignPoints() {
+      assign = data.map(point => {
+        let bestIndex = 0;
+        let bestDistance = Infinity;
+        cents.forEach((center, index) => {
+          const candidate = distance2(point, center);
+          if (candidate < bestDistance) {
+            bestDistance = candidate;
+            bestIndex = index;
+          }
+        });
+        return bestIndex;
+      });
+    }
+    function updateCentroids() {
+      const oldCentroids = cents.map(center => center.slice());
+      const emptyClusters = [];
+      let moved = 0;
+      for (let cluster = 0; cluster < cents.length; cluster++) {
+        const members = data.filter((_, index) => assign[index] === cluster);
+        if (!members.length) {
+          emptyClusters.push(cluster);
+          continue;
+        }
+        const mean = [
+          members.reduce((sum, point) => sum + point[0], 0) / members.length,
+          members.reduce((sum, point) => sum + point[1], 0) / members.length
+        ];
+        moved += Math.sqrt(distance2(mean, oldCentroids[cluster]));
+        cents[cluster] = mean;
+      }
+
+      const usedPoints = new Set();
+      emptyClusters.forEach(cluster => {
+        let farthestIndex = 0;
+        let farthestDistance = -1;
+        data.forEach((point, index) => {
+          if (usedPoints.has(index)) return;
+          const assignedCenter = oldCentroids[assign[index]];
+          const candidate = distance2(point, assignedCenter);
+          if (candidate > farthestDistance) {
+            farthestDistance = candidate;
+            farthestIndex = index;
+          }
+        });
+        usedPoints.add(farthestIndex);
+        moved += Math.sqrt(distance2(data[farthestIndex], oldCentroids[cluster]));
+        cents[cluster] = data[farthestIndex].slice();
+      });
+      return { moved, emptyClusters };
     }
     function stepOnce() {
-      const k = cents.length;
+      const before = objective();
       if (phase === "assign") {
-        assign = data.map(p => {
-          let bi = 0, bd = 1e9;
-          cents.forEach((c, i) => { const d = (p[0] - c[0]) ** 2 + (p[1] - c[1]) ** 2; if (d < bd) { bd = d; bi = i; } });
-          return bi;
-        });
+        assignPoints();
+        iteration++;
+        lastPhase = "assignment";
+        emptyMessage = "not checked until the update phase";
         phase = "update";
-        return true;
+        converged = false;
       } else {
-        let moved = 0;
-        for (let i = 0; i < k; i++) {
-          const mine = data.filter((_, j) => assign[j] === i);
-          if (!mine.length) continue;
-          const nx = mine.reduce((s, p) => s + p[0], 0) / mine.length;
-          const ny = mine.reduce((s, p) => s + p[1], 0) / mine.length;
-          moved += Math.hypot(nx - cents[i][0], ny - cents[i][1]);
-          cents[i] = [nx, ny];
+        const previousCentroids = cents.map(center => center.slice());
+        const result = updateCentroids();
+        let afterUpdate = objective();
+        if (before !== null && afterUpdate > before + 1e-8) {
+          cents = previousCentroids;
+          afterUpdate = before;
         }
+        lastPhase = "centroid update";
+        emptyMessage = result.emptyClusters.length
+          ? "reseeded cluster " + result.emptyClusters.map(index => index + 1).join(", ") + " at farthest assigned points"
+          : "none";
         phase = "assign";
-        return moved > 1e-4;
+        converged = result.moved <= 1e-5 && result.emptyClusters.length === 0;
       }
-    }
-    function inertia() {
-      let s = 0;
-      data.forEach((p, j) => {
-        const c = cents[assign[j] >= 0 ? assign[j] : 0];
-        s += (p[0] - c[0]) ** 2 + (p[1] - c[1]) ** 2;
-      });
-      return s;
+
+      const after = objective();
+      inertiaDelta = before === null || after === null ? null : Math.min(0, after - before);
+      currentInertia = after;
+      return converged;
     }
     function draw() {
       const pal = CAIE.pal();
@@ -559,19 +1672,26 @@ document.addEventListener("caie:ready", () => {
         ctx.strokeStyle = pal.ink; ctx.fillStyle = pal.s[i % 8]; ctx.lineWidth = 2;
         ctx.beginPath(); ctx.arc(X(c[0]), Y(c[1]), 9, 0, 7); ctx.fill(); ctx.stroke();
       });
+      const methodLabel = initializationMethod() === "kmeans++" ? "k-means++" : "random data points";
       document.getElementById("km-readout").innerHTML =
-        "next step: <b>" + phase + "</b><span>inertia: <b>" + (assign[0] >= 0 ? inertia().toFixed(1) : "—") + "</b></span>";
+        "iteration: <b>" + iteration + "</b>; last phase: <b>" + lastPhase + "</b>" +
+        "<span>next phase: <b>" + phase + "</b>; initialization: <b>" + methodLabel + "</b></span>" +
+        "<span>inertia: <b>" + (currentInertia === null ? "undefined before assignment" : currentInertia.toFixed(3)) +
+        "</b>; delta this phase: <b>" + (inertiaDelta === null ? "undefined" : inertiaDelta.toFixed(3)) + "</b></span>" +
+        "<span>empty-cluster handling: <b>" + emptyMessage + "</b>" + (converged ? "; fixed point reached" : "") + "</span>";
+      canvas.setAttribute("aria-label", "K-means state after " + lastPhase + ", iteration " + iteration +
+        (currentInertia === null ? ", inertia not yet defined" : ", inertia " + currentInertia.toFixed(3)));
     }
     document.getElementById("km-step").addEventListener("click", () => { stepOnce(); draw(); });
     document.getElementById("km-run").addEventListener("click", () => {
       let guard = 0;
-      while (stepOnce() && guard++ < 200) {}
-      // finish with an assign pass so colors match final centroids
-      if (phase === "assign") stepOnce();
+      let done = false;
+      while (!done && guard++ < 400) done = stepOnce();
       draw();
     });
     document.getElementById("km-seed").addEventListener("click", () => { seedN++; seed(); draw(); });
     document.getElementById("km-k").addEventListener("input", () => { document.getElementById("km-k-v").textContent = document.getElementById("km-k").value; seed(); draw(); });
+    if (initControl) initControl.addEventListener("change", () => { seedN++; seed(); draw(); });
     document.getElementById("km-k-v").textContent = "3";
     CAIE.onTheme(draw); window.addEventListener("resize", draw);
     seed(); draw();
@@ -580,35 +1700,90 @@ document.addEventListener("caie:ready", () => {
   // ================= ROC =================
   (function () {
     const cvs = document.getElementById("r-canvas"), roc = document.getElementById("r-roc");
+    const viewControl = document.getElementById("r-view");
+    const apOutput = document.getElementById("r-ap");
+    const countsOutput = document.getElementById("r-counts");
+    const countCells = {
+      tp: document.getElementById("r-count-tp"),
+      fp: document.getElementById("r-count-fp"),
+      fn: document.getElementById("r-count-fn"),
+      tn: document.getElementById("r-count-tn")
+    };
     function phi(z) { return Math.exp(-0.5 * z * z) / Math.sqrt(2 * Math.PI); }
-    function Phi(z) { // standard normal CDF (Abramowitz–Stegun)
+    function Phi(z) { // standard normal CDF (Abramowitz-Stegun approximation)
       const t = 1 / (1 + 0.2316419 * Math.abs(z));
       const d = phi(z);
       let p = d * t * (0.319381530 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))));
       return z >= 0 ? 1 - p : p;
     }
+    const tail = z => Math.max(0, Math.min(1, 1 - Phi(z)));
+    function makeCurves(sep, prevalence) {
+      const rocPoints = [[0, 0]];
+      const prPoints = [[0, 1]];
+      for (let threshold = sep + 6; threshold >= -6; threshold -= 0.02) {
+        const recall = tail(threshold - sep);
+        const fpr = tail(threshold);
+        const denominator = prevalence * recall + (1 - prevalence) * fpr;
+        rocPoints.push([fpr, recall]);
+        if (denominator > 1e-14) prPoints.push([recall, prevalence * recall / denominator]);
+      }
+      rocPoints.push([1, 1]);
+      prPoints.push([1, prevalence]);
+      let averagePrecision = 0;
+      for (let i = 1; i < prPoints.length; i++) {
+        const recallChange = Math.max(0, prPoints[i][0] - prPoints[i - 1][0]);
+        averagePrecision += recallChange * prPoints[i][1];
+      }
+      return { rocPoints, prPoints, averagePrecision };
+    }
     function draw() {
       const sep = +document.getElementById("r-sep").value;
       const thr = +document.getElementById("r-thr").value;
       const prev = +document.getElementById("r-prev").value;
+      const view = viewControl && viewControl.value === "pr" ? "pr" : "roc";
       document.getElementById("r-sep-v").textContent = sep.toFixed(2);
       document.getElementById("r-thr-v").textContent = thr.toFixed(2);
       document.getElementById("r-prev-v").textContent = (prev * 100).toFixed(0) + "%";
       const pal = CAIE.pal();
-      // distributions: neg ~ N(0,1), pos ~ N(sep+? ,1) -> center pos at sep
-      const TPR = 1 - Phi(thr - sep), FPR = 1 - Phi(thr);
+      // Score distributions: negatives ~ N(0,1), positives ~ N(separation,1).
+      const TPR = tail(thr - sep), FPR = tail(thr);
       const TP = prev * TPR, FN = prev - TP, FP = (1 - prev) * FPR, TN = (1 - prev) - FP;
       const prec = TP / Math.max(1e-9, TP + FP), rec = TPR;
       const f1 = 2 * prec * rec / Math.max(1e-9, prec + rec);
       const acc = TP + TN;
       const auc = Phi(sep / Math.SQRT2);
+      const curves = makeCurves(sep, prev);
       document.getElementById("r-prec").textContent = (100 * prec).toFixed(1) + "%";
       document.getElementById("r-rec").textContent = (100 * rec).toFixed(1) + "%";
       document.getElementById("r-f1").textContent = (100 * f1).toFixed(1) + "%";
       document.getElementById("r-acc").textContent = (100 * acc).toFixed(1) + "%";
       document.getElementById("r-auc").textContent = auc.toFixed(3);
+      if (apOutput) apOutput.textContent = curves.averagePrecision.toFixed(3);
+
+      const totalN = 10000;
+      const positiveN = Math.round(totalN * prev);
+      const negativeN = totalN - positiveN;
+      const tpN = Math.round(positiveN * TPR);
+      const fnN = positiveN - tpN;
+      const fpN = Math.round(negativeN * FPR);
+      const tnN = negativeN - fpN;
+      if (countCells.tp) countCells.tp.textContent = "TP " + tpN.toLocaleString();
+      if (countCells.fp) countCells.fp.textContent = "FP " + fpN.toLocaleString();
+      if (countCells.fn) countCells.fn.textContent = "FN " + fnN.toLocaleString();
+      if (countCells.tn) countCells.tn.textContent = "TN " + tnN.toLocaleString();
+      if (countsOutput) {
+        countsOutput.innerHTML = "Expected confusion counts sum to <b>10,000</b> cases: <b>" +
+          positiveN.toLocaleString() + " actual positives</b> and <b>" + negativeN.toLocaleString() +
+          " actual negatives</b>." +
+          "<span>TP <b>" + tpN.toLocaleString() + "</b>; FP <b>" + fpN.toLocaleString() +
+          "</b>; FN <b>" + fnN.toLocaleString() + "</b>; TN <b>" + tnN.toLocaleString() + "</b></span>" +
+          "<span>precision <b>" + (100 * prec).toFixed(1) + "%</b>; recall <b>" + (100 * rec).toFixed(1) +
+          "%</b>; F1 <b>" + (100 * f1).toFixed(1) + "%</b>; accuracy <b>" + (100 * acc).toFixed(1) +
+          "%</b>; ROC-AUC <b>" + auc.toFixed(3) + "</b>; average precision <b>" +
+          curves.averagePrecision.toFixed(3) + "</b></span>";
+      }
       // left: densities
-      const P = CAIE.plot(cvs, { w: Math.min(380, cvs.parentNode.clientWidth - 4), h: 260, xmin: -3.5, xmax: sep + 3.5, ymin: 0, ymax: 0.45, pad: { l: 34, r: 8, t: 10, b: 26 } });
+      const P = CAIE.plot(cvs, { w: Math.min(380, cvs.parentNode.clientWidth - 4), h: 260, xmin: Math.min(-3.5, thr - 0.5), xmax: Math.max(sep + 3.5, thr + 0.5), ymin: 0, ymax: 0.45, pad: { l: 34, r: 8, t: 10, b: 26 } });
       P.clear(); P.axes("score", "", { yfmt: v => v.toFixed(1), xfmt: v => v.toFixed(0) });
       P.fn(x => phi(x), pal.muted, 2);
       P.fn(x => phi(x - sep), pal.s[0], 2.5);
@@ -619,16 +1794,30 @@ document.addEventListener("caie:ready", () => {
       P.label(thr + 0.08, 0.42, "threshold", pal.s[5]);
       P.label(-2.9, 0.40, "negatives", pal.muted);
       P.label(sep + 1.2, 0.40, "positives", pal.s[0]);
-      // right: ROC
+
+      // right: switchable ROC or precision-recall view
       const Q = CAIE.plot(roc, { w: Math.min(240, roc.parentNode.clientWidth - 4), h: 260, xmin: 0, xmax: 1, ymin: 0, ymax: 1, pad: { l: 34, r: 8, t: 10, b: 26 } });
-      Q.clear(); Q.axes("FPR", "TPR", { xticks: 2, yticks: 2, yfmt: v => v.toFixed(1), xfmt: v => v.toFixed(1) });
-      Q.line([[0, 0], [1, 1]], pal.grid, 1.5);
-      const pts = [];
-      for (let t = -5; t <= sep + 5; t += 0.05) pts.push([1 - Phi(t), 1 - Phi(t - sep)]);
-      Q.line(pts, pal.s[0], 2.5);
-      Q.dot(FPR, TPR, 6, pal.s[5], true);
+      Q.clear();
+      if (view === "pr") {
+        Q.axes("recall", "precision", { xticks: 2, yticks: 2, yfmt: v => v.toFixed(1), xfmt: v => v.toFixed(1) });
+        Q.line([[0, prev], [1, prev]], pal.grid, 1.5);
+        Q.line(curves.prPoints, pal.s[0], 2.5);
+        Q.dot(rec, prec, 6, pal.s[5], true);
+        Q.label(0.06, Math.min(0.96, prev + 0.05), "baseline = prevalence", pal.muted);
+        roc.setAttribute("aria-label", "Precision-recall curve; no-skill precision baseline " + (100 * prev).toFixed(1) +
+          " percent; current recall " + (100 * rec).toFixed(1) + " percent and precision " + (100 * prec).toFixed(1) + " percent");
+      } else {
+        Q.axes("FPR", "TPR", { xticks: 2, yticks: 2, yfmt: v => v.toFixed(1), xfmt: v => v.toFixed(1) });
+        Q.line([[0, 0], [1, 1]], pal.grid, 1.5);
+        Q.line(curves.rocPoints, pal.s[0], 2.5);
+        Q.dot(FPR, TPR, 6, pal.s[5], true);
+        roc.setAttribute("aria-label", "ROC curve; ROC AUC " + auc.toFixed(3) + "; current false-positive rate " +
+          (100 * FPR).toFixed(1) + " percent and true-positive rate " + (100 * TPR).toFixed(1) + " percent");
+      }
+      cvs.setAttribute("aria-label", "Negative and positive score distributions with decision threshold " + thr.toFixed(2));
     }
     ["r-sep", "r-thr", "r-prev"].forEach(id => document.getElementById(id).addEventListener("input", draw));
+    if (viewControl) viewControl.addEventListener("change", draw);
     CAIE.onTheme(draw); window.addEventListener("resize", draw);
     draw();
   })();
@@ -639,11 +1828,12 @@ document.addEventListener("caie:ready", () => {
     let seedNum = 3;
     const truth = x => Math.sin(2.2 * x) + 0.4 * x;
     function makeData() {
-      const r = CAIE.rng(seedNum);
-      const tr = [], te = [];
-      for (let i = 0; i < 30; i++) { const x = -2 + 4 * r(); tr.push([x, truth(x) + 0.35 * CAIE.gauss(r)]); }
-      for (let i = 0; i < 200; i++) { const x = -2 + 4 * r(); te.push([x, truth(x) + 0.35 * CAIE.gauss(r)]); }
-      return { tr, te };
+      const trainingRand = CAIE.rng(seedNum);
+      const validationRand = CAIE.rng(30003);
+      const tr = [], va = [];
+      for (let i = 0; i < 30; i++) { const x = -2 + 4 * trainingRand(); tr.push([x, truth(x) + 0.35 * CAIE.gauss(trainingRand)]); }
+      for (let i = 0; i < 200; i++) { const x = -2 + 4 * validationRand(); va.push([x, truth(x) + 0.35 * CAIE.gauss(validationRand)]); }
+      return { tr, va };
     }
     function polyfit(data, deg) {
       // normal equations with ridge eps for stability; features x^0..x^deg (x scaled /2)
@@ -680,7 +1870,7 @@ document.addEventListener("caie:ready", () => {
     function draw() {
       const deg = +document.getElementById("bv-deg").value;
       document.getElementById("bv-deg-v").textContent = deg;
-      const { tr, te } = makeData();
+      const { tr, va } = makeData();
       const pal = CAIE.pal();
       const f = polyfit(tr, deg);
       const P = CAIE.plot(fitC, { w: Math.min(380, fitC.parentNode.clientWidth - 4), h: 260, xmin: -2.1, xmax: 2.1, ymin: -2.6, ymax: 2.6, pad: { l: 30, r: 8, t: 10, b: 26 } });
@@ -688,20 +1878,30 @@ document.addEventListener("caie:ready", () => {
       P.fn(truth, pal.grid, 2);
       P.fn(x => Math.max(-3, Math.min(3, f(x))), pal.s[0], 2.5);
       for (const [x, y] of tr) P.dot(x, y, 3.5, pal.s[2]);
+      fitC.setAttribute("aria-label", "Polynomial fit for degree " + deg +
+        "; thirty training observations, the underlying signal, and the fitted curve");
       // error curve across degrees
-      const degs = [], trE = [], teE = [];
+      const degs = [], trE = [], vaE = [];
       for (let d = 0; d <= 15; d++) {
         const fd = polyfit(tr, d);
-        degs.push(d); trE.push(mse(fd, tr)); teE.push(mse(fd, te));
+        degs.push(d); trE.push(mse(fd, tr)); vaE.push(mse(fd, va));
       }
-      const ymax2 = Math.min(2, Math.max(...teE) * 1.1);
-      const Q = CAIE.plot(errC, { w: Math.min(240, errC.parentNode.clientWidth - 4), h: 260, xmin: 0, xmax: 15, ymin: 0, ymax: ymax2, pad: { l: 34, r: 8, t: 10, b: 26 } });
-      Q.clear(); Q.axes("degree", "MSE", { xticks: 5, xfmt: v => Math.round(v), yfmt: v => v.toFixed(1) });
-      Q.line(degs.map((d, i) => [d, Math.min(trE[i], ymax2)]), pal.s[1], 2);
-      Q.line(degs.map((d, i) => [d, Math.min(teE[i], ymax2)]), pal.s[5], 2.5);
-      Q.dot(deg, Math.min(teE[deg], ymax2), 5, pal.s[5], true);
-      Q.label(7, ymax2 * 0.92, "test", pal.s[5]);
-      Q.label(7, ymax2 * 0.78, "train", pal.s[1]);
+      const logError = value => Math.log10(Math.max(1e-6, value));
+      const loggedErrors = trE.concat(vaE).map(logError);
+      const minLogError = Math.min(...loggedErrors);
+      const maxLogError = Math.max(...loggedErrors);
+      const logPadding = Math.max(0.2, (maxLogError - minLogError) * 0.08);
+      const ymin2 = minLogError - logPadding;
+      const ymax2 = maxLogError + logPadding;
+      const Q = CAIE.plot(errC, { w: Math.min(240, errC.parentNode.clientWidth - 4), h: 260, xmin: 0, xmax: 15, ymin: ymin2, ymax: ymax2, pad: { l: 42, r: 8, t: 10, b: 26 } });
+      Q.clear(); Q.axes("degree", "log10 MSE", { xticks: 5, xfmt: v => Math.round(v), yfmt: v => v.toFixed(1) });
+      Q.line(degs.map((d, i) => [d, logError(trE[i])]), pal.s[1], 2);
+      Q.line(degs.map((d, i) => [d, logError(vaE[i])]), pal.s[5], 2.5);
+      Q.dot(deg, logError(vaE[deg]), 5, pal.s[5], true);
+      Q.label(7, ymax2 - (ymax2 - ymin2) * 0.08, "validation", pal.s[5]);
+      Q.label(7, ymax2 - (ymax2 - ymin2) * 0.20, "train", pal.s[1]);
+      errC.setAttribute("aria-label", "Log-scale validation curve across polynomial degree; selected degree " + deg +
+        ", training MSE " + trE[deg].toFixed(3) + ", validation MSE " + vaE[deg].toFixed(3));
     }
     document.getElementById("bv-deg").addEventListener("input", draw);
     document.getElementById("bv-resample").addEventListener("click", () => { seedNum++; draw(); });
