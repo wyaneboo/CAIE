@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Topic 6 — Data Engineering Fundamentals · CAIE Course</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>◈</text></svg>">
 <link rel="stylesheet" href="../assets/course.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
@@ -24,9 +25,9 @@
 <div class="kicker">Level I · Topic 6 · Exam weight 8%</div>
 <h1>Data Engineering Fundamentals</h1>
 <p class="lead">
-  Models are downstream of data, and in industry the data work is 60–80% of the job. This topic is
-  small in exam weight but enormous in career weight: the engineer who can't reason about where the
-  data lives, how it moves, and why training and serving see different values will lose weeks to
+  Models are downstream of data, so seemingly small storage and timing decisions can dominate their
+  reliability. This topic is small in exam weight but enormous in career weight: the engineer who cannot reason about where the
+  data lives, how it moves, and why training and serving see different values can lose weeks to
   bugs that were never in the model.
 </p>
 
@@ -40,190 +41,812 @@
   </ul>
 </div>
 
-<h2>6.1 How data is shaped and stored</h2>
+<p class="kicker">Orientation — follow one record from source to model</p>
 <p>
-  <strong>Structured</strong> data has a fixed schema (database tables).
-  <strong>Semi-structured</strong> carries its schema with each record (JSON, XML) — flexible,
-  verbose, slow to scan. <strong>Unstructured</strong> is everything else: text, images, audio —
-  the raw feedstock of deep learning. The formats you must be able to compare:
+  Data engineering is the design of a trustworthy path from an event in the world to a value a
+  person, dashboard, or model can use. Imagine a card payment: an application emits an event, a
+  transport carries it, storage keeps it, transformations validate and combine it, and a training
+  or serving system reads the result. At every boundary ask four questions: <em>what does one row
+  mean, when did this fact become knowable, which version of the schema applies, and can the work be
+  repeated safely?</em>
 </p>
 <div class="tablewrap">
 <table>
-  <tr><th>Format</th><th>Layout</th><th>Best at</th><th>Notes</th></tr>
-  <tr><td><strong>JSON / CSV</strong></td><td>row, text</td><td>interchange, debugging by eye</td><td>no types (CSV), no compression, parse cost per read; fine for small, terrible for big</td></tr>
-  <tr><td><strong>Avro</strong></td><td>row, binary</td><td>streaming pipelines, Kafka messages</td><td>schema travels with data; good for write-heavy, record-at-a-time</td></tr>
-  <tr><td><strong>Parquet</strong></td><td><em>columnar</em>, binary</td><td>analytics &amp; ML training reads</td><td>reads only needed columns; heavy compression per column; the default for data science</td></tr>
-  <tr><td><strong>ORC</strong></td><td>columnar, binary</td><td>Hive/warehouse workloads</td><td>Parquet's sibling from the Hadoop lineage; indexes and stats built in</td></tr>
+  <thead><tr><th scope="col">Term</th><th scope="col">Plain-language meaning</th><th scope="col">Why it matters</th></tr></thead>
+  <tbody>
+  <tr><td><strong>record / row</strong></td><td>One observation at a declared grain, such as one payment attempt.</td><td>An unclear grain makes joins and counts silently wrong.</td></tr>
+  <tr><td><strong>field / column</strong></td><td>One named attribute of every record, with a type and meaning.</td><td>Names and types alone do not capture units or semantics.</td></tr>
+  <tr><td><strong>schema</strong></td><td>The contract for names, types, nullability, and often constraints.</td><td>It lets producers and consumers detect incompatible change.</td></tr>
+  <tr><td><strong>partition</strong></td><td>A coarse physical subdivision, often by date or region.</td><td>Good filters can skip whole partitions before reading files.</td></tr>
+  <tr><td><strong>event</strong></td><td>An immutable statement that something happened.</td><td>Its occurrence time can differ from when the pipeline sees it.</td></tr>
+  <tr><td><strong>pipeline</strong></td><td>A reproducible sequence of reads, checks, transforms, and writes.</td><td>Retries and backfills must not corrupt its outputs.</td></tr>
+  <tr><td><strong>batch / stream</strong></td><td>A bounded collection versus a continuing sequence of events.</td><td>The distinction changes latency, state, and failure handling.</td></tr>
+  <tr><td><strong>lineage</strong></td><td>The recorded ancestry from an output back to sources and code versions.</td><td>It narrows the search when a number is wrong.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p class="kicker">A pipeline is a chain of contracts, not a collection of tools</p>
+<p>
+  A useful mental model is <strong>source → transport → storage → transform → quality gate →
+  consumer</strong>. Each arrow is an interface. Tools can change while the engineering questions
+  remain: latency, throughput, cost, correctness, recoverability, security, and ownership. “Real
+  time” is therefore not automatically better; it is one point in a design space.
+</p>
+<div class="box note">
+  <div class="box-title">Start with two declarations</div>
+  <p><strong>Grain:</strong> what real-world unit does one output row represent? <strong>Knowledge
+  boundary:</strong> what information was genuinely available at the time the output would have
+  been produced? These two declarations help prevent many join bugs and temporal leakage.</p>
+</div>
+
+<h2>6.1 How data is shaped and stored</h2>
+<h3>Purpose — choose a representation that matches how data is read</h3>
+<p>
+  <strong>Structured</strong> data follows an explicit tabular or relational schema.
+  <strong>Semi-structured</strong> data has recognizable fields but permits variation between
+  records, as JSON often does. <strong>Unstructured</strong> data—images, audio, free text, video—does
+  not naturally fit a fixed table, although its metadata usually does. These are descriptions of
+  logical organization, not permanent properties: JSON can be strictly validated, and text can be
+  converted into structured features.
+</p>
+<div class="box example">
+  <div class="box-title">Worked classification</div>
+  <p>A payment table with fixed columns is structured. An API response whose optional nested fields
+  vary is semi-structured. A receipt photograph is unstructured, while its capture time, merchant,
+  and storage URI form a structured metadata row. Real systems commonly carry all three together.</p>
+</div>
+
+<h3>Format comparison — separate logical schema from physical layout</h3>
+<div class="tablewrap">
+<table>
+  <thead><tr><th scope="col">Format</th><th scope="col">Physical style</th><th scope="col">Strong fit</th><th scope="col">Trade-offs to remember</th></tr></thead>
+  <tbody>
+  <tr><td><strong>CSV</strong></td><td>row-oriented text</td><td>small, flat interchange and manual inspection</td><td>types, null conventions, quoting, and encoding live outside the file unless separately contracted; compression is optional</td></tr>
+  <tr><td><strong>JSON</strong></td><td>record-oriented text</td><td>APIs, nested messages, debugging</td><td>self-describing field names add bytes; flexible shape and repeated parsing can make large analytical scans expensive</td></tr>
+  <tr><td><strong>Avro</strong></td><td>row-oriented binary</td><td>record-at-a-time exchange, logs, schema evolution</td><td>a writer schema accompanies a container or is resolved through a registry; readers still need a compatible schema</td></tr>
+  <tr><td><strong>Parquet</strong></td><td>columnar binary</td><td>analytical scans and ML training tables</td><td>projection, statistics, and column-wise encoding reduce reads; tiny files and point updates are awkward</td></tr>
+  <tr><td><strong>ORC</strong></td><td>columnar binary</td><td>analytical engines, especially in the Hive ecosystem</td><td>offers stripes, indexes, encodings, and statistics; engine interoperability should be tested for the actual stack</td></tr>
+  </tbody>
 </table>
 </div>
 <p>
-  The row-vs-column decision is a physics-of-data question: disks and memory reward
-  <em>sequential</em> access (Topic 3's hierarchy). Analytics queries touch <em>few columns of many
-  rows</em>; columnar layout makes those bytes contiguous. Transactional lookups touch <em>all
-  columns of one row</em>; row layout wins there.
+  A format does not guarantee performance on its own. File size, compression codec, row-group
+  statistics, partition design, engine support, and the query all matter. Use text formats at
+  boundaries where inspectability and interoperability dominate; use typed binary formats when
+  repeated scale makes parsing and scanning material.
 </p>
 
+<h3>Row versus column layout — count the bytes the query must touch</h3>
+<p>
+  Storage and memory reward contiguous reads. A transactional lookup commonly needs most fields of
+  one record, so keeping a row together is useful. An analytical query commonly needs a few fields
+  from many records, so keeping each column together enables <strong>projection</strong>: reading only
+  the requested columns. A simplified columnar scan estimate is
+  \(B_{scan}=N\,W_{selected}\,f_{partition}\,f_{groups}\,r_{compression}\).
+  Metadata, indexes, caching, and engine overhead are omitted, so treat it as a comparison model,
+  not a bill forecast.
+</p>
 <div class="widget">
   <div class="widget-head">
-    <div class="wtitle">Interactive — row store vs column store, bytes actually scanned</div>
-    <div class="wsub">Same 1M-row table (5 columns), two physical layouts. Pick a query and see which blocks each layout must read.</div>
+    <div class="wtitle">Guided calculation — row store versus column store</div>
+    <div class="wsub">Edit the table, projection, partition pruning, row-group pruning, and compression assumptions.</div>
   </div>
   <div class="widget-body">
     <div class="controls">
-      <label>query
-        <select id="s-q">
-          <option value="agg" selected>SELECT AVG(amount) — one column, all rows</option>
-          <option value="point">SELECT * WHERE id = 812345 — one row, all columns</option>
-          <option value="two">SELECT region, SUM(amount) GROUP BY region — two columns</option>
+      <label for="s-preset">query pattern
+        <select id="s-preset">
+          <option value="analytic" selected>analytical projection</option>
+          <option value="all">all columns</option>
+          <option value="point">indexed point lookup</option>
         </select>
       </label>
+      <label for="s-rows">rows <input id="s-rows" type="number" min="1" step="1" value="1000000" inputmode="numeric"></label>
+      <label for="s-widths">column widths, bytes <input id="s-widths" type="text" value="8,24,12,8,8" spellcheck="false"></label>
+      <label for="s-selected">selected columns, 1-based <input id="s-selected" type="text" value="3,4" spellcheck="false"></label>
+      <label for="s-partition">partitions kept <input id="s-partition" type="number" min="0" max="1" step="0.05" value="0.25"></label>
+      <label for="s-pruning">row groups kept <input id="s-pruning" type="number" min="0" max="1" step="0.05" value="0.5"></label>
+      <label for="s-compression">physical ÷ logical bytes <input id="s-compression" type="number" min="0.01" max="1" step="0.05" value="0.4"></label>
     </div>
-    <canvas id="s-canvas" width="640" height="260"></canvas>
-    <div class="readout" id="s-readout"></div>
+    <canvas id="s-canvas" width="640" height="300" role="img" tabindex="0" aria-label="Comparison of estimated bytes read by row-oriented and columnar layouts">Your browser does not support the scan comparison canvas. The numerical result follows.</canvas>
+    <div class="readout" id="s-readout" aria-live="polite">Enter valid positive widths to calculate the scan.</div>
     <p class="wcaption">
-      Columnar wins the analytics queries by ~5× here (and by 50–100× in practice, because each
-      column also compresses far better when stored together). The point lookup is the row store's
-      home game — which is why OLTP databases (Postgres) are row-oriented and OLAP warehouses
-      (BigQuery, Snowflake) are columnar. One layout cannot win both.
+      The factors are deliberately editable. A real engine may use indexes, caches, metadata reads,
+      different compression by column, or additional filtering. The honest claim is directional:
+      column projection can remove unneeded bytes; it does not promise a fixed speed-up.
     </p>
   </div>
 </div>
 
+<h3>Inside a columnar file — row groups make pruning possible</h3>
+<p>
+  Parquet divides rows horizontally into <strong>row groups</strong>. Within each group, values from
+  one column form a <strong>column chunk</strong>, which is divided into pages. Encodings such as
+  dictionaries and run-length encoding exploit repeated values; a compression codec then reduces
+  the encoded bytes. A Parquet file footer records its schema and structural metadata; the schema is
+  not repeated inside every record. File and page metadata can store statistics such as minimum, maximum, and null
+  count. If a filter asks for <code>event_date = '2026-08-18'</code> and a row group's range cannot
+  match, the engine can skip that group. This is often called predicate or filter pushdown, though
+  exact pruning support depends on the format, writer, engine, and expression.
+</p>
+<div class="box example">
+  <div class="box-title">Worked scan estimate</div>
+  <p>One million rows have widths 8, 24, 12, 8, and 8 bytes: 60 MB logical. A query selects columns
+  3 and 4, keeps 25% of date partitions and 50% of row groups, and the physical-to-logical ratio is
+  0.4. The simplified columnar estimate is
+  \(10^6(12+8)(0.25)(0.50)(0.40)=1.0\) MB. The result assumes the selected partitions and groups
+  contain that fraction of rows and ignores metadata and minimum I/O units.</p>
+</div>
+
+<h3>Partitioning and the small-file problem</h3>
+<p>
+  Dataset partitions are usually directory or table subdivisions that a catalog can prune before
+  opening files. Choose keys that appear in common filters and produce reasonably balanced groups;
+  date is often useful, while a unique customer identifier often creates far too many partitions.
+  Over-partitioning and frequent tiny writes create the <strong>small-file problem</strong>: listing,
+  opening, scheduling, and metadata work can dominate the useful scan. Periodic compaction combines
+  small files, but it consumes compute and must preserve transactional correctness.
+</p>
+<pre><code>WRITE_BATCH(batch):
+  validate batch against the declared schema
+  derive a bounded partition key, such as event_date
+  write to a temporary or transactionally isolated location
+  publish metadata only after all files are durable
+
+COMPACT(partition):
+  read the current snapshot of many small files
+  write fewer target-sized files with useful row-group statistics
+  atomically replace the snapshot; retain old files until safe cleanup</code></pre>
+<div class="box warn">
+  <div class="box-title">Failure mode — partition by every filterable field</div>
+  <p>High-cardinality or badly skewed keys produce empty directories, tiny files, and hotspots.
+  Partition coarsely, then rely on clustering, sorting, row-group statistics, or indexes for finer
+  skipping where the chosen engine supports them.</p>
+</div>
+
+<h3>Storage decision guide</h3>
+<div class="tablewrap">
+<table>
+  <thead><tr><th scope="col">If the dominant operation is…</th><th scope="col">Start by considering…</th><th scope="col">Verify before committing</th></tr></thead>
+  <tbody>
+  <tr><td>single-record create/update and keyed lookup</td><td>a transactional row-oriented database</td><td>indexes, write rate, transaction and consistency needs</td></tr>
+  <tr><td>large projections, aggregates, and model-training scans</td><td>Parquet/ORC or a columnar warehouse</td><td>partition pruning, file sizes, engine compatibility, update pattern</td></tr>
+  <tr><td>typed event exchange</td><td>Avro or another schema-aware message format</td><td>schema-registry rules, reader/writer compatibility, message size</td></tr>
+  <tr><td>small public or human-inspected interchange</td><td>CSV or JSON with an explicit contract</td><td>types, missing-value convention, encoding, escaping, nesting</td></tr>
+  </tbody>
+</table>
+</div>
+<div class="box bridge">
+  <div class="box-title">Physics bridge — locality still rules</div>
+  <p>Topic 3's memory hierarchy explains the layout choice: sequential useful bytes amortize storage
+  and network latency. Columnar layout improves locality for a projected analytical scan; row layout
+  improves locality for reconstructing a complete record. Neither is universally faster.</p>
+</div>
+
 <h2>6.2 Moving data — ETL, ELT, batch, streaming</h2>
+<h3>Purpose — move facts without losing their meaning or recoverability</h3>
 <p>
-  <strong>ETL</strong> (extract → transform → load): clean and reshape <em>before</em> loading into
-  the destination — the classic pattern when warehouse compute was scarce.
-  <strong>ELT</strong>: land raw data first, transform inside the warehouse with SQL (dbt is the
-  emblematic tool) — today's default, because storage is cheap, warehouse compute is elastic, and
-  keeping the raw data means you can re-derive anything when (not if) the transform logic changes.
+  Every pipeline <strong>extracts</strong> from a source, <strong>transforms</strong> values or shape, and
+  <strong>loads</strong> a destination. <strong>ETL</strong> performs important transforms before loading
+  the target system. <strong>ELT</strong> first lands source-shaped data in the target platform, then
+  transforms it there. This is a question of transform placement, not a guarantee of privacy,
+  cleanliness, or governance. Both patterns require access control, validation, lineage, and a
+  recoverable source or landing zone.
+</p>
+<div class="tablewrap">
+<table>
+  <thead><tr><th scope="col">Pattern</th><th scope="col">Useful when</th><th scope="col">Watch for</th></tr></thead>
+  <tbody>
+  <tr><td><strong>ETL</strong></td><td>the target cannot accept source shape; sensitive fields must be removed before that boundary; specialized transforms run elsewhere</td><td>an early transform can discard evidence needed for reprocessing; compute and orchestration live outside the target</td></tr>
+  <tr><td><strong>ELT</strong></td><td>the analytical platform can transform efficiently and governed raw history is valuable</td><td>landing raw data expands the security boundary; uncontrolled copies and rising warehouse cost</td></tr>
+  </tbody>
+</table>
+</div>
+<pre><code>PIPELINE(run_interval):
+  source_snapshot = extract(run_interval, reproducible_cursor)
+  assert source_snapshot matches the producer contract
+  land immutable input with run_id and code_version
+  transform from declared inputs only
+  validate output grain, keys, ranges, freshness, and volume
+  publish output atomically; record lineage and quality results</code></pre>
+<p class="muted">This pattern supports replay because it records the input boundary, code version,
+and publication decision. “Immutable” here means append or version rather than overwrite without a
+trace; retention policy still applies.</p>
+
+<h3>Batch, micro-batch, and streaming — choose from a latency requirement</h3>
+<p>
+  A <strong>batch</strong> job processes a bounded dataset on demand or a schedule. A
+  <strong>micro-batch</strong> engine repeatedly processes small bounded intervals. A
+  <strong>streaming</strong> engine treats input as unbounded and maintains state while events arrive;
+  an implementation may still execute internally in micro-batches. The product's tolerated data
+  age—not fashion—should set the architecture.
+</p>
+<div class="tablewrap">
+<table>
+  <thead><tr><th scope="col">Mode</th><th scope="col">Typical strength</th><th scope="col">Engineering burden</th><th scope="col">Good starting question</th></tr></thead>
+  <tbody>
+  <tr><td>batch</td><td>simple replay, high throughput, complete bounded inputs</td><td>freshness limited by schedule and duration</td><td>Would an hourly or daily answer change the decision?</td></tr>
+  <tr><td>micro-batch</td><td>seconds-to-minutes freshness with bounded execution units</td><td>overlapping runs, checkpointing, small outputs</td><td>Can the product tolerate interval-sized delay?</td></tr>
+  <tr><td>streaming</td><td>continuous low-latency state updates</td><td>ordering, late data, state growth, recovery, sink semantics</td><td>What measurable harm occurs if the answer is five minutes old?</td></tr>
+  </tbody>
+</table>
+</div>
+<div class="box example">
+  <div class="box-title">Worked choice</div>
+  <p>A monthly risk report gains little from streaming; a replayable daily batch is easier to audit.
+  A card authorization may need features in tens of milliseconds, so an event stream and online
+  state can be justified. The same company can—and usually should—use different modes for different
+  latency contracts.</p>
+  <p>If events arrive at 120 per second, a processor handles 100 per second, and the mismatch lasts
+  300 seconds, the backlog grows by
+  \(\max(0,120-100)\times300=6{,}000\) events. This assumes constant rates and no parallel capacity;
+  after input slows, spare capacity must drain the queue.</p>
+</div>
+
+<h3>Time in a stream — event, arrival, processing, and availability</h3>
+<p>
+  <strong>Event time</strong> is when the real-world action occurred. <strong>Arrival</strong> or
+  ingestion time is when the platform received it. <strong>Processing time</strong> is when a worker
+  handled it. <strong>Availability time</strong> is when a value became usable by a particular
+  consumer after upstream delay and publication. Networks, offline devices, and retries make these
+  clocks differ.
 </p>
 <p>
-  <strong>Batch</strong> processes accumulated data on a schedule (hourly/daily) — simple,
-  reprocessable, high-latency. <strong>Streaming</strong> processes events seconds after they occur
-  (Kafka for transport, Flink/Spark Streaming for compute) — low-latency, but you inherit hard
-  problems: out-of-order events, exactly-once semantics, windowing. The professional rule: batch
-  unless the product genuinely needs freshness (fraud scoring, live recommendations), because
-  streaming's operational cost is 3–10× batch. Many real systems run a hybrid (a streaming path for
-  the last hour, batch for history).
+  A time window such as [90, 100) groups events by event time. The engine cannot wait forever for
+  delayed records, so it advances a <strong>watermark</strong>: a statement that it does not expect
+  much more data earlier than some event time. In this chapter's simplified policy,
+  \(W=t_{\mathrm{max\ observed}}-L\), where \(L\) is allowed lateness. It is a heuristic progress
+  boundary, not proof that no earlier event can arrive.
 </p>
+<div class="box example">
+  <div class="box-title">Worked clock example</div>
+  <p>If the maximum observed event time is 12:10 and allowed lateness is five minutes, the simplified
+  watermark is 12:05. An event stamped 12:03 that arrives afterward is late relative to that
+  watermark; whether it is dropped, counted separately, or used to revise output is a policy choice.</p>
+</div>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Guided calculation — watermark and a late event</div>
+    <div class="wsub">All editable values share one abstract timeline unit. Decide whether an arriving event is on time under the simplified watermark rule.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label for="wm-event-time">event time, units <input id="wm-event-time" type="number" step="1" value="92"></label>
+      <label for="wm-max-event-time">maximum event time observed, units <input id="wm-max-event-time" type="number" step="1" value="105"></label>
+      <label for="wm-lateness">allowed lateness, units <input id="wm-lateness" type="number" min="0" step="1" value="10"></label>
+      <label for="wm-arrival-time">arrival time, units <input id="wm-arrival-time" type="number" step="1" value="110"></label>
+      <label for="wm-window-end">window end, units <input id="wm-window-end" type="number" step="1" value="100"></label>
+    </div>
+    <div class="readout" id="wm-readout" aria-live="polite">
+      <span>watermark <strong id="wm-watermark">95</strong></span>
+      <span id="wm-status">Event time 92 is behind watermark 95; apply the declared late-data policy.</span>
+    </div>
+    <p class="wcaption">Arrival time explains operational latency but the window membership is based
+    on event time here. Systems define watermark and trigger behavior differently; consult the
+    engine's semantics before translating this example directly.</p>
+  </div>
+</div>
 <p>
-  <strong>Where it all lives.</strong> A <strong>data warehouse</strong> stores curated, schema-enforced
-  tables optimized for SQL analytics. A <strong>data lake</strong> is cheap object storage (S3/GCS)
-  holding files of anything — flexible, and one governance lapse away from a "data swamp." The
-  <strong>lakehouse</strong> (Delta Lake, Iceberg, Hudi) adds warehouse discipline — ACID
-  transactions, schema enforcement, time travel — as a metadata layer over lake files, and is where
-  the industry has converged for ML workloads.
+  A late-data policy can (1) drop and count the record, (2) send it to a side output for repair, or
+  (3) update/retract a previously emitted result if downstream consumers can accept revisions. A
+  watermark without an explicit policy merely hides the decision.
 </p>
 
-<h2>6.3 SQL — the one language every AI engineer actually uses daily</h2>
+<h3>Delivery semantics, idempotency, and replay</h3>
 <p>
-  SQL is declarative: you state <em>what</em> you want; the engine plans <em>how</em>. The mental
-  model that unlocks everything is the <strong>logical evaluation order</strong> — which is not the
-  order you write:
-  <code>FROM/JOIN → WHERE → GROUP BY → HAVING → SELECT → ORDER BY → LIMIT</code>.
-  That's why you can't use a SELECT alias inside WHERE, and why HAVING exists at all (it filters
-  <em>after</em> aggregation, WHERE filters before).
+  <strong>At-most-once</strong> processing may lose work but avoids redelivery. <strong>At-least-once</strong>
+  retries after uncertainty, so duplicates are possible. <strong>Exactly-once</strong> must be
+  interpreted with a stated scope: some engines guarantee one state transition inside their managed boundary, but an
+  end-to-end exactly-once effect additionally needs replayable sources and transactional or
+  idempotent sinks. A message broker alone cannot guarantee the final external side effect.
+</p>
+<pre><code>HANDLE(event):
+  require stable event.id
+  begin sink transaction
+  if processed_ids contains event.id:
+      commit without repeating the effect
+      return
+  upsert output using deterministic key and event version
+  record event.id as processed in the same transaction
+  commit
+
+REPLAY(from_checkpoint):
+  read the immutable log from the recorded offset
+  run the versioned transform deterministically where practical
+  write through the same idempotent publication path</code></pre>
+<div class="box warn">
+  <div class="box-title">Failure modes</div>
+  <p>An idempotency key that changes on retry does not deduplicate. Recording “processed” separately
+  from the business write creates a crash gap. External emails, payments, or APIs may need their own
+  idempotency contract. Non-deterministic transforms must persist the randomness, model version, or
+  resolved output needed for reproducible replay.</p>
+</div>
+
+<h3>Warehouse, lake, and lakehouse — overlapping capability bundles</h3>
+<p>
+  A <strong>warehouse</strong> usually presents managed tables, SQL optimization, governance, and
+  transactional behavior. A <strong>lake</strong> usually stores open files in object storage and
+  separates storage from many possible compute engines. A <strong>lakehouse</strong> adds table
+  metadata and protocols—commonly transactions, snapshots, schema controls, and time travel—over
+  lake files. Modern products overlap, so these labels describe capability bundles rather than
+  strict physical laws.
+</p>
+<div class="tablewrap">
+<table>
+  <thead><tr><th scope="col">Need</th><th scope="col">Often favors</th><th scope="col">Questions that decide</th></tr></thead>
+  <tbody>
+  <tr><td>governed BI with predictable SQL experience</td><td>managed warehouse</td><td>concurrency, workload isolation, security model, data sharing, cost controls</td></tr>
+  <tr><td>open-format storage for varied engines and large raw assets</td><td>lake</td><td>catalog ownership, file hygiene, transaction needs, retention, governance enforcement</td></tr>
+  <tr><td>open files plus table-level snapshots and updates</td><td>lakehouse table format</td><td>engine support, concurrency protocol, compaction, metadata scaling, operational maturity</td></tr>
+  </tbody>
+</table>
+</div>
+<p><strong>When to use what:</strong> begin with workload and organizational constraints, not the
+category name. A small team may benefit more from one managed platform than from operating a broad
+hybrid. A regulated multi-engine estate may value open formats and explicit control enough to accept
+the extra operations.</p>
+
+<h2>6.3 SQL — the one language every AI engineer actually uses daily</h2>
+<h3>Purpose — declare the result while protecting its grain</h3>
+<p>
+  SQL is declarative: state the result and let the optimizer choose a physical plan. Before writing
+  a clause, declare the <strong>grain</strong>: what one input row and one output row represent. A table
+  at one row per order cannot be joined casually to a table at one row per order item; the latter
+  multiplies each order. Keys and cardinalities are part of correctness, not merely performance.
+</p>
+<div class="box example">
+  <div class="box-title">Grain card</div>
+  <p><strong>Question:</strong> total paid amount per customer per calendar month.<br>
+  <strong>Source grain:</strong> one row per payment attempt.<br>
+  <strong>Filter:</strong> successful attempts only.<br>
+  <strong>Output grain:</strong> one row per customer-month.<br>
+  <strong>Uniqueness expectation:</strong> <code>(customer_id, month)</code> is unique.</p>
+</div>
+<p>
+  A fuller simplified logical order is
+  <code>FROM/JOIN → WHERE → GROUP BY → aggregate → HAVING → window expressions → QUALIFY → SELECT → DISTINCT → ORDER BY → LIMIT</code>.
+  <code>QUALIFY</code> is dialect-specific; without it, filter window results in an outer query.
+  Alias visibility also varies by dialect, so do not assume a <code>SELECT</code> alias is legal in
+  earlier clauses. Optimizers may rewrite physical execution while preserving allowed semantics.
+  The logical model still explains why <code>WHERE</code> filters rows before aggregates exist and
+  <code>HAVING</code> filters groups after aggregation.
+</p>
+
+<h3>NULL, ordering, and aggregation — three sources of plausible wrong answers</h3>
+<p>
+  <code>NULL</code> means missing or unknown, not zero or an empty string. Comparisons with NULL
+  produce <em>unknown</em>, the third value in SQL's three-valued logic; a <code>WHERE</code> clause
+  keeps only true. Use <code>IS NULL</code>, not <code>= NULL</code>. <code>COUNT(*)</code> counts rows,
+  while <code>COUNT(column)</code> counts non-NULL values. Aggregates such as <code>SUM</code> usually
+  ignore NULL inputs, but an all-NULL group can still produce NULL depending on the function.
+</p>
+<div class="tablewrap">
+<table>
+  <thead><tr><th scope="col">Expression</th><th scope="col">On values 10, NULL, 30</th><th scope="col">Interpretation</th></tr></thead>
+  <tbody>
+  <tr><td><code>COUNT(*)</code></td><td>3</td><td>three input rows</td></tr>
+  <tr><td><code>COUNT(amount)</code></td><td>2</td><td>two known amounts</td></tr>
+  <tr><td><code>AVG(amount)</code></td><td>20</td><td>mean of known values, not 40 ÷ 3</td></tr>
+  <tr><td><code>amount = NULL</code></td><td>unknown for every row</td><td>does not find missing values</td></tr>
+  <tr><td><code>amount IS NULL</code></td><td>true on one row</td><td>explicit missingness test</td></tr>
+  </tbody>
+</table>
+</div>
+<p>
+  A table has no promised presentation order unless the final query specifies <code>ORDER BY</code>.
+  <code>LIMIT 100</code> without an ordering rule can return a different valid subset as files, plans,
+  or parallelism change. For deterministic ties, add a stable secondary key.
 </p>
 
 <div class="widget">
   <div class="widget-head">
-    <div class="wtitle">Interactive — watch a query execute, clause by clause</div>
-    <div class="wsub">A 10-row orders table. Step through the logical evaluation order and watch the intermediate table at each stage.</div>
+    <div class="wtitle">Guided walkthrough — execute SQL clause by clause</div>
+    <div class="wsub">Track the intermediate grain and row count, not just the final cells.</div>
   </div>
   <div class="widget-body">
     <div class="controls">
-      <label>query
+      <label for="q-pick">query
         <select id="q-pick">
           <option value="groupby" selected>GROUP BY + HAVING</option>
           <option value="window">window function (running total)</option>
           <option value="join">JOIN + aggregate</option>
+          <option value="nulls">NULL and aggregate behavior</option>
+          <option value="cte">CTE stages and grain</option>
         </select>
       </label>
-      <button class="btn" id="q-next">Next step →</button>
-      <button class="btn ghost" id="q-restart">Restart</button>
+      <button class="btn ghost" id="q-prev" type="button">← Previous</button>
+      <button class="btn" id="q-next" type="button">Next step →</button>
+      <label for="q-stage">stage <select id="q-stage" aria-label="Select logical execution stage"></select></label>
+      <button class="btn ghost" id="q-restart" type="button">Restart</button>
     </div>
     <pre id="q-sql" style="margin-top:0"></pre>
-    <div class="box note" style="margin:10px 0"><div class="box-title">Step <span id="q-stepn"></span></div><p id="q-expl"></p></div>
-    <div class="tablewrap"><table id="q-table"></table></div>
+    <div class="box note" style="margin:10px 0">
+      <div class="box-title">Step <span id="q-stepn"></span></div>
+      <p id="q-expl"></p>
+      <p><strong>Grain:</strong> <span id="q-grain">Select a query to begin.</span>
+      <span> · <strong>Rows:</strong> <span id="q-count">—</span></span></p>
+      <p id="q-status" class="muted" aria-live="polite"></p>
+    </div>
+    <div class="tablewrap"><table id="q-table" aria-label="Intermediate rows at the selected SQL stage"></table></div>
   </div>
 </div>
 
+<h3>Joins — calculate multiplicity before trusting the result</h3>
 <p>
-  Beyond the basics, two constructs the syllabus names explicitly:
-  <strong>window functions</strong> compute per-row values over a sliding frame <em>without
-  collapsing rows</em> — running totals, ranks, moving averages
-  (<code>SUM(amount) OVER (PARTITION BY customer ORDER BY ts)</code>); they are the single most
-  useful SQL feature for feature engineering. <strong>CTEs</strong>
-  (<code>WITH clean AS (SELECT …) SELECT … FROM clean</code>) are named subqueries — the difference
-  between readable, testable pipelines and a thousand-line nested horror.
+  For an inner equality join, if key \(k\) occurs \(L_k\) times on the left and \(R_k\) times on
+  the right, that key contributes \(L_kR_k\) rows. Total output is
+  \(N_{join}=\sum_k L_kR_k\) over matching keys. A one-to-many join intentionally repeats the
+  “one” side; an accidental many-to-many join can inflate counts and sums dramatically. In an
+  ordinary equality join, NULL does not equal NULL, so declare how missing keys should be handled.
 </p>
 
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Guided calculation — join cardinality</div>
+    <div class="wsub">Enter key:count pairs for each side. The calculator shows each product before summing.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label for="jc-left">left key counts <input id="jc-left" type="text" value="A:2,B:1" spellcheck="false"></label>
+      <label for="jc-right">right key counts <input id="jc-right" type="text" value="A:3,B:2" spellcheck="false"></label>
+    </div>
+    <div class="readout" id="jc-readout" aria-live="polite">
+      <span>inner-join rows <strong id="jc-total">8</strong></span>
+    </div>
+    <div id="jc-breakdown" class="box note">A contributes 2 × 3 = 6; B contributes 1 × 2 = 2.</div>
+    <p class="wcaption">This computes inner-join matches only. A left join also keeps unmatched left
+    rows, once each with NULLs on the right. Validate key uniqueness whenever the relationship is
+    supposed to be many-to-one.</p>
+  </div>
+</div>
+<pre><code>ASSERT_JOIN(left, right, key, expected_relationship):
+  profile duplicate counts and NULL keys on both sides
+  if expected_relationship is "many-to-one":
+      require right.key is unique among non-NULL keys
+  join using an explicit condition
+  compare output row count and unmatched-key rate with expectations
+  aggregate only after confirming the output grain</code></pre>
+
+<h3>Window functions and CTEs — preserve rows while adding context</h3>
+<p>
+  A window function calculates over related rows without collapsing them. The
+  <code>PARTITION BY</code> clause resets the calculation by entity; the window's
+  <code>ORDER BY</code> defines sequence; the frame defines which neighboring rows participate.
+  For a row-by-row cumulative value, state
+  <code>ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW</code>. In some dialects, an ordered window's
+  default is a <code>RANGE</code>-style frame that includes peers sharing the same order value, so
+  duplicate timestamps can change the result. Use a deterministic tie-breaker where order matters.
+</p>
+<pre><code>SELECT
+  customer_id,
+  event_time,
+  amount,
+  SUM(amount) OVER (
+    PARTITION BY customer_id
+    ORDER BY event_time, event_id
+    ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+  ) AS spend_so_far
+FROM valid_payments;</code></pre>
+<p>
+  A <strong>CTE</strong> names a subquery with <code>WITH</code>, which helps expose stages and test
+  their grains. It is not inherently a performance optimization: an engine may inline, materialize,
+  or otherwise rewrite it. Inspect the query plan and engine documentation when reuse or cost matters.
+</p>
+
+<h3>Point-in-time joins — reproduce what was knowable then</h3>
+<p>
+  A training example at prediction time \(t_p\) may use only a feature whose event time and
+  availability time satisfy \(t_e\le t_p\) and \(t_a\le t_p\). Among eligible versions, an as-of
+  join usually selects the latest relevant event per entity. If one event has multiple eligible
+  corrections, select by eligible availability time and a deterministic version key. Tracking availability prevents a late
+  backfill from appearing in historical training rows as though it had been known earlier.
+</p>
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Guided calculation — point-in-time feature selection</div>
+    <div class="wsub">Each line is event_time, availability_time, value. Which version was usable at prediction time?</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label for="pit-prediction">prediction time <input id="pit-prediction" type="number" step="1" value="100"></label>
+      <label for="pit-rows">feature versions
+        <textarea id="pit-rows" rows="4" spellcheck="false">88,90,0.42
+94,99,0.57
+97,101,0.60</textarea>
+      </label>
+    </div>
+    <div class="readout" id="pit-readout" aria-live="polite">
+      <span>selected feature <strong id="pit-selected">0.57</strong></span>
+    </div>
+    <p class="wcaption">At prediction time 100, values 0.42 and 0.57 are eligible. The event at 97
+    was not available until 101, so using 0.60 would leak future knowledge despite its earlier event
+    time. Production systems also join by entity and may define source-specific publication rules.</p>
+  </div>
+</div>
+<div class="box example">
+  <div class="box-title">The same boundary in clock time</div>
+  <p>A feature event occurred at 09:55, its corrected value became available at 10:05, and the model
+  prediction was made at 10:00. The corrected value is illegal for that training row: event time
+  passes the boundary, but availability time does not.</p>
+</div>
+<pre><code>FOR EACH prediction(entity, prediction_time):
+  candidates = feature_versions WHERE
+      feature.entity = prediction.entity AND
+      feature.event_time &lt;= prediction.prediction_time AND
+      feature.available_time &lt;= prediction.prediction_time
+  select the candidate with greatest (event_time, available_time, version_tiebreaker)
+  if none exists: apply the declared missing-feature policy</code></pre>
+
+<h3>Query cost and safe workflow</h3>
+<p>
+  Analytical cost is often driven by bytes scanned, shuffle volume, join cardinality, and repeated
+  work. Project needed columns instead of <code>SELECT *</code>, filter pruneable partitions early,
+  pre-aggregate at the intended grain before large joins where semantics allow, and inspect the
+  engine's plan. A filter written early is not guaranteed to execute early; the optimizer decides,
+  and only predicates compatible with available metadata can prune storage.
+</p>
+<pre><code>BUILD_FEATURE_QUERY(cutoff_parameter):
+  bind cutoff_parameter as a typed query parameter; never concatenate input into SQL
+  define source CTEs with explicit columns and grains
+  filter on partition keys and knowledge-time boundaries
+  validate uniqueness before many-to-one joins
+  state window frames and deterministic tie-breakers
+  materialize or publish only after quality assertions pass
+  record query text, parameters, source snapshots, and output version</code></pre>
+<div class="tablewrap">
+<table>
+  <thead><tr><th scope="col">Symptom</th><th scope="col">Likely check</th><th scope="col">Typical response</th></tr></thead>
+  <tbody>
+  <tr><td>sum doubled after a join</td><td>duplicate key counts and output grain</td><td>deduplicate by a justified rule or join at matching grains</td></tr>
+  <tr><td>running total jumps across tied times</td><td>window frame and tie-breaker</td><td>state <code>ROWS</code> frame and stable order key</td></tr>
+  <tr><td>query scans every file</td><td>partition predicate, statistics, function-wrapped keys</td><td>use pruneable predicates or redesign physical organization</td></tr>
+  <tr><td>training metric looks impossibly good</td><td>event and availability boundaries</td><td>perform point-in-time joins and rebuild leaked datasets</td></tr>
+  </tbody>
+</table>
+</div>
+
 <h2>6.4 Quality, schemas, and the feature store</h2>
+<h3>Data contracts and schema evolution — compatibility includes meaning</h3>
 <p>
-  <strong>Data validation</strong> is testing (Topic 3) applied to data: assert schemas (column
-  names, types, nullability), ranges (age ∈ [0, 130]), distributions (today's mean within k·σ of
-  history), freshness, and volume. Tools: Great Expectations, dbt tests, Pandera. Schema
-  <em>enforcement</em> at write time beats detection at read time: a pipeline that rejects a
-  malformed batch loudly is a gift; one that silently coerces strings to NaN is a time bomb —
-  and Topic 13's drift monitoring is this idea extended into production.
+  A <strong>data contract</strong> records the producer-consumer agreement: ownership, grain, keys,
+  names, physical types, units, allowed values, null meaning, event and availability timestamps,
+  freshness, and change policy. A file schema captures only part of that agreement. Changing
+  <code>distance</code> from kilometres to metres while keeping a floating-point type is a breaking
+  semantic change even though a schema checker sees no difference.
+</p>
+<div class="tablewrap">
+<table>
+  <thead><tr><th scope="col">Change</th><th scope="col">Often compatible when…</th><th scope="col">Safer migration</th></tr></thead>
+  <tbody>
+  <tr><td>add an optional field</td><td>old readers ignore unknown fields and new readers define missing behavior</td><td>publish it as nullable or with a documented default; test representative readers</td></tr>
+  <tr><td>widen a numeric type</td><td>the format and every reader support the conversion without loss</td><td>dual-read or dual-write during a versioned transition</td></tr>
+  <tr><td>rename or remove a field</td><td>rarely transparent to existing named-field consumers</td><td>add the replacement, migrate consumers, observe usage, then deprecate</td></tr>
+  <tr><td>change units or business definition</td><td>only when consumers explicitly opt into the new version</td><td>use a new field or contract version; backfill with recorded logic</td></tr>
+  </tbody>
+</table>
+</div>
+<p>
+  “Backward” and “forward” compatibility depend on which writer and reader versions must coexist,
+  and the exact rules differ across Avro, Parquet readers, APIs, and databases. Test compatibility
+  with real consumers. Rejecting incompatible writes can protect curated tables, while quarantining
+  the input preserves evidence for repair; blindly coercing values can destroy meaning.
+</p>
+
+<h3>Quality is multi-dimensional — monitor, quarantine, repair, replay</h3>
+<p>
+  Validation is testing applied to data, but one score cannot summarize it. Common dimensions are
+  <strong>validity</strong> (values satisfy rules), <strong>completeness</strong> (required values are
+  present), <strong>uniqueness</strong> (declared keys do not repeat), <strong>consistency</strong>
+  (related representations agree), <strong>timeliness</strong> (data arrive within the freshness
+  contract), and <strong>volume/distribution</strong> (unexpected shifts are investigated).
+  Distribution alerts indicate change; they do not by themselves prove corruption.
+</p>
+<div class="box example">
+  <div class="box-title">Worked quality gate</div>
+  <p>A daily partition has 10,000 rows and 120 missing required merchant categories, so completeness
+  is \((10000-120)/10000=98.8\%\). The contract requires at least 99.5%, zero duplicate payment IDs,
+  and publication within 30 minutes; this batch also has three duplicate IDs and is 90 minutes late.
+  The safe outcome is to withhold this version from consumers, keep the raw batch, alert its owner,
+  repair the cause, then replay. Silently dropping offending rows would change the population.</p>
+</div>
+<pre><code>QUALITY_GATE(candidate):
+  schema_results = validate names, types, nullability, and versions
+  content_results = validate keys, ranges, relationships, and known invariants
+  operational_results = validate volume, freshness, and distribution alerts
+  persist every result with dataset version and run_id
+  if any blocking contract fails:
+      quarantine candidate; preserve source; notify owner
+  else:
+      publish candidate atomically
+
+REPAIR_AND_REPLAY(quarantined_run):
+  correct source data or versioned transform; do not edit evidence silently
+  replay from the recorded source boundary
+  pass the same gate; publish a new version; document lineage</code></pre>
+<div class="box warn">
+  <div class="box-title">Failure modes</div>
+  <p>Thresholds that never evolve become noise. Automatic repair without provenance can mask upstream
+  defects. Blocking every mild distribution shift can destroy availability. Classify checks as
+  blocking, warning, or informational, assign ownership, and rehearse replay before an incident.</p>
+</div>
+
+<h3>Feature stores — reduce training/serving skew across two time scales</h3>
+<p>
+  <strong>Training/serving skew</strong> occurs when a model's production inputs differ from the
+  feature definitions or time semantics used to build training data. Causes include duplicated
+  transformation code, different NULL defaults, timezone or rounding rules, stale online values,
+  late events, incompatible encodings, and leakage in offline joins.
 </p>
 <p>
-  A <strong>feature store</strong> solves one specific, expensive problem:
-  <strong>training/serving skew</strong>. The features you compute offline for training (in SQL,
-  over the warehouse) must be <em>byte-identical in logic</em> to the features computed online at
-  inference time (in a microservice, in milliseconds). Write the logic twice and the two copies
-  drift; the model then sees inputs from a distribution it never trained on, and quietly degrades.
-  A feature store (Feast, Tecton) defines each feature <em>once</em>, serves it from an offline
-  store for training and an online low-latency store for inference, and — critically — supports
-  <em>point-in-time-correct joins</em>: when building training data for a prediction made on March 3,
-  it serves feature values <em>as they were on March 3</em>, not as they are today. Skipping that is
-  time-travel leakage (Topic 4's sin, at infrastructure scale).
+  A feature-store architecture commonly includes a registry of definitions and metadata, an
+  offline store for historical feature versions, an online store for low-latency current values,
+  materialization that moves computed values online, and point-in-time retrieval for training.
+  Centralizing these paths can reduce skew and improve reuse; it does not make two systems
+  byte-identical or make inconsistency impossible. Teams must still test semantic parity, freshness,
+  entity keys, and event/availability timestamps.
 </p>
+<div class="tablewrap">
+<table>
+  <thead><tr><th scope="col">Skew source</th><th scope="col">Detection</th><th scope="col">Control</th></tr></thead>
+  <tbody>
+  <tr><td>offline and online transform differ</td><td>run shared fixtures through both and compare within declared tolerance</td><td>shared definitions or precomputed values; version transformations</td></tr>
+  <tr><td>online value is stale</td><td>log feature event time and age at inference</td><td>TTL, freshness SLO, fallback or abstention policy</td></tr>
+  <tr><td>historical join used future backfill</td><td>audit event and availability timestamps</td><td>point-in-time join against versioned history</td></tr>
+  <tr><td>missing-value behavior differs</td><td>compare missingness and default rates by path</td><td>contract the missing policy and apply it consistently</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>TTL, backfills, and when a feature store is unnecessary</h3>
+<p>
+  A feature's <strong>time to live (TTL)</strong> defines how long an online value may be treated as
+  usable. If \(t_{serve}-t_{feature}>TTL\), serving must follow a declared policy: refresh, use a
+  documented fallback, mark missing, abstain, or degrade the product. A longer TTL improves
+  availability but risks stale decisions; a shorter TTL raises compute and missing-value pressure.
+</p>
+<pre><code>BACKFILL(feature_version, interval):
+  pin source snapshots and transformation version
+  compute versions with event_time and available_time
+  run quality and point-in-time leakage checks
+  publish as a new offline version; do not rewrite audited history in place
+  materialize online only if that version is approved for serving
+  compare offline fixtures with online retrieval before rollout</code></pre>
+<div class="tablewrap">
+<table>
+  <thead><tr><th scope="col">Feature-store signal</th><th scope="col">Interpretation</th></tr></thead>
+  <tbody>
+  <tr><td>many models reuse entity features online and offline</td><td>a registry, historical retrieval, and online materialization may repay their operational cost</td></tr>
+  <tr><td>millisecond online lookup plus point-in-time training joins</td><td>specialized offline/online paths can be valuable</td></tr>
+  <tr><td>one batch model retrained monthly with no online features</td><td>a versioned warehouse table and tested SQL may be simpler and sufficient</td></tr>
+  <tr><td>few features owned by one service with reliable shared code</td><td>measure skew risk before introducing another platform</td></tr>
+  </tbody>
+</table>
+</div>
+<p><strong>When to use it:</strong> adopt a feature store for a demonstrated coordination, reuse,
+latency, or temporal-correctness problem. Its registry, backfills, monitoring, online state, and
+on-call burden are real system costs—not a prerequisite for every ML project.</p>
 
 <div class="box jargon">
   <div class="box-title">Jargon decoder</div>
   <dl>
     <dt>OLTP / OLAP</dt><dd>Transaction processing (many small reads/writes, row stores) vs analytical processing (big scans, columnar stores).</dd>
-    <dt>ACID</dt><dd>Atomicity, Consistency, Isolation, Durability — the transactional guarantees warehouses/lakehouses give and raw file dumps don't.</dd>
-    <dt>schema-on-write / schema-on-read</dt><dd>Enforce structure when storing (warehouse) vs when querying (lake).</dd>
-    <dt>dbt</dt><dd>The standard tool for ELT transforms: SQL models with dependencies, tests, and docs, version-controlled like code.</dd>
-    <dt>Kafka</dt><dd>The dominant event log / message bus for streaming: producers append events, consumers read at their own pace.</dd>
-    <dt>partitioning</dt><dd>Splitting stored data by a key (usually date) so queries scan only relevant chunks — the #1 lever for query cost.</dd>
+    <dt>ACID</dt><dd>Atomicity, Consistency, Isolation, Durability — transactional properties whose precise scope depends on the system and isolation level. Consistency here means preserving declared database invariants, not guaranteeing that business data are true.</dd>
+    <dt>schema-on-write / schema-on-read</dt><dd>Validate structure before publishing data versus interpret structure when a consumer reads it; practical platforms often combine both.</dd>
+    <dt>dbt</dt><dd>A widely used framework for versioned SQL transformations, dependency graphs, tests, and documentation in ELT workflows.</dd>
+    <dt>Kafka</dt><dd>A widely used distributed event log and broker in which producers append records and consumer groups track their positions.</dd>
+    <dt>CDC</dt><dd>Change data capture: turning database inserts, updates, and deletes into an ordered change stream.</dd>
+    <dt>checkpoint</dt><dd>A durable record of processed input position and state used to resume after failure.</dd>
+    <dt>watermark</dt><dd>An event-time progress estimate used to decide when windows can emit and how late records are treated.</dd>
+    <dt>idempotent</dt><dd>Repeating the same identified operation leaves the same intended state as applying it once.</dd>
+    <dt>upsert</dt><dd>Insert a missing key or update the existing row for that key.</dd>
+    <dt>partitioning</dt><dd>Splitting stored data by a key so compatible filters may skip subdivisions.</dd>
     <dt>data lineage</dt><dd>The recorded ancestry of a dataset: which sources and transforms produced it. What you consult when a number looks wrong.</dd>
-    <dt>point-in-time join</dt><dd>Joining features to training labels using only information available at the label's timestamp — the anti-leakage join.</dd>
+    <dt>point-in-time join</dt><dd>Joining historical features using event and availability boundaries so each example uses only what was knowable then.</dd>
+    <dt>TTL</dt><dd>Time to live: the maximum permitted age or retention period under a specific policy.</dd>
   </dl>
 </div>
 
 <h2>Self-check</h2>
 <div class="quiz" data-answer="b">
-  <p class="quiz-q">1. Your training job reads 3 columns from a 2-TB, 400-column event table each night. The single highest-leverage change:</p>
+  <p class="quiz-q">1. A nightly training query reads 3 of 400 columns and only yesterday's rows. Which design most directly reduces avoidable scan bytes?</p>
   <div class="opts">
-    <button data-opt="a">switch the files from Parquet to JSON for flexibility</button>
-    <button data-opt="b">store in a columnar format (Parquet) partitioned by date, so the job scans only the 3 columns × relevant days</button>
-    <button data-opt="c">load the whole table into pandas once and cache it</button>
-    <button data-opt="d">convert everything to Avro</button>
+    <button data-opt="a">JSON files with one record per line and no date metadata</button>
+    <button data-opt="b">a columnar format with useful date partitions and row-group statistics</button>
+    <button data-opt="c">one directory per customer ID, even if most directories hold one row</button>
+    <button data-opt="d">Avro solely because its records have a schema</button>
   </div>
-  <div class="quiz-exp"><strong>b.</strong> Columnar + partition pruning turns a 2-TB scan into a few GB. JSON is the anti-answer; Avro is row-oriented (great for streams, wrong for this read pattern).</div>
+  <div class="quiz-exp"><strong>b.</strong> Column projection can avoid the other 397 columns; compatible partition predicates and statistics may skip dates and row groups. The gain depends on file and engine details, not the format name alone.</div>
 </div>
-<div class="quiz" data-answer="c">
-  <p class="quiz-q">2. A query needs customers whose <em>total</em> spend exceeds $10,000. Where does that condition belong?</p>
+<div class="quiz" data-answer="a">
+  <p class="quiz-q">2. Sensitive identifiers must be removed before data crosses into the analytics platform, and the report may be one hour old. Which starting design best matches both constraints?</p>
   <div class="opts">
-    <button data-opt="a">WHERE total_spend &gt; 10000</button>
-    <button data-opt="b">in the SELECT clause with an IF</button>
-    <button data-opt="c">HAVING SUM(amount) &gt; 10000 — the filter applies after GROUP BY aggregation</button>
-    <button data-opt="d">ORDER BY SUM(amount) DESC</button>
+    <button data-opt="a">transform before loading into the analytics boundary, then run a replayable hourly batch</button>
+    <button data-opt="b">land unrestricted raw identifiers first because ELT is always preferable, then add a stream</button>
+    <button data-opt="c">use record-at-a-time streaming solely because it is more modern</button>
+    <button data-opt="d">remove identifiers after publishing the report and discard the source boundary</button>
   </div>
-  <div class="quiz-exp"><strong>c.</strong> WHERE runs before grouping, so per-customer sums don't exist yet. HAVING filters groups. This is the evaluation-order question in its most common costume.</div>
+  <div class="quiz-exp"><strong>a.</strong> This is an ETL-style boundary because the sensitive transform must happen before loading the target. An hourly batch meets the stated freshness contract and is usually easier to replay than an unnecessary continuous stream.</div>
+</div>
+<div class="quiz" data-answer="b">
+  <p class="quiz-q">3. The largest observed event time is 12:10 and allowed lateness is five minutes. Under this chapter's simplified rule, what is the watermark?</p>
+  <div class="opts">
+    <button data-opt="a">12:15</button>
+    <button data-opt="b">12:05</button>
+    <button data-opt="c">12:10</button>
+    <button data-opt="d">It can never be estimated until all events arrive.</button>
+  </div>
+  <div class="quiz-exp"><strong>b.</strong> \(12{:}10-5\text{ minutes}=12{:}05\). The watermark is a progress estimate. The declared late-data policy still decides what happens to an earlier arrival.</div>
 </div>
 <div class="quiz" data-answer="d">
-  <p class="quiz-q">3. A model performs great offline but degrades in production. Features are computed by separate SQL (training) and Java (serving) implementations. The most likely culprit, and its standard fix:</p>
+  <p class="quiz-q">4. Which statement correctly distinguishes a window function from a CTE?</p>
   <div class="opts">
-    <button data-opt="a">concept drift; retrain more often</button>
-    <button data-opt="b">the model is too small; scale it up</button>
-    <button data-opt="c">overfitting; add regularization</button>
-    <button data-opt="d">training/serving skew from divergent feature logic; define features once in a feature store serving both paths</button>
+    <button data-opt="a">every CTE is materialized once, while every window collapses its partition to one row</button>
+    <button data-opt="b">a CTE guarantees faster execution, while a window's ordering never needs a tie-breaker</button>
+    <button data-opt="c">a window and a CTE are interchangeable names for the same SQL operation</button>
+    <button data-opt="d">a window can add partition-level context without collapsing rows; a CTE names a subquery but is not guaranteed to be materialized</button>
   </div>
-  <div class="quiz-exp"><strong>d.</strong> Two implementations of "same" logic always drift (nulls, timezones, rounding, late data). The feature store's reason to exist is making this class of bug structurally impossible.</div>
+  <div class="quiz-exp"><strong>d.</strong> Window functions retain the input row grain while adding values such as running totals; explicit frames and deterministic ordering matter. A CTE exposes a logical query stage, but the optimizer may inline or materialize it.</div>
+</div>
+<div class="quiz" data-answer="a">
+  <p class="quiz-q">5. A team wants governed SQL tables but also open object-store files usable by several engines, with snapshot history and transactional table updates. Which bundle most closely fits?</p>
+  <div class="opts">
+    <button data-opt="a">a lakehouse table format over object storage, after verifying engine support</button>
+    <button data-opt="b">plain CSV files without a catalog</button>
+    <button data-opt="c">an OLTP database solely because it stores rows</button>
+    <button data-opt="d">a message broker used as permanent analytical storage</button>
+  </div>
+  <div class="quiz-exp"><strong>a.</strong> Lakehouse table formats add metadata, snapshots, and transaction protocols over lake files. Product categories overlap, so compatibility and operations still need evaluation.</div>
+</div>
+<div class="quiz" data-answer="b">
+  <p class="quiz-q">6. A query must keep only regions whose total sales exceed 400. Which clause belongs after grouping?</p>
+  <div class="opts">
+    <button data-opt="a"><code>WHERE SUM(amount) &gt; 400</code></button>
+    <button data-opt="b"><code>HAVING SUM(amount) &gt; 400</code></button>
+    <button data-opt="c"><code>ORDER BY SUM(amount) &gt; 400</code></button>
+    <button data-opt="d"><code>LIMIT SUM(amount) &gt; 400</code></button>
+  </div>
+  <div class="quiz-exp"><strong>b.</strong> <code>WHERE</code> filters input rows before aggregates exist; <code>HAVING</code> filters the groups after <code>GROUP BY</code> has formed them and aggregate values can be evaluated.</div>
+</div>
+<div class="quiz" data-answer="d">
+  <p class="quiz-q">7. Key A appears twice on the left and three times on the right; key B appears once on the left and twice on the right. How many rows does their inner equality join produce?</p>
+  <div class="opts">
+    <button data-opt="a">3</button>
+    <button data-opt="b">5</button>
+    <button data-opt="c">6</button>
+    <button data-opt="d">8</button>
+  </div>
+  <div class="quiz-exp"><strong>d.</strong> A contributes \(2\times3=6\); B contributes \(1\times2=2\); total 8. This multiplication is why a many-to-many join can inflate aggregates.</div>
+</div>
+<div class="quiz" data-answer="b">
+  <p class="quiz-q">8. A feature event occurred at 09:55 but its corrected value became available at 10:05. May a training row for a 10:00 prediction use that corrected value?</p>
+  <div class="opts">
+    <button data-opt="a">yes, because event time is earlier than prediction time</button>
+    <button data-opt="b">no, because availability time is later than prediction time</button>
+    <button data-opt="c">yes, if the corrected value improves validation accuracy</button>
+    <button data-opt="d">yes, provided the query uses a CTE</button>
+  </div>
+  <div class="quiz-exp"><strong>b.</strong> The value was not knowable at 10:00. A correct as-of join enforces both event-time and availability-time boundaries.</div>
+</div>
+<div class="quiz" data-answer="a">
+  <p class="quiz-q">9. A producer changes <code>distance</code> from kilometres to metres without changing its type, and the next batch also fails the completeness contract. What is the safest response?</p>
+  <div class="opts">
+    <button data-opt="a">version the semantic change; quarantine the failed candidate, preserve evidence, repair, validate, and replay</button>
+    <button data-opt="b">publish because the physical type still matches</button>
+    <button data-opt="c">silently drop offending rows and overwrite the previous version</button>
+    <button data-opt="d">assume a distribution alert will convert every value correctly</button>
+  </div>
+  <div class="quiz-exp"><strong>a.</strong> Compatibility includes units and meaning, while a quality gate protects consumers. Quarantine plus versioned repair and replay preserves evidence and lineage.</div>
+</div>
+<div class="quiz" data-answer="c">
+  <p class="quiz-q">10. When is a feature store least likely to justify its additional platform cost?</p>
+  <div class="opts">
+    <button data-opt="a">many models reuse the same features online and offline</button>
+    <button data-opt="b">millisecond serving and point-in-time historical retrieval are both required</button>
+    <button data-opt="c">one monthly batch model reads a versioned warehouse table and has no online feature path</button>
+    <button data-opt="d">online feature freshness and TTL need central monitoring</button>
+  </div>
+  <div class="quiz-exp"><strong>c.</strong> Tested, versioned SQL may fully solve that case. A feature store is valuable when reuse, online latency, skew control, or temporal retrieval offsets its operational burden.</div>
 </div>
 
 <h2>Go deeper</h2>
@@ -242,129 +865,620 @@
 
 <script>
 document.addEventListener("caie:ready", () => {
-  // ---------- row vs column scan ----------
-  (function () {
-    const canvas = document.getElementById("s-canvas");
-    const COLS = ["id", "customer", "region", "amount", "ts"];
-    function draw() {
-      const q = document.getElementById("s-q").value;
-      const pal = CAIE.pal();
-      const W = Math.min(640, canvas.parentNode.clientWidth - 4);
-      const { ctx, w, h } = CAIE.setupCanvas(canvas, W, 260);
-      ctx.clearRect(0, 0, w, h);
-      const nBlocks = 30; // blocks per layout row
-      const needCols = q === "agg" ? [3] : q === "two" ? [2, 3] : [0, 1, 2, 3, 4];
-      const pointRow = q === "point";
-      ctx.font = "600 12px " + CAIE.css("--sans");
-      // Row store: blocks contain whole rows -> any query touching all rows must scan all blocks;
-      // point lookup: 1 block (with index).
-      ctx.fillStyle = pal.ink2; ctx.textAlign = "left";
-      ctx.fillText("ROW STORE — each block holds complete rows", 8, 18);
-      let scannedRow = 0;
-      for (let i = 0; i < nBlocks; i++) {
-        const scan = pointRow ? i === 11 : true;
-        if (scan) scannedRow++;
-        ctx.fillStyle = scan ? pal.s[5] : pal.grid;
-        ctx.beginPath(); ctx.roundRect(8 + i * ((w - 16) / nBlocks), 28, (w - 16) / nBlocks - 3, 34, 4); ctx.fill();
+  // ---------- editable logical and physical scan estimate ----------
+  (function topic6ScanCalculator() {
+    const byId = id => document.getElementById(id);
+    const el = {
+      preset: byId("s-preset"), rows: byId("s-rows"), widths: byId("s-widths"),
+      selected: byId("s-selected"), partition: byId("s-partition"),
+      compression: byId("s-compression"), pruning: byId("s-pruning"),
+      canvas: byId("s-canvas"), readout: byId("s-readout")
+    };
+    if (Object.values(el).some(node => !node)) return;
+    const fields = [el.rows, el.widths, el.selected, el.partition, el.compression, el.pruning];
+
+    function safeProduct(values) {
+      let product = 1;
+      for (const value of values) {
+        if (!Number.isFinite(value)) return null;
+        if (product === 0 || value === 0) { product = 0; continue; }
+        if (Math.abs(product) > Number.MAX_SAFE_INTEGER / Math.abs(value)) return null;
+        product *= value;
       }
-      // Column store: blocks grouped by column: nBlocks/5 blocks per column
-      ctx.fillStyle = pal.ink2;
-      ctx.fillText("COLUMN STORE — blocks hold one column each", 8, 108);
-      const per = nBlocks / 5;
-      let scannedCol = 0;
-      for (let c = 0; c < 5; c++) {
-        for (let i = 0; i < per; i++) {
-          const idx = c * per + i;
-          let scan;
-          if (pointRow) scan = i === 2; // must fetch the row's value from each column
-          else scan = needCols.includes(c);
-          if (scan) scannedCol++;
-          ctx.fillStyle = scan ? pal.s[0] : pal.grid;
-          ctx.beginPath(); ctx.roundRect(8 + idx * ((w - 16) / nBlocks), 118, (w - 16) / nBlocks - 3, 34, 4); ctx.fill();
-        }
-        ctx.fillStyle = pal.muted; ctx.font = "10px " + CAIE.css("--sans"); ctx.textAlign = "center";
-        ctx.fillText(COLS[c], 8 + (c * per + per / 2) * ((w - 16) / nBlocks), 166);
-        ctx.font = "600 12px " + CAIE.css("--sans");
-      }
-      // bars
-      const rowMB = scannedRow / nBlocks * 1000, colMB = scannedCol / nBlocks * 1000;
-      const maxMB = 1000;
-      ctx.textAlign = "left"; ctx.fillStyle = pal.ink2;
-      ctx.fillText("bytes scanned:", 8, 200);
-      const bars = [["row store", rowMB, pal.s[5]], ["column store", colMB, pal.s[0]]];
-      bars.forEach((b, i) => {
-        const y = 212 + i * 22;
-        ctx.fillStyle = b[2];
-        ctx.beginPath(); ctx.roundRect(110, y - 10, Math.max(3, (w - 220) * b[1] / maxMB), 13, 3); ctx.fill();
-        ctx.fillStyle = pal.ink; ctx.font = "600 11px " + CAIE.css("--sans");
-        ctx.textAlign = "right"; ctx.fillText(b[0], 104, y);
-        ctx.textAlign = "left"; ctx.fillText(Math.round(b[1]) + " MB", 116 + (w - 220) * b[1] / maxMB, y);
-      });
-      document.getElementById("s-readout").innerHTML =
-        "row store scans <b>" + Math.round(rowMB) + " MB</b><span>column store scans <b>" + Math.round(colMB) + " MB</b></span><span>advantage: <b>" +
-        (rowMB > colMB ? "columnar, " + (rowMB / Math.max(1, colMB)).toFixed(1) + "×" : "row store, " + (colMB / Math.max(1, rowMB)).toFixed(1) + "×") + "</b></span>";
+      return Number.isFinite(product) && Math.abs(product) <= Number.MAX_SAFE_INTEGER ? product : null;
     }
-    document.getElementById("s-q").addEventListener("change", draw);
-    CAIE.onTheme(draw); window.addEventListener("resize", draw);
-    draw();
+    function parseIntegers(field, name) {
+      const parts = field.value.trim().split(",").map(part => part.trim());
+      if (!field.value.trim() || parts.some(part => !/^\d+$/.test(part))) {
+        return { error: name + " must be a nonempty comma-separated list of whole numbers." };
+      }
+      const values = parts.map(Number);
+      return values.some(value => !Number.isSafeInteger(value) || value <= 0)
+        ? { error: name + " must contain positive safe integers." }
+        : { values };
+    }
+    function formatBytes(value) {
+      if (value === 0) return "0 B";
+      const units = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
+      const power = Math.min(units.length - 1, Math.max(0, Math.floor(Math.log(value) / Math.log(1024))));
+      const scaled = value / Math.pow(1024, power);
+      return scaled.toFixed(scaled >= 100 ? 0 : scaled >= 10 ? 1 : 2) + " " + units[power];
+    }
+    function metric(label, value) {
+      const span = document.createElement("span");
+      const strong = document.createElement("strong");
+      span.append(document.createTextNode(label + " "));
+      strong.textContent = value;
+      span.append(strong);
+      el.readout.append(span);
+    }
+    function width() {
+      const measured = el.canvas.parentElement ? el.canvas.parentElement.clientWidth - 4 : 640;
+      return Math.max(1, Math.min(760, Number.isFinite(measured) && measured > 0 ? Math.floor(measured) : 640));
+    }
+    function draw(result, error) {
+      const pal = CAIE.pal();
+      const setup = CAIE.setupCanvas(el.canvas, width(), 300);
+      const ctx = setup.ctx, w = setup.w, h = setup.h;
+      ctx.clearRect(0, 0, w, h);
+      ctx.textAlign = "left";
+      ctx.fillStyle = pal.ink2;
+      ctx.font = "600 13px " + CAIE.css("--sans");
+      if (!result) {
+        ctx.fillText("Scan estimate unavailable", 12, 28);
+        ctx.fillStyle = pal.muted;
+        ctx.font = "12px " + CAIE.css("--sans");
+        ctx.fillText((error || "Enter valid inputs.").slice(0, 90), 12, 52);
+        el.canvas.setAttribute("aria-label", "Scan estimate unavailable. " + (error || ""));
+        return;
+      }
+      ctx.fillText("Estimated bytes read", 12, 24);
+      ctx.fillStyle = pal.muted;
+      ctx.font = "11px " + CAIE.css("--sans");
+      ctx.fillText("Logical is uncompressed; physical applies the compression ratio.", 12, 43);
+      const bars = [
+        ["row logical", result.rowLogical, pal.s[5]],
+        ["column logical", result.columnLogical, pal.s[0]],
+        ["row physical", result.rowPhysical, pal.s[4]],
+        ["column physical", result.columnPhysical, pal.s[2]]
+      ];
+      const maximum = Math.max(1, ...bars.map(bar => bar[1]));
+      const left = Math.min(132, Math.max(86, Math.floor(w * 0.31)));
+      const right = Math.min(92, Math.max(58, Math.floor(w * 0.2)));
+      const available = Math.max(1, w - left - right - 14);
+      bars.forEach((bar, index) => {
+        const y = 82 + index * 46;
+        const length = bar[1] === 0 ? 0 : Math.max(2, available * bar[1] / maximum);
+        ctx.font = "600 11px " + CAIE.css("--sans");
+        ctx.fillStyle = pal.ink2;
+        ctx.textAlign = "right";
+        ctx.fillText(w < 390 ? bar[0].replace("column", "col.") : bar[0], left - 8, y + 3);
+        ctx.fillStyle = bar[2];
+        ctx.fillRect(left, y - 11, length, 18);
+        ctx.fillStyle = pal.ink;
+        ctx.textAlign = "left";
+        ctx.fillText(formatBytes(bar[1]), Math.min(w - right + 5, left + length + 7), y + 3);
+      });
+      ctx.fillStyle = pal.muted;
+      ctx.font = "11px " + CAIE.css("--sans");
+      ctx.textAlign = "left";
+      ctx.fillText("Rows retained: " + result.keptRows.toLocaleString(undefined, { maximumFractionDigits: 3 }), 12, h - 15);
+      el.canvas.setAttribute("aria-label", "Estimated row-layout physical scan " +
+        formatBytes(result.rowPhysical) + "; columnar physical scan " + formatBytes(result.columnPhysical) + ".");
+    }
+    function fail(message, field) {
+      fields.forEach(item => item.removeAttribute("aria-invalid"));
+      if (field) field.setAttribute("aria-invalid", "true");
+      el.readout.replaceChildren(document.createTextNode("Cannot calculate: " + message));
+      draw(null, message);
+    }
+    function update() {
+      fields.forEach(item => item.removeAttribute("aria-invalid"));
+      const empty = fields.find(field => !field.value.trim());
+      if (empty) return fail("calculator fields cannot be empty.", empty);
+      const rows = Number(el.rows.value);
+      if (!Number.isSafeInteger(rows) || rows <= 0) return fail("rows must be a positive safe integer.", el.rows);
+      const parsedWidths = parseIntegers(el.widths, "Column widths");
+      if (parsedWidths.error) return fail(parsedWidths.error, el.widths);
+      let totalWidth = 0;
+      for (const value of parsedWidths.values) {
+        if (totalWidth > Number.MAX_SAFE_INTEGER - value) return fail("column-width sum is too large.", el.widths);
+        totalWidth += value;
+      }
+      const parsedSelected = parseIntegers(el.selected, "Selected columns");
+      if (parsedSelected.error) return fail(parsedSelected.error, el.selected);
+      const selected = parsedSelected.values;
+      if (new Set(selected).size !== selected.length ||
+          selected.some(index => index > parsedWidths.values.length)) {
+        return fail("selected columns must be unique 1-based indices no greater than " +
+          parsedWidths.values.length + ".", el.selected);
+      }
+      const selectedWidth = selected.reduce((sum, index) => sum + parsedWidths.values[index - 1], 0);
+      const partition = Number(el.partition.value);
+      const pruning = Number(el.pruning.value);
+      const compression = Number(el.compression.value);
+      if (!Number.isFinite(partition) || partition < 0 || partition > 1)
+        return fail("partitions kept must be between 0 and 1.", el.partition);
+      if (!Number.isFinite(pruning) || pruning < 0 || pruning > 1)
+        return fail("row groups kept must be between 0 and 1.", el.pruning);
+      if (!Number.isFinite(compression) || compression <= 0 || compression > 1)
+        return fail("compression ratio must be greater than 0 and at most 1.", el.compression);
+      const keptRows = safeProduct([rows, partition, pruning]);
+      const rowLogical = safeProduct([rows, partition, pruning, totalWidth]);
+      const columnLogical = safeProduct([rows, partition, pruning, selectedWidth]);
+      const rowPhysical = rowLogical === null ? null : safeProduct([rowLogical, compression]);
+      const columnPhysical = columnLogical === null ? null : safeProduct([columnLogical, compression]);
+      if ([keptRows, rowLogical, columnLogical, rowPhysical, columnPhysical].some(value => value === null))
+        return fail("estimate exceeds the safe numeric range; reduce rows or widths.", el.rows);
+      const result = { keptRows, rowLogical, columnLogical, rowPhysical, columnPhysical };
+      el.readout.replaceChildren();
+      metric("row logical", formatBytes(rowLogical));
+      metric("column logical", formatBytes(columnLogical));
+      metric("row physical", formatBytes(rowPhysical));
+      metric("column physical", formatBytes(columnPhysical));
+      metric("row/column physical ratio", columnPhysical === 0
+        ? "undefined when no rows are retained"
+        : (rowPhysical / columnPhysical).toFixed(2) + "x");
+      const caveat = document.createElement("span");
+      caveat.textContent = "Same partition, row-group, and compression factors are applied to both layouts; indexes, metadata, caches, and per-column compression are omitted.";
+      el.readout.append(caveat);
+      draw(result);
+    }
+    function preset() {
+      const parsed = parseIntegers(el.widths, "Column widths");
+      const count = parsed.error ? 5 : parsed.values.length;
+      const all = Array.from({ length: count }, (_, index) => index + 1).join(",");
+      if (el.preset.value === "analytic") {
+        el.selected.value = count >= 4 ? "3,4" : "1";
+        el.partition.value = "0.25"; el.pruning.value = "0.5"; el.compression.value = "0.4";
+      } else if (el.preset.value === "all") {
+        el.selected.value = all; el.partition.value = "1";
+        el.pruning.value = "1"; el.compression.value = "0.4";
+      } else if (el.preset.value === "point") {
+        const rows = Number(el.rows.value);
+        el.selected.value = all; el.partition.value = "1"; el.compression.value = "0.4";
+        el.pruning.value = Number.isSafeInteger(rows) && rows > 0 ? String(1 / rows) : "0";
+      }
+      update();
+    }
+    fields.forEach(field => field.addEventListener("input", update));
+    el.preset.addEventListener("change", preset);
+    CAIE.onTheme(update);
+    window.addEventListener("resize", update);
+    update();
   })();
 
-  // ---------- SQL stepper ----------
-  (function () {
-    const orders = [
-      [1, "ana", "EU", 120, "01-03"], [2, "ben", "US", 300, "01-04"], [3, "ana", "EU", 80, "01-05"],
-      [4, "carl", "US", 40, "01-06"], [5, "dee", "APAC", 500, "01-07"], [6, "ben", "US", 220, "01-08"],
-      [7, "ana", "EU", 60, "01-09"], [8, "dee", "APAC", 450, "01-10"], [9, "carl", "US", 90, "01-11"], [10, "ben", "US", 180, "01-12"]
-    ];
-    const customers = [["ana", "Berlin"], ["ben", "NYC"], ["carl", "Austin"], ["dee", "Tokyo"]];
-    const H = ["id", "customer", "region", "amount", "ts"];
-    function tbl(head, rows) {
-      return "<tr>" + head.map(hh => "<th>" + hh + "</th>").join("") + "</tr>" +
-        rows.map(r => "<tr>" + r.map(c => "<td>" + c + "</td>").join("") + "</tr>").join("");
+  // ---------- simplified stream watermark ----------
+  (function topic6WatermarkCalculator() {
+    const id = name => document.getElementById(name);
+    const el = {
+      event: id("wm-event-time"), maximum: id("wm-max-event-time"), lateness: id("wm-lateness"),
+      arrival: id("wm-arrival-time"), end: id("wm-window-end"), watermark: id("wm-watermark"),
+      status: id("wm-status"), readout: id("wm-readout")
+    };
+    if (Object.values(el).some(node => !node)) return;
+    const fields = [el.event, el.maximum, el.lateness, el.arrival, el.end];
+    const show = value => Number(value).toLocaleString(undefined, { maximumFractionDigits: 6 });
+    function fail(message, field) {
+      fields.forEach(item => item.removeAttribute("aria-invalid"));
+      if (field) field.setAttribute("aria-invalid", "true");
+      el.watermark.textContent = "undefined";
+      el.status.textContent = "Cannot classify: " + message;
+      el.readout.setAttribute("aria-label", el.status.textContent);
     }
+    function update() {
+      fields.forEach(item => item.removeAttribute("aria-invalid"));
+      const empty = fields.findIndex(field => !field.value.trim());
+      if (empty >= 0) return fail("time fields cannot be empty.", fields[empty]);
+      const values = fields.map(field => Number(field.value));
+      const bad = values.findIndex(value => !Number.isFinite(value));
+      if (bad >= 0) return fail("all times must be finite numbers.", fields[bad]);
+      const eventTime = values[0], maximum = values[1], lateness = values[2];
+      const arrival = values[3], windowEnd = values[4];
+      if (lateness < 0) return fail("allowed lateness cannot be negative.", el.lateness);
+      if (maximum < eventTime) return fail(
+        "maximum observed event time must include this arrival, so it cannot precede its event time.",
+        el.maximum
+      );
+      if (arrival < eventTime)
+        return fail("arrival time cannot precede event time on this shared abstract timeline.", el.arrival);
+      const watermark = maximum - lateness;
+      const delay = arrival - eventTime;
+      if (!Number.isFinite(watermark) || !Number.isFinite(delay))
+        return fail("time subtraction exceeds the finite numeric range.", el.maximum);
+      el.watermark.textContent = show(watermark);
+      let relation;
+      if (eventTime < watermark) relation = "Event " + show(eventTime) + " is behind the watermark";
+      else if (eventTime === watermark) relation = "Event " + show(eventTime) + " is on the watermark boundary";
+      else relation = "Event " + show(eventTime) + " is ahead of the watermark";
+      const boundary = eventTime === watermark
+        ? "This lab leaves equality as a boundary case because engines document it differently."
+        : "This lab labels only event_time < watermark as behind; production engines may choose an inclusive boundary.";
+      const membership = eventTime < windowEnd
+        ? "It is earlier than window end " + show(windowEnd) + ", but no start was supplied, so full membership is unknown."
+        : "It is outside the half-open window at or beyond end " + show(windowEnd) + ".";
+      const finality = watermark >= windowEnd
+        ? "The watermark has reached the end, so this simplified policy may finalize that window."
+        : "The watermark has not reached the end, so this simplified policy keeps that window open.";
+      el.status.textContent = relation + ". " + boundary + " " + membership + " " + finality +
+        " Arrival minus event time is " + show(delay) + " timeline units.";
+      el.readout.setAttribute("aria-label", "Watermark " + show(watermark) + ". " + el.status.textContent);
+    }
+    fields.forEach(field => field.addEventListener("input", update));
+    update();
+  })();
+
+  // ---------- equality-join cardinality ----------
+  (function topic6JoinCardinalityCalculator() {
+    const id = name => document.getElementById(name);
+    const el = {
+      left: id("jc-left"), right: id("jc-right"), total: id("jc-total"),
+      breakdown: id("jc-breakdown"), readout: id("jc-readout")
+    };
+    if (Object.values(el).some(node => !node)) return;
+    function parse(field, side) {
+      if (!field.value.trim()) return { error: side + " key counts cannot be empty." };
+      const map = new Map();
+      for (const raw of field.value.split(",")) {
+        const parts = raw.trim().split(":");
+        if (parts.length !== 2 || !parts[0].trim() || !/^\d+$/.test(parts[1].trim()))
+          return { error: side + " entries must use key:nonnegative_integer." };
+        const key = parts[0].trim(), count = Number(parts[1].trim());
+        if (!Number.isSafeInteger(count) || count < 0)
+          return { error: side + " counts must be nonnegative safe integers." };
+        const prior = map.get(key) || 0;
+        if (prior > Number.MAX_SAFE_INTEGER - count)
+          return { error: side + " duplicate-key counts exceed the safe range." };
+        map.set(key, prior + count);
+      }
+      return { map };
+    }
+    function paragraph(text) {
+      const p = document.createElement("p");
+      p.textContent = text;
+      return p;
+    }
+    function summary() {
+      let node = el.readout.querySelector("[data-jc-summary]");
+      if (!node) {
+        node = document.createElement("span");
+        node.dataset.jcSummary = "";
+        el.readout.append(node);
+      }
+      return node;
+    }
+    function fail(message, field) {
+      el.left.removeAttribute("aria-invalid"); el.right.removeAttribute("aria-invalid");
+      if (field) field.setAttribute("aria-invalid", "true");
+      el.total.textContent = "undefined";
+      summary().textContent = "Cannot calculate.";
+      el.breakdown.replaceChildren(paragraph(message));
+      el.readout.setAttribute("aria-label", "Join cardinality undefined. " + message);
+    }
+    function update() {
+      el.left.removeAttribute("aria-invalid"); el.right.removeAttribute("aria-invalid");
+      const left = parse(el.left, "Left");
+      if (left.error) return fail(left.error, el.left);
+      const right = parse(el.right, "Right");
+      if (right.error) return fail(right.error, el.right);
+      const keys = [...left.map.keys()].filter(key => right.map.has(key)).sort((a, b) => a.localeCompare(b));
+      const details = [];
+      let total = 0;
+      for (const key of keys) {
+        const l = left.map.get(key), r = right.map.get(key);
+        if (l !== 0 && r > Math.floor(Number.MAX_SAFE_INTEGER / l)) {
+          fail("product for key " + key + " exceeds the safe range.", el.left);
+          el.right.setAttribute("aria-invalid", "true");
+          return;
+        }
+        const product = l * r;
+        if (total > Number.MAX_SAFE_INTEGER - product) {
+          fail("total join cardinality exceeds the safe range.", el.left);
+          el.right.setAttribute("aria-invalid", "true");
+          return;
+        }
+        total += product;
+        details.push([key, l, r, product]);
+      }
+      el.total.textContent = total.toLocaleString();
+      summary().textContent = keys.length + " matching " + (keys.length === 1 ? "key" : "keys") +
+        "; sum of per-key products.";
+      const fragment = document.createDocumentFragment();
+      if (!details.length) fragment.append(paragraph("No key occurs on both sides, so the inner join has zero rows."));
+      details.forEach(item => fragment.append(paragraph(item[0] + " contributes " +
+        item[1].toLocaleString() + " x " + item[2].toLocaleString() + " = " +
+        item[3].toLocaleString() + ".")));
+      if (details.length) fragment.append(paragraph("Total = " + total.toLocaleString() + " inner-join rows."));
+      el.breakdown.replaceChildren(fragment);
+      el.readout.setAttribute("aria-label", "Inner join cardinality " + total.toLocaleString() +
+        " rows from " + keys.length + " matching keys.");
+    }
+    el.left.addEventListener("input", update);
+    el.right.addEventListener("input", update);
+    update();
+  })();
+
+  // ---------- point-in-time feature selection ----------
+  (function topic6PointInTimeCalculator() {
+    const id = name => document.getElementById(name);
+    const el = {
+      prediction: id("pit-prediction"), rows: id("pit-rows"),
+      selected: id("pit-selected"), readout: id("pit-readout")
+    };
+    if (Object.values(el).some(node => !node)) return;
+    function detail() {
+      let node = el.readout.querySelector("[data-pit-detail]");
+      if (!node) {
+        node = document.createElement("span");
+        node.dataset.pitDetail = "";
+        el.readout.append(node);
+      }
+      return node;
+    }
+    function fail(message, field) {
+      el.prediction.removeAttribute("aria-invalid"); el.rows.removeAttribute("aria-invalid");
+      if (field) field.setAttribute("aria-invalid", "true");
+      el.selected.textContent = "undefined";
+      detail().textContent = "Cannot select: " + message;
+      el.readout.setAttribute("aria-label", "Point-in-time selection undefined. " + message);
+    }
+    function parseRows() {
+      const lines = el.rows.value.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+      if (!lines.length) return { error: "feature rows cannot be empty." };
+      const parsed = [];
+      for (let index = 0; index < lines.length; index++) {
+        const parts = lines[index].split(",").map(part => part.trim());
+        if (parts.length !== 3 || !parts[0] || !parts[1] || !parts[2])
+          return { error: "line " + (index + 1) + " must contain event_time,availability_time,value." };
+        const eventTime = Number(parts[0]), availableTime = Number(parts[1]);
+        if (!Number.isFinite(eventTime) || !Number.isFinite(availableTime))
+          return { error: "line " + (index + 1) + " must use finite numeric times." };
+        if (availableTime < eventTime)
+          return { error: "line " + (index + 1) + " has availability before its event on this shared timeline." };
+        parsed.push({ eventTime, availableTime, value: parts[2], line: index + 1 });
+      }
+      return { rows: parsed };
+    }
+    function update() {
+      el.prediction.removeAttribute("aria-invalid"); el.rows.removeAttribute("aria-invalid");
+      if (!el.prediction.value.trim())
+        return fail("prediction time cannot be empty.", el.prediction);
+      const prediction = Number(el.prediction.value);
+      if (!Number.isFinite(prediction)) return fail("prediction time must be finite.", el.prediction);
+      const parsed = parseRows();
+      if (parsed.error) return fail(parsed.error, el.rows);
+      const legal = parsed.rows.filter(row =>
+        row.eventTime <= prediction && row.availableTime <= prediction
+      ).sort((a, b) => b.eventTime - a.eventTime ||
+        b.availableTime - a.availableTime || b.line - a.line);
+      if (!legal.length) {
+        el.selected.textContent = "none";
+        detail().textContent = "No row has both times at or before prediction time " + prediction + ".";
+        el.readout.setAttribute("aria-label", detail().textContent);
+        return;
+      }
+      const chosen = legal[0];
+      el.selected.textContent = chosen.value;
+      detail().textContent = "Line " + chosen.line + " selected: event " + chosen.eventTime +
+        ", available " + chosen.availableTime + ". " + legal.length + " of " + parsed.rows.length +
+        " rows are legal. Ties use latest availability, then the later input line.";
+      el.readout.setAttribute("aria-label", "Selected feature " + chosen.value + ". " + detail().textContent);
+    }
+    el.prediction.addEventListener("input", update);
+    el.rows.addEventListener("input", update);
+    update();
+  })();
+
+  // ---------- SQL logical-stage stepper ----------
+  (function topic6SqlStepper() {
+    const id = name => document.getElementById(name);
+    const el = {
+      pick: id("q-pick"), prev: id("q-prev"), next: id("q-next"), stage: id("q-stage"),
+      restart: id("q-restart"), sql: id("q-sql"), stepn: id("q-stepn"),
+      expl: id("q-expl"), grain: id("q-grain"), count: id("q-count"),
+      status: id("q-status"), table: id("q-table")
+    };
+    if (Object.entries(el).some(entry => entry[0] !== "restart" && !entry[1])) return;
+
+    const head = ["id", "customer", "region", "amount", "ts"];
+    const orders = [
+      [1, "ana", "EU", 120, "01-03"], [2, "ben", "US", 300, "01-04"],
+      [3, "ana", "EU", 80, "01-05"], [4, "carl", "US", 40, "01-06"],
+      [5, "dee", "APAC", 500, "01-07"], [6, "ben", "US", 220, "01-08"],
+      [7, "ana", "EU", 60, "01-09"], [8, "dee", "APAC", 450, "01-10"],
+      [9, "carl", "US", 90, "01-11"], [10, "ben", "US", 180, "01-08"],
+      [11, "erin", "EU", null, "01-13"]
+    ];
+    const customers = new Map([
+      ["ana", "Berlin"], ["ben", "NYC"], ["carl", "Austin"], ["dee", "Tokyo"]
+    ]);
+    const filtered = orders.filter(row => row[3] !== null && row[3] >= 60);
+    const anaBen = orders.filter(row => row[1] === "ana" || row[1] === "ben");
+    const ordered = [...anaBen].sort((a, b) =>
+      a[1].localeCompare(b[1]) || a[4].localeCompare(b[4]) || a[0] - b[0]
+    );
+    const totals = new Map();
+    const running = ordered.map(row => {
+      const total = (totals.get(row[1]) || 0) + row[3];
+      totals.set(row[1], total);
+      return [row[1], row[4], row[0], row[3], total];
+    });
+    const joined = orders.map(row => [
+      row[0], row[1], row[3], customers.has(row[1]) ? customers.get(row[1]) : null
+    ]);
+    const S = (name, expl, grain, status, columns, rows) =>
+      ({ name, expl, grain, status, head: columns, rows });
+
     const queries = {
       groupby: {
-        sql: "SELECT region, COUNT(*) AS n, SUM(amount) AS total\nFROM orders\nWHERE amount >= 60\nGROUP BY region\nHAVING SUM(amount) > 400\nORDER BY total DESC;",
+        sql: "SELECT region, COUNT(*) AS n, SUM(amount) AS total\n" +
+          "FROM orders\nWHERE amount >= 60\nGROUP BY region\n" +
+          "HAVING SUM(amount) > 400\nORDER BY total DESC;",
         steps: [
-          { name: "FROM orders", expl: "Start with the raw table — all 10 rows.", head: H, rows: orders },
-          { name: "WHERE amount >= 60", expl: "Filter individual rows before any grouping. The $40 order is dropped. WHERE never sees aggregates — they don't exist yet.", head: H, rows: orders.filter(r => r[3] >= 60) },
-          { name: "GROUP BY region", expl: "Collapse rows into one group per region. From here on, only group-level expressions are legal.", head: ["region", "rows in group"], rows: [["EU", "id 1, 3, 7"], ["US", "id 2, 6, 9, 10"], ["APAC", "id 5, 8"]] },
-          { name: "HAVING SUM(amount) > 400", expl: "Filter groups using aggregates. EU totals 260 → dropped. This is what HAVING exists for — WHERE could not express it.", head: ["region", "COUNT(*)", "SUM(amount)"], rows: [["US", 4, 790], ["APAC", 2, 950]] },
-          { name: "SELECT + ORDER BY total DESC", expl: "Project the requested columns, name them with aliases, sort. Aliases exist only from SELECT onward — the reason WHERE can't use them.", head: ["region", "n", "total"], rows: [["APAC", 2, 950], ["US", 4, 790]] }
+          S("FROM orders", "Begin with the source relation; the NULL amount is still a row.",
+            "one row per order", "11 source rows.", head, orders),
+          S("WHERE amount >= 60", "WHERE runs before grouping. The 40 comparison is false and the NULL comparison is unknown, so both rows leave.",
+            "one row per qualifying order", "11 rows became 9.", head, filtered),
+          S("GROUP BY region", "Rows collapse to one group per region. Only grouping keys and aggregates survive this boundary.",
+            "one row per region group", "9 orders collapsed into 3 groups.",
+            ["region", "member ids"], [["EU", "1, 3, 7"], ["US", "2, 6, 9, 10"], ["APAC", "5, 8"]]),
+          S("HAVING SUM(amount) > 400", "HAVING filters groups after aggregation; EU totals 260 and is removed.",
+            "one row per retained region", "3 groups became 2.",
+            ["region", "COUNT(*)", "SUM(amount)"], [["US", 4, 790], ["APAC", 2, 950]]),
+          S("SELECT, then ORDER BY", "SELECT projects and aliases columns; ORDER BY changes presentation, not cardinality.",
+            "one final row per retained region", "Final result: 2 rows.",
+            ["region", "n", "total"], [["APAC", 2, 950], ["US", 4, 790]])
         ]
       },
       window: {
-        sql: "SELECT customer, ts, amount,\n  SUM(amount) OVER (PARTITION BY customer\n                    ORDER BY ts) AS running_total\nFROM orders\nWHERE customer IN ('ana','ben');",
+        sql: "SELECT customer, ts, id, amount,\n  SUM(amount) OVER (\n" +
+          "    PARTITION BY customer ORDER BY ts, id\n" +
+          "    ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW\n" +
+          "  ) AS running_total\nFROM orders\nWHERE customer IN ('ana','ben');",
         steps: [
-          { name: "FROM + WHERE", expl: "Keep just ana's and ben's orders.", head: H, rows: orders.filter(r => r[1] === "ana" || r[1] === "ben") },
-          { name: "PARTITION BY customer", expl: "The window function will operate inside each partition independently — like GROUP BY, except rows are NOT collapsed.", head: ["partition", "rows"], rows: [["ana", "id 1, 3, 7"], ["ben", "id 2, 6, 10"]] },
-          { name: "ORDER BY ts within partition → running SUM", expl: "Each row gets the sum of amounts up to and including itself, within its partition. Row count unchanged — that's the window-function superpower for feature engineering ('customer's spend so far').", head: ["customer", "ts", "amount", "running_total"], rows: [["ana", "01-03", 120, 120], ["ana", "01-05", 80, 200], ["ana", "01-09", 60, 260], ["ben", "01-04", 300, 300], ["ben", "01-08", 220, 520], ["ben", "01-12", 180, 700]] }
+          S("FROM, then WHERE", "Keep Ana and Ben; no window value exists yet.",
+            "one row per qualifying order", "6 rows remain.", head, anaBen),
+          S("PARTITION BY customer", "Each row gains a partition. Unlike GROUP BY, window partitioning does not collapse rows.",
+            "one row per order, annotated by partition", "Cardinality remains 6.",
+            ["id", "customer", "ts", "amount", "partition"],
+            anaBen.map(row => [row[0], row[1], row[4], row[3], row[1]])),
+          S("ORDER BY ts, id in each partition", "Ben has two 01-08 rows. The id tie-breaker makes their row-by-row order deterministic.",
+            "one ordered row per order", "Cardinality remains 6; sequence is deterministic.",
+            ["customer", "ts", "id", "amount"], ordered.map(row => [row[1], row[4], row[0], row[3]])),
+          S("SELECT running SUM with ROWS frame", "The explicit ROWS frame accumulates through the physical row and avoids RANGE-style peer expansion.",
+            "one enriched row per order", "Window context was added without collapsing rows.",
+            ["customer", "ts", "id", "amount", "running_total"], running)
         ]
       },
       join: {
-        sql: "SELECT c.city, SUM(o.amount) AS total\nFROM orders o\nJOIN customers c ON o.customer = c.name\nGROUP BY c.city;",
+        sql: "SELECT c.city, COUNT(*) AS joined_rows, COUNT(o.amount) AS known,\n" +
+          "       SUM(o.amount) AS total\nFROM orders o\n" +
+          "LEFT JOIN customers c ON o.customer = c.name\nGROUP BY c.city\n" +
+          "ORDER BY total DESC NULLS LAST;",
         steps: [
-          { name: "FROM orders JOIN customers ON …", expl: "Each order row is matched with its customer row; matching rows are glued side by side. Unmatched rows would vanish (INNER JOIN) — LEFT JOIN would keep them with NULLs.", head: ["id", "customer", "amount", "city"], rows: orders.map(r => [r[0], r[1], r[3], customers.find(c => c[0] === r[1])[1]]) },
-          { name: "GROUP BY c.city", expl: "Group the joined rows by city.", head: ["city", "rows"], rows: [["Berlin", "3 orders"], ["NYC", "3 orders"], ["Austin", "2 orders"], ["Tokyo", "2 orders"]] },
-          { name: "SELECT city, SUM(amount)", expl: "Aggregate per city. Join + aggregate is the bread-and-butter shape of analytics and of ML feature queries alike.", head: ["city", "total"], rows: [["Berlin", 260], ["NYC", 700], ["Austin", 130], ["Tokyo", 950]] }
+          S("FROM orders", "Begin on the left side.", "one row per order", "11 left rows.", head, orders),
+          S("LEFT JOIN customers", "Known customers match one lookup row. Erin has no match, so LEFT JOIN keeps the order with NULL city.",
+            "one row per joined order here", "11 left rows remain 11; duplicate lookup keys would fan out rows.",
+            ["id", "customer", "amount", "city"], joined),
+          S("GROUP BY city", "The NULL city forms a group. COUNT(*) includes its row; COUNT(amount) excludes its NULL amount.",
+            "one row per city value, including NULL", "11 joined rows collapsed into 5 groups.",
+            ["city", "joined_rows", "known", "SUM(amount)"],
+            [["Berlin", 3, 3, 260], ["NYC", 3, 3, 700], ["Austin", 2, 2, 130],
+              ["Tokyo", 2, 2, 950], [null, 1, 0, null]]),
+          S("SELECT, then ORDER BY", "This dialect places the all-NULL total last; verify NULL ordering syntax in your engine.",
+            "one final row per city value", "Final grouped result: 5 rows.",
+            ["city", "joined_rows", "known", "total"],
+            [["Tokyo", 2, 2, 950], ["NYC", 3, 3, 700], ["Berlin", 3, 3, 260],
+              ["Austin", 2, 2, 130], [null, 1, 0, null]])
+        ]
+      },
+      nulls: {
+        sql: "SELECT COUNT(*) AS rows, COUNT(amount) AS known_amounts,\n" +
+          "  SUM(amount) AS total,\n" +
+          "  SUM(CASE WHEN amount IS NULL THEN 1 ELSE 0 END) AS missing\nFROM orders;",
+        steps: [
+          S("FROM orders", "One amount is NULL: missing, not zero or an empty string.",
+            "one row per order", "11 source rows.", head, orders),
+          S("Evaluate amount IS NULL", "IS NULL is the missingness test; amount = NULL would be unknown rather than true.",
+            "one diagnostic row per order", "Exactly one amount is missing.",
+            ["id", "amount", "amount IS NULL"],
+            orders.map(row => [row[0], row[3], row[3] === null ? "TRUE" : "FALSE"])),
+          S("SELECT aggregates", "COUNT(*) counts rows, COUNT(amount) skips NULL, and SUM ignores NULL when known inputs exist.",
+            "one aggregate row", "11 rows; 10 known amounts; 1 missing.",
+            ["rows", "known_amounts", "total", "missing"], [[11, 10, 2040, 1]])
+        ]
+      },
+      cte: {
+        sql: "WITH clean AS (\n  SELECT customer, amount FROM orders WHERE amount IS NOT NULL\n" +
+          "), customer_totals AS (\n  SELECT customer, SUM(amount) AS total\n" +
+          "  FROM clean GROUP BY customer\n)\nSELECT customer, total\n" +
+          "FROM customer_totals\nWHERE total >= 500\nORDER BY total DESC, customer;",
+        steps: [
+          S("FROM orders", "Begin before either named stage.", "one row per order", "11 source rows.", head, orders),
+          S("CTE clean", "The CTE names a testable logical subset; it is not guaranteed to materialize.",
+            "one row per order with known amount", "10 clean rows.",
+            ["customer", "amount"], orders.filter(row => row[3] !== null).map(row => [row[1], row[3]])),
+          S("CTE customer_totals", "The second CTE groups the clean relation.",
+            "one row per customer", "10 rows collapsed into 4 totals.",
+            ["customer", "total"], [["ana", 260], ["ben", 700], ["carl", 130], ["dee", 950]]),
+          S("Outer WHERE total >= 500", "total is now an input column from customer_totals, so the outer WHERE can filter it.",
+            "one row per retained customer", "4 totals became 2.",
+            ["customer", "total"], [["ben", 700], ["dee", 950]]),
+          S("ORDER BY total DESC, customer", "The stable secondary key resolves any equal totals.",
+            "one final row per retained customer", "Final result: 2 rows.",
+            ["customer", "total"], [["dee", 950], ["ben", 700]])
         ]
       }
     };
-    let cur = "groupby", step = 0;
-    function render() {
-      const q = queries[cur];
-      document.getElementById("q-sql").textContent = q.sql;
-      const s = q.steps[step];
-      document.getElementById("q-stepn").textContent = (step + 1) + " / " + q.steps.length + " — " + s.name;
-      document.getElementById("q-expl").textContent = s.expl;
-      document.getElementById("q-table").innerHTML = tbl(s.head, s.rows);
-      document.getElementById("q-next").disabled = step >= q.steps.length - 1;
+
+    let current = queries[el.pick.value] ? el.pick.value : "groupby";
+    let step = 0;
+    function renderTable(stage) {
+      const caption = document.createElement("caption");
+      caption.textContent = "Intermediate result for " + stage.name + "; " + stage.grain +
+        "; " + stage.rows.length + " displayed rows.";
+      const thead = document.createElement("thead");
+      const trh = document.createElement("tr");
+      stage.head.forEach(value => {
+        const th = document.createElement("th");
+        th.scope = "col"; th.textContent = value; trh.append(th);
+      });
+      thead.append(trh);
+      const tbody = document.createElement("tbody");
+      stage.rows.forEach(row => {
+        const tr = document.createElement("tr");
+        row.forEach(value => {
+          const td = document.createElement("td");
+          td.textContent = value === null ? "NULL" : String(value);
+          tr.append(td);
+        });
+        tbody.append(tr);
+      });
+      el.table.replaceChildren(caption, thead, tbody);
+      el.table.setAttribute("aria-label", stage.name + ". " + stage.grain + ". " +
+        stage.rows.length + " rows.");
     }
-    document.getElementById("q-pick").addEventListener("change", e => { cur = e.target.value; step = 0; render(); });
-    document.getElementById("q-next").addEventListener("click", () => { step = Math.min(step + 1, queries[cur].steps.length - 1); render(); });
-    document.getElementById("q-restart").addEventListener("click", () => { step = 0; render(); });
+    function rebuildStages() {
+      el.stage.replaceChildren();
+      queries[current].steps.forEach((value, index) => {
+        const option = document.createElement("option");
+        option.value = String(index); option.textContent = (index + 1) + ". " + value.name;
+        el.stage.append(option);
+      });
+    }
+    function render() {
+      const query = queries[current];
+      step = Math.max(0, Math.min(step, query.steps.length - 1));
+      const stage = query.steps[step];
+      el.sql.textContent = query.sql;
+      el.stepn.textContent = (step + 1) + " / " + query.steps.length + " - " + stage.name;
+      el.expl.textContent = stage.expl;
+      el.grain.textContent = stage.grain;
+      el.count.textContent = String(stage.rows.length);
+      el.status.textContent = stage.status;
+      el.stage.value = String(step);
+      el.prev.disabled = step === 0;
+      el.next.disabled = step === query.steps.length - 1;
+      renderTable(stage);
+    }
+    el.pick.addEventListener("change", event => {
+      current = queries[event.target.value] ? event.target.value : "groupby";
+      step = 0; rebuildStages(); render();
+    });
+    el.prev.addEventListener("click", () => { step = Math.max(0, step - 1); render(); });
+    el.next.addEventListener("click", () => {
+      step = Math.min(queries[current].steps.length - 1, step + 1); render();
+    });
+    el.stage.addEventListener("change", event => {
+      const requested = Number(event.target.value);
+      if (Number.isSafeInteger(requested)) step = requested;
+      render();
+    });
+    if (el.restart) el.restart.addEventListener("click", () => { step = 0; render(); });
+    rebuildStages();
     render();
   })();
+
 });
 </script>
 </body>
