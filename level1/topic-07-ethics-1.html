@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Topic 7 — Professional Ethics &amp; Responsible AI I · CAIE Course</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚖</text></svg>">
 <link rel="stylesheet" href="../assets/course.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
@@ -24,10 +25,10 @@
 <div class="kicker">Level I · Topic 7 · Exam weight 6% — but a borderline candidate who fails ethics fails the exam</div>
 <h1>Professional Ethics &amp; Responsible AI I</h1>
 <p class="lead">
-  Like the CFA's ethics core, this topic is small in hours and disproportionate in consequence — by
-  exam design and by career design. The engineering content is real (the fairness-criteria
-  impossibility below is a theorem, not a sentiment), and the professional content is the difference
-  between an engineer and a chartered one: knowing what you may build, for whom, and when to say no.
+  Ethics is engineering under consequences: deciding whose evidence counts, which errors matter,
+  what data are justified, and when uncertainty makes release irresponsible. The mathematical
+  trade-offs are real, but mathematics does not choose whose risk to prioritize. Professional
+  practice makes those value choices visible, reviewable, and accountable.
 </p>
 
 <div class="box los">
@@ -40,179 +41,779 @@
   </ul>
 </div>
 
+<div class="box note">
+  <div class="box-title">Orientation — four layers of responsibility</div>
+  <p><strong>Law</strong> sets enforceable minimum duties. <strong>Professional standards</strong>
+  describe conduct expected of practitioners. <strong>Organizational policy</strong> assigns local
+  controls and owners. <strong>Ethical reasoning</strong> examines harms and duties that compliance
+  may not settle. A lawful system can still be harmful; a worthy aim does not waive the law.</p>
+</div>
+<div class="tablewrap">
+<table>
+  <thead><tr><th scope="col">Term</th><th scope="col">Working meaning</th><th scope="col">Question to ask</th></tr></thead>
+  <tbody>
+  <tr><td><strong>stakeholder</strong></td><td>any person or group affected, including people who never chose the system</td><td>Who receives benefit, error, surveillance, delay, or exclusion?</td></tr>
+  <tr><td><strong>harm</strong></td><td>physical, financial, legal, psychological, social, or opportunity loss</td><td>How severe, likely, scalable, and reversible could it be?</td></tr>
+  <tr><td><strong>fairness criterion</strong></td><td>a measurable rule for a particular distribution of outcomes or errors</td><td>Why does this criterion match the decision and stakeholders?</td></tr>
+  <tr><td><strong>personal data</strong></td><td>information relating to an identified or identifiable person under the applicable law</td><td>Can this record identify or meaningfully single out someone?</td></tr>
+  <tr><td><strong>dual use</strong></td><td>a capability with plausible beneficial and harmful uses</td><td>Which misuse becomes easier at this access level and scale?</td></tr>
+  <tr><td><strong>competence</strong></td><td>having—or obtaining—the expertise and evidence needed for the decision</td><td>What do we not know, and who is qualified to review it?</td></tr>
+  <tr><td><strong>accountability</strong></td><td>named ownership plus evidence that duties and controls were carried out</td><td>Who can pause, approve, investigate, and remediate?</td></tr>
+  </tbody>
+</table>
+</div>
+<div class="box warn">
+  <div class="box-title">Legal scope</div>
+  <p>The regulation summaries below are an educational overview, current to 18 August 2026—not legal
+  advice. Jurisdiction, role, intended purpose, sector, and facts can change the result. For a real
+  system, involve qualified privacy, legal, safety, security, and domain specialists.</p>
+</div>
+
 <h2>7.1 The Code, compressed</h2>
-<p>The CAIE Code of Conduct reduces to six standards. Learn them as tests you apply to a scenario:</p>
+<h3>Purpose — turn principles into repeatable professional decisions</h3>
+<p>
+  The six items below are this course's synthesis of the CAIE Code, not a statutory licence or a
+  substitute for an employer's formal code. Use them as tests: identify the duty, connect it to
+  evidence, choose a proportionate action, and record who owns the residual risk. “Be ethical” is
+  too vague to audit; “disclosed subgroup uncertainty and withheld launch approval pending review”
+  is observable professional conduct.
+</p>
+
+<h3>Six standards — and the evidence each one should leave</h3>
+<div class="tablewrap">
+<table>
+  <thead><tr><th scope="col">Course standard</th><th scope="col">Operational test</th><th scope="col">Evidence</th></tr></thead>
+  <tbody>
+  <tr><td><strong>Integrity of work</strong></td><td>Report methods, limits, uncertainty, and negative results without selective framing.</td><td>versioned evaluation, declared test set, metric definitions, corrections log</td></tr>
+  <tr><td><strong>Duty of competence</strong></td><td>Work within demonstrated expertise and system validity; obtain review where knowledge is missing.</td><td>domain review, failure analysis, monitored assumptions, training or escalation</td></tr>
+  <tr><td><strong>Duty to affected people</strong></td><td>Consider foreseeable impacts on users and non-users, especially those bearing errors.</td><td>stakeholder and impact assessment, accessible remedy, incident route</td></tr>
+  <tr><td><strong>Data stewardship</strong></td><td>Justify collection, access, transformation, retention, sharing, and deletion.</td><td>data inventory, lawful basis or authorization, access log, retention schedule</td></tr>
+  <tr><td><strong>Independence and objectivity</strong></td><td>Do not let schedule, hierarchy, or financial interest distort technical claims.</td><td>conflict disclosure, independent review, preserved dissent and decision rationale</td></tr>
+  <tr><td><strong>Professional responsibility</strong></td><td>Document, escalate, remediate, and refuse participation when required by the risk and applicable duties.</td><td>decision owner, escalation trail, release conditions, stop decision</td></tr>
+  </tbody>
+</table>
+</div>
+<p>
+  Duties can point in different directions. Transparency may conflict with privacy or security;
+  helping one group may shift errors to another; rapid access to a beneficial tool may increase
+  unmeasured harm. A conflict is not permission to choose secretly—it is a reason to document the
+  trade-off and seek the right authority.
+</p>
+
+<h3>A scenario method — TRACE facts before choosing an action</h3>
+<div class="tablewrap">
+<table>
+  <thead><tr><th scope="col">Step</th><th scope="col">Prompt</th><th scope="col">Output</th></tr></thead>
+  <tbody>
+  <tr><td><strong>T — Timeline and facts</strong></td><td>What happened, what is proposed, what is measured, and what is merely assumed?</td><td>dated facts, uncertainties, source evidence</td></tr>
+  <tr><td><strong>R — Rights, roles, and risks</strong></td><td>Who is affected; which standards, contracts, policies, and laws may apply?</td><td>stakeholder map, accountable owner, specialist needs</td></tr>
+  <tr><td><strong>A — Alternatives</strong></td><td>Can the goal be met with less data, lower capability, slower rollout, or human review?</td><td>options and their benefits, burdens, and residual risks</td></tr>
+  <tr><td><strong>C — Controls and criterion</strong></td><td>Which measurable release conditions and monitoring rules match the harm?</td><td>tests, thresholds, access controls, rollback and remedy</td></tr>
+  <tr><td><strong>E — Escalate and evidence</strong></td><td>Who can authorize, pause, or independently challenge the decision?</td><td>decision log, dissent, approval, review date</td></tr>
+  </tbody>
+</table>
+</div>
+<pre><code>TRACE_DECISION(proposal):
+  separate verified facts from assumptions and unknowns
+  map affected people, decision owners, and applicable duties
+  estimate severity, scale, reversibility, and uncertainty of plausible harms
+  compare a no-deploy option and at least one lower-risk alternative
+  define evidence needed for release, monitoring, remedy, and rollback
+  if outside team competence or authority: obtain independent specialist review
+  record recommendation, dissent, owner, conditions, and review date</code></pre>
+
+<h3>Worked professional judgment — an unaudited launch</h3>
+<div class="box example">
+  <div class="box-title">Scenario</div>
+  <p>A manager wants a hiring ranker released tomorrow. Overall validation is complete, but subgroup
+  recall, accommodation effects, and appeal handling were not tested. The schedule is commercial;
+  applicant opportunity is high-impact and errors may be difficult to reverse.</p>
+</div>
 <ol>
-  <li><strong>Integrity of work:</strong> report results honestly — no cherry-picked benchmarks, no undisclosed test-set tuning, no claiming a metric you didn't measure.</li>
-  <li><strong>Duty of competence:</strong> operate within the limits of your models <em>and yourself</em>; know your model's failure modes before others discover them; disclose uncertainty.</li>
-  <li><strong>Duty to users:</strong> the people affected by a system outrank the convenience of its builders. Foreseeable harm is your responsibility even when unintended.</li>
-  <li><strong>Data stewardship:</strong> collect the minimum, protect what you hold, use it only for its consented purpose.</li>
-  <li><strong>Independence and objectivity:</strong> resist pressure — commercial or hierarchical — to misstate what a system can do or to skip evaluation.</li>
-  <li><strong>Professional responsibility:</strong> the license to build advanced systems carries the obligation to escalate, document, and — in the limit — refuse (Topic 22 trains this).</li>
+  <li><strong>State the gap precisely:</strong> “Performance for affected subgroups and the remedy process are unverified,” not “the model is biased” without evidence.</li>
+  <li><strong>Propose a proportionate remedy:</strong> complete the subgroup audit, test accessible alternatives, document decision support versus automation, and define an appeal route.</li>
+  <li><strong>Set a release condition:</strong> for this high-impact use, do not represent the system as validated until the blocking evidence and accountable approval exist.</li>
+  <li><strong>Escalate with evidence:</strong> preserve the concern, response, owner, and decision. Seek independent HR, legal, domain, and responsible-AI review.</li>
 </ol>
+<p>
+  Immediate resignation is not the automatic first move, and silent release is not acceptable. The
+  escalation path depends on urgency, severity, law, organizational channels, and worker protections.
+  An imminent serious threat can justify faster emergency escalation.
+</p>
+<div class="box note">
+  <div class="box-title">When to use TRACE</div>
+  <p>Use it before a material data or model change, when evidence conflicts with a release request,
+  when affected people cannot easily contest an outcome, or whenever the team lacks authority or
+  competence to accept the risk. Record only necessary evidence—an ethics log should not become a
+  new store of sensitive personal data.</p>
+</div>
 
 <h2>7.2 Algorithmic bias and the fairness impossibility</h2>
+<h3>Purpose — locate bias across the whole decision system</h3>
 <p>
-  <strong>Algorithmic bias</strong> is systematic error that disadvantages a group — usually
-  inherited from data (historical decisions encode historical discrimination; sampling
-  under-represents groups; labels proxy something other than truth) or from deployment context.
-  To reason about it, formalize: for a binary predictor \(\hat Y\), outcome \(Y\), and group
-  \(A\), the three canonical criteria are:
-</p>
-<ul>
-  <li><strong>Demographic parity:</strong> \(P(\hat Y = 1 \mid A = a)\) equal across groups — equal selection rates.</li>
-  <li><strong>Equalized odds:</strong> \(P(\hat Y = 1 \mid Y = y, A = a)\) equal across groups for each true \(y\) — equal true-positive <em>and</em> false-positive rates.</li>
-  <li><strong>Predictive parity / calibration:</strong> \(P(Y = 1 \mid \hat Y = 1, A = a)\) equal — a positive prediction means the same thing for every group.</li>
-</ul>
-<p>
-  The theorem the syllabus wants: <strong>when base rates differ between groups, no non-perfect
-  classifier can satisfy all of these simultaneously.</strong> (Kleinberg et al. 2016; Chouldechova
-  2016 — provoked by the COMPAS recidivism debate, where the tool was calibrated but had unequal
-  false-positive rates.) This is arithmetic, not politics: choosing <em>which</em> fairness
-  criterion to satisfy is a value judgment about which error costs matter, and it must be made
-  explicitly, documented, and owned — not discovered by journalists.
+  In statistics, <strong>bias</strong> can mean systematic estimation error. In responsible-AI work,
+  the concern is broader: a data-driven system can distribute errors, resources, surveillance, or
+  opportunity unjustly. A metric gap is evidence to investigate, not by itself a complete causal or
+  legal conclusion. The unit of analysis is the workflow—problem definition, data, label, model,
+  threshold, interface, human decision, and feedback—not the model file alone.
 </p>
 
+<h3>Where bias enters — trace source, mechanism, and affected group</h3>
+<div class="tablewrap">
+<table>
+  <thead><tr><th scope="col">Source</th><th scope="col">Mechanism</th><th scope="col">Example diagnostic</th></tr></thead>
+  <tbody>
+  <tr><td><strong>historical</strong></td><td>past decisions encode exclusion or unequal access</td><td>compare labels with independent outcomes and policy history</td></tr>
+  <tr><td><strong>representation</strong></td><td>some groups, contexts, languages, or devices are under-sampled</td><td>coverage and missingness by relevant intersection and context</td></tr>
+  <tr><td><strong>measurement</strong></td><td>a sensor or proxy has different error by group</td><td>instrument and annotation agreement by subgroup</td></tr>
+  <tr><td><strong>label</strong></td><td>the target measures an institutional action rather than the desired truth</td><td>ask who created the label and which cases were never observed</td></tr>
+  <tr><td><strong>aggregation</strong></td><td>one model assumes relationships are shared when groups differ materially</td><td>residual and calibration plots by context; test justified alternatives</td></tr>
+  <tr><td><strong>objective</strong></td><td>average loss hides an expensive minority failure</td><td>report disaggregated errors and decision-weighted harms</td></tr>
+  <tr><td><strong>evaluation</strong></td><td>the test set, threshold, or metric does not match deployment</td><td>slice coverage, temporal validity, confidence intervals, stress cases</td></tr>
+  <tr><td><strong>deployment</strong></td><td>people use the score outside its purpose or over-trust it</td><td>observe actual workflow, overrides, appeals, and downstream effects</td></tr>
+  <tr><td><strong>feedback</strong></td><td>decisions change what can later be measured</td><td>identify selective labels and monitor intervention-created shifts</td></tr>
+  </tbody>
+</table>
+</div>
+<div class="box warn">
+  <div class="box-title">“Fairness through unawareness” is not a test</div>
+  <p>Removing a protected attribute does not remove correlated proxies or historical structure.
+  Auditing may require protected-attribute data under strict authorization and privacy controls;
+  collecting or using those attributes can itself be legally sensitive. Obtain appropriate review
+  rather than assuming either collection or deletion is universally required.</p>
+</div>
+
+<h3>From confusion counts to group rates</h3>
+<p>
+  For group \(a\), start with TP, FP, FN, and TN. Prevalence is
+  \(\pi_a=(TP_a+FN_a)/N_a\); selection rate is \(SR_a=(TP_a+FP_a)/N_a\);
+  true-positive rate is \(TPR_a=TP_a/(TP_a+FN_a)\); false-positive rate is
+  \(FPR_a=FP_a/(FP_a+TN_a)\); and positive predictive value is
+  \(PPV_a=TP_a/(TP_a+FP_a)\). A zero denominator makes a rate undefined, not zero.
+</p>
 <div class="widget">
   <div class="widget-head">
-    <div class="wtitle">Interactive — the impossibility theorem, on sliders</div>
-    <div class="wsub">Two applicant groups with different base rates of repayment. Each group gets its own score distributions and its own decision threshold. Try to zero all three fairness gaps at once. You can't — that's the theorem.</div>
+    <div class="wtitle">Guided calculation — audit two group confusion matrices</div>
+    <div class="wsub">Edit counts and distinguish selection, error, and predictive-value gaps.</div>
   </div>
   <div class="widget-body">
     <div class="controls">
-      <label>base rate A <input type="range" id="f-bA" min="0.1" max="0.9" step="0.01" value="0.5"><span class="val" id="f-bA-v"></span></label>
-      <label>base rate B <input type="range" id="f-bB" min="0.1" max="0.9" step="0.01" value="0.3"><span class="val" id="f-bB-v"></span></label>
-      <label>threshold A <input type="range" id="f-tA" min="-2" max="4" step="0.02" value="1"><span class="val" id="f-tA-v"></span></label>
-      <label>threshold B <input type="range" id="f-tB" min="-2" max="4" step="0.02" value="1"><span class="val" id="f-tB-v"></span></label>
+      <label for="fa-a-tp">A true positives <input id="fa-a-tp" type="number" min="0" step="1" value="480"></label>
+      <label for="fa-a-fp">A false positives <input id="fa-a-fp" type="number" min="0" step="1" value="80"></label>
+      <label for="fa-a-fn">A false negatives <input id="fa-a-fn" type="number" min="0" step="1" value="120"></label>
+      <label for="fa-a-tn">A true negatives <input id="fa-a-tn" type="number" min="0" step="1" value="320"></label>
+    </div>
+    <div class="controls">
+      <label for="fa-b-tp">B true positives <input id="fa-b-tp" type="number" min="0" step="1" value="240"></label>
+      <label for="fa-b-fp">B false positives <input id="fa-b-fp" type="number" min="0" step="1" value="140"></label>
+      <label for="fa-b-fn">B false negatives <input id="fa-b-fn" type="number" min="0" step="1" value="60"></label>
+      <label for="fa-b-tn">B true negatives <input id="fa-b-tn" type="number" min="0" step="1" value="560"></label>
+    </div>
+    <div class="tablewrap">
+      <table id="fa-table" aria-describedby="fa-readout">
+        <thead><tr><th scope="col">Group</th><th scope="col">Prevalence</th><th scope="col">Selection</th><th scope="col">TPR</th><th scope="col">FPR</th><th scope="col">PPV</th></tr></thead>
+        <tbody><tr><td>A</td><td>60.0%</td><td>56.0%</td><td>80.0%</td><td>20.0%</td><td>85.7%</td></tr><tr><td>B</td><td>30.0%</td><td>38.0%</td><td>80.0%</td><td>20.0%</td><td>63.2%</td></tr></tbody>
+      </table>
+    </div>
+    <div class="readout" id="fa-readout" aria-live="polite">Equalized odds holds in the displayed counts, while selection and PPV differ.</div>
+    <p class="wcaption">Point estimates can be unstable for small groups. Report denominators and an
+    appropriate uncertainty interval; avoid ranking tiny gaps as precise moral facts.</p>
+  </div>
+</div>
+
+<h3>Demographic parity — compare selection rates</h3>
+<p>
+  Demographic parity asks for \(P(\hat Y=1\mid A=a)\) to be equal across groups. It focuses on who
+  receives the positive decision without conditioning on the observed outcome. A difference can be
+  reported as \(SR_A-SR_B\), while a ratio such as \(SR_B/SR_A\) answers a different question and
+  becomes unstable when the reference rate is near zero.
+</p>
+<div class="box example">
+  <div class="box-title">When it can illuminate—and when it can mislead</div>
+  <p>Selection parity can be relevant when the outcome is access to a scarce opportunity and labels
+  reflect unequal prior access. It may be inappropriate as the only target when valid outcome needs
+  differ, when intervention benefits everyone differently, or when the “positive” label is not a
+  benefit. State the decision meaning before calling a larger selection rate better.</p>
+</div>
+
+<h3>Equal opportunity and equalized odds — compare conditional errors</h3>
+<p>
+  <strong>Equal opportunity</strong> asks for equal TPR: among people with observed \(Y=1\), each
+  group is equally likely to receive \(\hat Y=1\). <strong>Equalized odds</strong> asks for both TPR
+  and FPR to be equal, equivalently \(\hat Y\perp A\mid Y\) for a binary decision. These criteria
+  treat the label as a meaningful reference. If the label is biased, selectively observed, or
+  affected by earlier decisions, equalizing rates against it can reproduce the wrong target.
+</p>
+<p>
+  Which error matters depends on context. A high false-negative rate may deny a beneficial service;
+  a high false-positive rate may expose people to an unnecessary investigation. The two harms can
+  affect different people, so report both rather than hiding one behind “accuracy.”
+</p>
+
+<h3>Predictive parity is not score calibration</h3>
+<p>
+  <strong>Predictive parity</strong> for a thresholded binary decision asks for equal PPV:
+  \(P(Y=1\mid\hat Y=1,A=a)\). <strong>Calibration within groups</strong> is a score-level condition:
+  for score \(S=s\), \(P(Y=1\mid S=s,A=a)=s\) (or the corresponding observed risk) across relevant
+  score ranges. Equal PPV at one threshold does not establish calibration across scores, and a
+  calibrated score can produce different thresholded PPV or error patterns when policies differ.
+</p>
+<div class="tablewrap">
+<table>
+  <thead><tr><th scope="col">Criterion</th><th scope="col">Conditions on</th><th scope="col">Primary question</th></tr></thead>
+  <tbody>
+  <tr><td>demographic parity</td><td>selection \(\hat Y\) and group \(A\)</td><td>Who receives the positive decision?</td></tr>
+  <tr><td>equal opportunity</td><td>TPR by group</td><td>Among observed positives, who receives the positive decision?</td></tr>
+  <tr><td>equalized odds</td><td>TPR and FPR by group</td><td>Are both conditional error rates aligned?</td></tr>
+  <tr><td>predictive parity</td><td>PPV by group at a decision rule</td><td>Among positive decisions, how often is the observed outcome positive?</td></tr>
+  <tr><td>calibration</td><td>observed outcome by score level and group</td><td>Does a stated score carry the same empirical meaning?</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>The incompatibility result — conditions matter</h3>
+<p>
+  There is no theorem saying every fairness definition conflicts in every dataset. A precise binary
+  result is: when group prevalences differ, a non-degenerate imperfect classifier generally cannot
+  have equal TPR and FPR across groups <em>and</em> equal PPV. With equalized odds,
+  \(PPV_a=\pi_aTPR/[\pi_aTPR+(1-\pi_a)FPR]\); if \(TPR\) and \(FPR\) are shared but \(\pi_a\)
+  differs, PPV usually differs. Perfect prediction and other degenerate or constrained cases are
+  exceptions. Related score results show tensions among calibration and balance conditions under
+  unequal base rates.
+</p>
+<div class="box example">
+  <div class="box-title">Worked incompatibility example</div>
+  <p>Each group has 1,000 people. Group A prevalence is 60% and group B prevalence is 30%. Both have
+  TPR 80% and FPR 20%. A therefore has TP 480, FN 120, FP 80, TN 320: selection 56% and PPV
+  \(480/560=85.7\%\). B has TP 240, FN 60, FP 140, TN 560: selection 38% and PPV
+  \(240/380=63.2\%\). Equalized odds holds, but selection parity and predictive parity do not.</p>
+</div>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Interactive model — thresholds move several fairness measures</div>
+    <div class="wsub">An illustrative Gaussian score model, not a proof or a policy recommendation. Match one metric and inspect the others.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label for="f-bA">base rate A <input type="range" id="f-bA" min="0.1" max="0.9" step="0.01" value="0.5"><span class="val" id="f-bA-v"></span></label>
+      <label for="f-bB">base rate B <input type="range" id="f-bB" min="0.1" max="0.9" step="0.01" value="0.3"><span class="val" id="f-bB-v"></span></label>
+      <label for="f-tA">threshold A <input type="range" id="f-tA" min="-2" max="4" step="0.02" value="1"><span class="val" id="f-tA-v"></span></label>
+      <label for="f-tB">threshold B <input type="range" id="f-tB" min="-2" max="4" step="0.02" value="1"><span class="val" id="f-tB-v"></span></label>
     </div>
     <div class="controls">
       <span style="font-size:0.8rem;color:var(--muted)">auto-solve for:</span>
-      <button class="btn ghost" id="f-eqSel">equal selection rates</button>
-      <button class="btn ghost" id="f-eqTPR">equal TPR</button>
-      <button class="btn ghost" id="f-eqPPV">equal precision</button>
+      <button class="btn ghost" id="f-eqSel" type="button">equal selection rates</button>
+      <button class="btn ghost" id="f-eqTPR" type="button">equal TPR</button>
+      <button class="btn ghost" id="f-eqPPV" type="button">equal PPV</button>
     </div>
-    <canvas id="f-canvas" width="640" height="210"></canvas>
-    <div class="tablewrap"><table id="f-table"></table></div>
+    <canvas id="f-canvas" width="640" height="230" role="img" tabindex="0" aria-label="Illustrative score distributions, group thresholds, and resulting group metrics">Your browser does not support the fairness visualization canvas. The metric table and live summary follow.</canvas>
+    <div class="tablewrap"><table id="f-table" aria-describedby="f-readout"></table></div>
+    <div class="readout" id="f-readout" aria-live="polite">Adjust a control to compare the group metrics.</div>
     <p class="wcaption">
-      Press each auto-solve button in turn and watch the other two gap rows light up red. With
-      different base rates, equalizing selection rates forces unequal error rates; equalizing error
-      rates forces unequal precision. Every deployed decision system has implicitly picked a corner
-      of this triangle — the professional standard is to pick it on purpose.
+      Matching TPR alone is equal opportunity, not full equalized odds; inspect FPR separately. In
+      this toy model the groups share identical class-conditional score distributions, so matching
+      TPR by threshold also matches FPR—this is not a general consequence of equal opportunity.
+      A two-percentage-point highlight tolerance is a display convention, not a legal safe harbor.
+      Real audits need justified labels, uncertainty intervals, intersectional slices, and impact context.
     </p>
   </div>
 </div>
 
-<h2>7.3 Privacy and regulation</h2>
+<h3>Choose, audit, and govern a criterion</h3>
 <p>
-  The three privacy principles the syllabus names, in engineering terms:
-  <strong>consent</strong> — data subjects agreed to <em>this</em> use, and consent to use A is not
-  consent to use B (training a model on support tickets collected "to improve service" is a purpose
-  change); <strong>minimization</strong> — collect and retain only what the purpose requires (every
-  extra column is liability, not asset); <strong>purpose limitation</strong> — data collected for
-  one purpose cannot be silently repurposed. GDPR operationalizes these for anyone touching EU
-  residents' data, adding rights of access, correction, erasure, and meaningful information about
-  automated decisions — with fines up to 4% of global revenue.
+  No metric can decide fairness without a purpose and harm model. Identify who bears false positives,
+  false negatives, delay, or denial; examine whether \(Y\) is a defensible reference; consult
+  affected stakeholders and domain experts; determine applicable law; then select metrics and
+  remedy routes before tuning. Group-specific thresholds or treatment can alter trade-offs but may
+  raise legal and policy constraints—do not prescribe them without qualified review.
 </p>
+<pre><code>FAIRNESS_AUDIT(system, decision_rule):
+  declare decision, benefit or burden, population, time window, and outcome meaning
+  document how group attributes may lawfully and safely be used for auditing
+  validate label quality and coverage before treating Y as truth
+  for each justified group and intersection:
+      report TP, FP, FN, TN, denominators, rates, and uncertainty
+  compare metrics tied to the stated harm; test threshold and workflow sensitivity
+  investigate causes rather than optimizing gaps in isolation
+  define human review, contest, remedy, monitoring, and re-audit triggers
+  record chosen criterion, rejected alternatives, owner, and residual risk</code></pre>
+<div class="box warn">
+  <div class="box-title">Common failure modes</div>
+  <p>Average metrics can hide intersectional harm; too many tiny slices can create noisy conclusions;
+  observed labels can reflect selective intervention; and “fixing” a metric can shift harm elsewhere.
+  Use uncertainty, minimum support rules, qualitative evidence, and causal investigation. Fairness is
+  a continuing governance process, not a one-time dashboard.</p>
+</div>
+
+<h2>7.3 Privacy and regulation</h2>
+<h3>Purpose — govern a data lifecycle, not just a database</h3>
 <p>
-  The <strong>EU AI Act</strong> regulates by <em>risk tier</em>, and the tiers are exam material:
+  Privacy concerns how information about people is collected, inferred, used, shared, retained, and
+  contested—not merely whether a table is secret. Start with a declared purpose and follow data from
+  collection through derived features, model artifacts, logs, backups, vendors, user interfaces, and
+  deletion. Inferred attributes and embeddings can be personal data when they relate to an
+  identifiable person even if the original name is absent.
 </p>
 <div class="tablewrap">
 <table>
-  <tr><th>Tier</th><th>Treatment</th><th>Examples</th></tr>
-  <tr><td><strong>Unacceptable</strong></td><td>banned outright</td><td>social scoring by governments, manipulative techniques exploiting vulnerabilities, real-time remote biometric ID in public (narrow exceptions)</td></tr>
-  <tr><td><strong>High risk</strong></td><td>conformity assessment, risk management, human oversight, logging, documentation</td><td>hiring/screening tools, credit scoring, medical devices, critical infrastructure, law enforcement uses</td></tr>
-  <tr><td><strong>Limited risk</strong></td><td>transparency duties</td><td>chatbots must disclose they're AI; deepfakes must be labeled</td></tr>
-  <tr><td><strong>Minimal risk</strong></td><td>no new obligations</td><td>spam filters, game AI, recommendation of songs</td></tr>
+  <thead><tr><th scope="col">Lifecycle stage</th><th scope="col">Engineering question</th><th scope="col">Evidence</th></tr></thead>
+  <tbody>
+  <tr><td>collect</td><td>Which fields are necessary for the stated purpose and legal basis?</td><td>field-level justification, notice, source and authorization</td></tr>
+  <tr><td>use and infer</td><td>Is this transform compatible with the stated purpose and expectation?</td><td>purpose mapping, feature lineage, impact review</td></tr>
+  <tr><td>share</td><td>Which recipient, role, geography, contract, and access path apply?</td><td>processor/vendor terms, transfer assessment, access policy</td></tr>
+  <tr><td>retain</td><td>For how long is each copy needed, and what event starts deletion?</td><td>retention schedule, backup policy, deletion verification</td></tr>
+  <tr><td>contest and correct</td><td>How can a person exercise applicable rights or challenge an outcome?</td><td>request workflow, identity checks, response and remedy log</td></tr>
+  </tbody>
 </table>
 </div>
 
+<h3>GDPR — principles, lawful bases, rights, and qualified rules</h3>
+<p>
+  GDPR territorial scope depends on establishment and processing context, including some offering of
+  goods or services to, or monitoring of, people in the Union; “EU resident data” is an unsafe
+  shortcut. Identify whether the organization is a <strong>controller</strong> deciding purposes and
+  means, a <strong>processor</strong> acting on documented instructions, or another role. Special
+  categories of data and criminal-conviction data have additional conditions.
+</p>
+<div class="tablewrap">
+<table>
+  <thead><tr><th scope="col">Article 5 principle</th><th scope="col">Engineering translation</th></tr></thead>
+  <tbody>
+  <tr><td>lawfulness, fairness, transparency</td><td>identify a valid basis; avoid unexpected detrimental use; communicate clearly</td></tr>
+  <tr><td>purpose limitation</td><td>specify purposes; assess compatible further processing or obtain another valid authorization where required</td></tr>
+  <tr><td>data minimisation</td><td>use data adequate, relevant, and limited to what is necessary</td></tr>
+  <tr><td>accuracy</td><td>support correction and take reasonable steps against consequential stale or wrong values</td></tr>
+  <tr><td>storage limitation</td><td>retain identifiable data no longer than justified, subject to applicable exceptions</td></tr>
+  <tr><td>integrity and confidentiality</td><td>apply risk-appropriate security against unlawful access, loss, or alteration</td></tr>
+  <tr><td>accountability</td><td>be able to demonstrate compliance through ownership, records, controls, and review</td></tr>
+  </tbody>
+</table>
+</div>
+<p>
+  Consent is <em>one</em> of six Article 6 lawful bases alongside contract, legal obligation, vital
+  interests, public task, and legitimate interests; choosing a basis requires facts and legal
+  analysis. When consent is used, Article 7 requires it to be demonstrable, clear, and withdrawable
+  as easily as it was given; GDPR standards also require freely given, specific, informed, and
+  unambiguous agreement. Power imbalance can make consent unsuitable.
+</p>
+<p>
+  Data-subject rights include access, rectification, erasure, restriction, portability, and objection,
+  but their scope and exceptions differ. Article 22 concerns decisions <em>based solely on automated
+  processing</em> that produce legal or similarly significant effects. Contract necessity, law, or
+  explicit consent can create exceptions with safeguards; where applicable these include human
+  intervention, expressing a view, and contesting the decision. This is more specific than a blanket
+  “right to an explanation.” Certain serious infringements can reach the higher administrative-fine
+  tier of €20 million or 4% of worldwide annual turnover, whichever is higher, subject to the law's
+  conditions and enforcement assessment.
+</p>
+
+<h3>Minimization and retention — reduce unnecessary exposure</h3>
+<p>
+  Minimization asks whether each field, granularity, person, and use is necessary; storage limitation
+  asks how long identifiability remains necessary. The simple exposure surface below multiplies
+  records, retained fields, and months. It is useful for comparing two inventory designs, but it is
+  not breach probability, legal compliance, or a risk score: one health field may matter more than
+  many low-sensitivity fields.
+</p>
 <div class="widget">
   <div class="widget-head">
-    <div class="wtitle">Interactive — classify the system, AI-Act style</div>
-    <div class="wsub">For each scenario, pick the risk tier. This is exactly the format Level I tests it in.</div>
+    <div class="wtitle">Guided calculation — retention and exposure surface</div>
+    <div class="wsub">Compare current inventory with the fields and retention actually needed for the declared purpose.</div>
   </div>
-  <div class="widget-body" id="aia-body"></div>
+  <div class="widget-body">
+    <div class="controls">
+      <label for="rm-records">records <input id="rm-records" type="number" min="1" step="1" value="100000"></label>
+      <label for="rm-current-fields">current fields <input id="rm-current-fields" type="number" min="1" step="1" value="12"></label>
+      <label for="rm-needed-fields">necessary fields <input id="rm-needed-fields" type="number" min="1" step="1" value="5"></label>
+      <label for="rm-current-months">current retention, months <input id="rm-current-months" type="number" min="1" step="1" value="24"></label>
+      <label for="rm-needed-months">necessary retention, months <input id="rm-needed-months" type="number" min="1" step="1" value="6"></label>
+      <label for="rm-sensitive">sensitive or special-category fields?
+        <select id="rm-sensitive"><option value="yes" selected>yes</option><option value="no">no / not identified</option></select>
+      </label>
+    </div>
+    <div class="readout" id="rm-readout" aria-live="polite">
+      <span>current <strong id="rm-current">28,800,000</strong> record-field-months</span>
+      <span>minimized <strong id="rm-minimized">3,000,000</strong></span>
+      <span>reduction <strong id="rm-reduction">89.6%</strong></span>
+    </div>
+    <p class="wcaption">The sensitive-data answer is shown qualitatively and does not multiply the
+    arithmetic. It should trigger specialist conditions and stronger controls, not false numerical
+    precision. “No / not identified” is not proof that data are harmless.</p>
+  </div>
+</div>
+<div class="box example">
+  <div class="box-title">Worked minimization decision</div>
+  <p>For 100,000 records, 12 fields retained for 24 months produce 28.8 million illustrative
+  record-field-months. Five justified fields retained for six months produce 3 million, a reduction
+  of \((28.8-3)/28.8=89.6\%\). The next question is qualitative: which five fields remain, who can
+  access them, and can the purpose be met with aggregation or less precise values?</p>
 </div>
 
+<h3>Privacy controls — pseudonymisation is useful, not invisibility</h3>
+<div class="tablewrap">
+<table>
+  <thead><tr><th scope="col">Control</th><th scope="col">Helps with</th><th scope="col">Does not by itself solve</th></tr></thead>
+  <tbody>
+  <tr><td>access control and audit logs</td><td>limiting and tracing authorized use</td><td>excessive collection, invalid purpose, inference from permitted access</td></tr>
+  <tr><td>encryption in transit/at rest</td><td>some interception and storage compromise risks</td><td>misuse after decryption, over-retention, wrong recipients</td></tr>
+  <tr><td>pseudonymisation/tokenisation</td><td>separating direct identifiers and reducing casual linkage</td><td>GDPR applicability when re-identification remains reasonably possible</td></tr>
+  <tr><td>aggregation</td><td>reducing individual-level detail for suitable analyses</td><td>small-cell disclosure or reconstruction without safeguards</td></tr>
+  <tr><td>differential privacy</td><td>bounding an individual's influence under a stated mechanism and privacy budget</td><td>bad purpose, insecure raw inputs, unlimited repeated releases</td></tr>
+  <tr><td>deletion and retention automation</td><td>reducing obsolete copies when correctly scoped and verified</td><td>unknown replicas, legal holds, backups without an expiry process</td></tr>
+  </tbody>
+</table>
+</div>
+<p>
+  Truly anonymised information falls outside GDPR, but robust anonymisation is context-dependent and
+  difficult for rich datasets; hashing a name usually creates pseudonymous, still-linkable data.
+  Privacy and security overlap, but neither substitutes for the other.
+</p>
+<pre><code>PRIVACY_REVIEW(proposed_processing):
+  declare purpose, people, controller/processor roles, geography, and data flows
+  identify lawful basis and any additional sensitive-data condition with specialists
+  justify every field, inference, recipient, and retention period
+  test whether aggregated, coarser, local, or less identifiable data meet the purpose
+  map applicable notices, rights, contest, deletion, breach, and vendor workflows
+  assess likely high risk and complete a DPIA where required
+  approve with named owner, controls, review trigger, and verifiable deletion plan</code></pre>
+<h3>EU AI Act — classify the role, purpose, and obligation as of August 2026</h3>
+<p>
+  The EU AI Act is risk-based, but the familiar four “tiers” are teaching shorthand. Classification
+  depends on the system's intended purpose, the actor's role (such as provider or deployer), sector,
+  affected use, and exceptions. General-purpose AI (GPAI) obligations form a separate layer. As of
+  18 August 2026, the Act is generally applicable; prohibited-practice and AI-literacy provisions
+  applied from 2 February 2025, GPAI rules from 2 August 2025, and Article 50 transparency duties
+  from 2 August 2026. Following the July 2026 targeted amendments, Annex III high-risk rules are
+  scheduled for 2 December 2027 and Annex I product-system rules for 2 August 2028. Verify current
+  dates in the <a href="https://digital-strategy.ec.europa.eu/en/policies/regulatory-framework-ai">European Commission overview</a>
+  and the <a href="https://eur-lex.europa.eu/eli/reg/2024/1689/oj/eng">official regulation text</a>.
+</p>
+<div class="tablewrap">
+<table>
+  <thead><tr><th scope="col">Bucket</th><th scope="col">Examples or trigger</th><th scope="col">Treatment to investigate</th></tr></thead>
+  <tbody>
+  <tr><td><strong>prohibited practices</strong></td><td>specified harmful manipulation/exploitation, certain social scoring, some biometric categorisation, scraping for facial databases, and tightly defined biometric/emotion uses</td><td>prohibition subject to exact definitions and narrow exceptions; do not reduce it to one slogan</td></tr>
+  <tr><td><strong>high-risk systems</strong></td><td>qualifying Annex I safety components/products or Annex III uses such as some employment, education, essential-service, law-enforcement, migration, and justice decisions</td><td>risk management, data governance, documentation, logging, transparency to deployers, human oversight, accuracy/robustness/cybersecurity, conformity duties according to role and schedule</td></tr>
+  <tr><td><strong>Article 50 transparency</strong></td><td>certain direct interaction, synthetic content, emotion/biometric categorisation, and deepfake or public-interest text uses</td><td>specific disclosure or machine-readable marking duties, with exceptions and context-specific form</td></tr>
+  <tr><td><strong>GPAI models</strong></td><td>general-purpose models, with additional duties for models presenting systemic risk</td><td>documentation, downstream information, copyright-policy and training-content-summary duties; systemic-risk evaluation and mitigation where applicable</td></tr>
+  <tr><td><strong>other/minimal risk</strong></td><td>systems outside the categories above</td><td>no high-risk regime solely from the Act, but other AI Act provisions, GDPR, consumer, equality, product, sector, and national law can still apply</td></tr>
+  </tbody>
+</table>
+</div>
+<p>
+  Annex III includes a significant-risk assessment route for some systems that do not materially
+  influence decisions or pose significant risk, while profiling covered persons overrides that
+  carve-out. Annex I product classification depends on the product-law and third-party conformity
+  conditions. These details are why “a medical model is high risk” or “a chatbot is limited risk” is
+  only a starting hypothesis.
+</p>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Guided triage — classify the AI Act question before the category</div>
+    <div class="wsub">Choose the best initial bucket, then read which missing facts could change the answer.</div>
+  </div>
+  <div class="widget-body" id="aia-body" aria-describedby="aia-status">
+    <p class="muted">Scenario controls load when the course scripts are ready.</p>
+  </div>
+  <p id="aia-status" class="wcaption" aria-live="polite">Educational triage as of 18 August 2026; verify current law and obtain qualified advice.</p>
+</div>
+<pre><code>AI_ACT_TRIAGE(system, use, actor, date):
+  confirm territorial scope, AI-system status, actor role, and intended purpose
+  test prohibited-practice definitions and exceptions first
+  if a GPAI model is provided: assess GPAI and systemic-risk obligations separately
+  test Annex I product and Annex III use categories, carve-outs, and profiling override
+  test Article 50 transparency triggers and exceptions
+  map dates, standards, conformity route, documentation, oversight, and post-market duties
+  check GDPR, equality, consumer, product, sector, and national law in parallel
+  record missing facts; do not convert triage into a legal conclusion</code></pre>
+
 <h2>7.4 Consent, dual use, and the duty of competence</h2>
+<h3>Informed consent — design for a real choice, not a ceremonial click</h3>
 <p>
-  <strong>Informed consent</strong> requires that the person understands what is collected, for
-  what, with what risks, and can refuse without penalty — a checkbox under a 40-page policy is
-  consent-shaped, not consent. <strong>Dual-use risk</strong>: many capabilities are harm-neutral
-  until context (a voice cloner is an accessibility tool and a fraud tool; a protein-design model is
-  a drug pipeline and a toxin pipeline). The professional duty is to <em>assess</em> plausible
-  misuse before release and mitigate (access controls, monitoring, staged release) — Level III
-  (Topic 19) makes this quantitative.
+  Ethically meaningful consent requires understandable information, a specific choice, sufficient
+  capacity or appropriate authorization, and freedom from manipulation or undue pressure. Under
+  GDPR, valid consent has specific legal requirements and is only one possible lawful basis. Do not
+  request consent when the organization would process regardless, or bundle an optional model-training
+  use into a service that cannot realistically be refused.
 </p>
+<div class="tablewrap">
+<table>
+  <thead><tr><th scope="col">Condition</th><th scope="col">Design test</th><th scope="col">Failure pattern</th></tr></thead>
+  <tbody>
+  <tr><td><strong>specific purpose</strong></td><td>separate materially different uses and recipients</td><td>“improve services” used to authorize any future model</td></tr>
+  <tr><td><strong>informed and understandable</strong></td><td>explain data, use, material risk, retention, sharing, and contact in appropriate language</td><td>essential facts hidden in dense or inaccessible text</td></tr>
+  <tr><td><strong>freely chosen</strong></td><td>assess power imbalance, detriment, and whether optional processing can be refused</td><td>employee or patient feels refusal will affect treatment or employment</td></tr>
+  <tr><td><strong>affirmative and unambiguous</strong></td><td>use a clear action; avoid pre-ticked boxes and deceptive defaults</td><td>silence or browsing interpreted as agreement</td></tr>
+  <tr><td><strong>demonstrable and withdrawable</strong></td><td>record scope/version and provide an equally usable withdrawal route</td><td>one-click consent, multi-week cancellation</td></tr>
+  <tr><td><strong>continued alignment / renewed choice</strong></td><td>obtain fresh consent or reassess the lawful basis when purpose, model, recipients, or risks materially change</td><td>old agreement stretched over an incompatible new use</td></tr>
+  </tbody>
+</table>
+</div>
+<div class="box example">
+  <div class="box-title">Worked purpose-change analysis</div>
+  <p>Support tickets were collected to resolve customer problems. A team now wants to train a public
+  language model on ticket text. Ask whether that new purpose and disclosure are compatible with the
+  original basis and notice, whether tickets contain third-party or sensitive information, whether
+  people had a genuine relevant choice, and whether a less intrusive dataset works. “The data are
+  already in our database” answers none of those questions.</p>
+</div>
+<pre><code>CONSENT_CHECK(proposed_use):
+  first ask whether consent is the appropriate legal and ethical basis
+  state each purpose, dataset, recipient, retention period, and material risk plainly
+  separate optional uses; test accessibility and comprehension with representative people
+  reject coercive, bundled, preselected, or misleading interface patterns
+  record exactly what information and version the person agreed to
+  make refusal and withdrawal usable; propagate the choice through downstream systems
+  reassess when the use, model capability, recipient, or risk changes</code></pre>
+
+<h3>Dual use — build a threat model around access and scale</h3>
 <p>
-  The <strong>duty of competence</strong> deserves its physics phrasing: know your model's domain of
-  validity the way you know a Taylor expansion's radius of convergence. A model is a fit to a
-  training distribution; outside it, extrapolation is unlabeled guesswork. The competent engineer
-  can answer: on what data does this fail? for which subgroups is accuracy lowest? how does it
-  behave on out-of-distribution input? — and says "I don't know yet" out loud when that's the truth.
+  A voice-cloning system can restore speech and enable impersonation; a biological design model can
+  support medicine and harmful synthesis. Calling a tool “general purpose” does not remove foreseeable
+  misuse. Threat modelling asks: <em>who</em> might misuse <em>which capability</em>, through
+  <em>what access path</em>, at <em>what scale</em>, with <em>what severity and reversibility</em>?
+  It also asks what evidence shows a control works and what residual risk remains.
 </p>
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Guided triage — ordinal dual-use review</div>
+    <div class="wsub">A structured prompt for escalation, not a probability model, legal test, or release authorization.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label for="du-severity">plausible severity
+        <select id="du-severity"><option value="1">1 — limited</option><option value="2">2 — material</option><option value="3">3 — serious</option><option value="4" selected>4 — severe</option></select>
+      </label>
+      <label for="du-reach">potential reach
+        <select id="du-reach"><option value="1">1 — isolated</option><option value="2">2 — local</option><option value="3" selected>3 — large</option><option value="4">4 — mass scale</option></select>
+      </label>
+      <label for="du-ease">misuse ease
+        <select id="du-ease"><option value="1">1 — specialist and constrained</option><option value="2">2 — substantial effort</option><option value="3" selected>3 — accessible</option><option value="4">4 — trivial or automated</option></select>
+      </label>
+      <label for="du-irreversibility">irreversibility
+        <select id="du-irreversibility"><option value="1">1 — readily reversible</option><option value="2">2 — recoverable</option><option value="3" selected>3 — durable harm</option><option value="4">4 — irreversible</option></select>
+      </label>
+      <label for="du-mitigation">mitigation evidence
+        <select id="du-mitigation"><option value="0">0 — none</option><option value="1" selected>1 — proposed or weakly tested</option><option value="2">2 — partial evidence</option><option value="3">3 — tested layers</option><option value="4">4 — strong context-specific evidence</option></select>
+      </label>
+    </div>
+    <div class="readout" id="du-readout" aria-live="polite">
+      <span>ordinal score <strong id="du-score">12</strong></span>
+      <span>triage <strong id="du-band">pause and escalate</strong></span>
+    </div>
+    <p class="wcaption">The illustrative score is
+    \(\max(4, severity+reach+ease+irreversibility-mitigation)\): at most it prioritizes review.
+    Scores 4–6 suggest documented routine controls, 7–10 independent review, and 11 or more a pause
+    and escalation. A severity rating of 4 forces escalation even if the sum is lower. Do not average away a
+    catastrophic pathway, vulnerable population, legal prohibition, or unknown control failure.</p>
+  </div>
+</div>
+
+<h3>Mitigate capability, access, and consequences—then assess residual risk</h3>
+<div class="tablewrap">
+<table>
+  <thead><tr><th scope="col">Control layer</th><th scope="col">Examples</th><th scope="col">Failure question</th></tr></thead>
+  <tbody>
+  <tr><td>capability</td><td>remove unnecessary functions, constrain outputs, lower fidelity or scale</td><td>Can users reconstruct the capability through prompts, chaining, or fine-tuning?</td></tr>
+  <tr><td>access</td><td>staged release, identity or eligibility checks, least privilege, rate and volume limits</td><td>Can accounts be shared, automated, stolen, or cheaply multiplied?</td></tr>
+  <tr><td>detection</td><td>privacy-respecting abuse monitoring, provenance, red-team indicators, anomaly review</td><td>Which harms remain invisible, and who responds to an alert?</td></tr>
+  <tr><td>response</td><td>revocation, rollback, incident plan, affected-person support, notification route</td><td>How quickly can exposure stop, and can the harm actually be repaired?</td></tr>
+  <tr><td>governance</td><td>independent review, release conditions, audit rights, re-evaluation trigger</td><td>Who can overrule commercial pressure and pause the system?</td></tr>
+  </tbody>
+</table>
+</div>
+<p>
+  Controls interact: logging can help abuse response but create a sensitive surveillance dataset;
+  identity checks can deter abuse but exclude legitimate anonymous use. Test controls against realistic
+  adversaries, document bypasses, and reassess after scale or capability changes. “Residual risk” is
+  what remains after credited controls—not what the team prefers not to discuss.
+</p>
+
+<h3>Duty of competence — know the system's domain and your own</h3>
+<p>
+  Competence is not knowing everything; it is recognizing what the decision requires, producing
+  evidence within your expertise, and seeking qualified review for the rest. Model accuracy does not
+  establish domain validity, security, legal compliance, human-factors safety, or operational
+  reliability. A competent team monitors the assumptions that justified release and knows when a
+  change invalidates them.
+</p>
+<div class="box bridge">
+  <div class="box-title">Physics bridge — domain of validity</div>
+  <p>Treat a model like an approximation with boundary conditions. Declare the population, environment,
+  measurement process, time period, intervention, and acceptable error. Outside that domain, a
+  numerical score may still appear while its evidential warrant has vanished.</p>
+</div>
+<div class="tablewrap">
+<table>
+  <thead><tr><th scope="col">Competence question</th><th scope="col">Adequate evidence might include</th></tr></thead>
+  <tbody>
+  <tr><td>Where was the system validated?</td><td>representative and stress evaluations with provenance and uncertainty</td></tr>
+  <tr><td>Who experiences its largest failures?</td><td>justified subgroup and intersectional audit plus qualitative workflow evidence</td></tr>
+  <tr><td>How do people use, override, or contest it?</td><td>human-factors testing, authority design, appeal and remedy outcomes</td></tr>
+  <tr><td>What happens under drift, abuse, or component failure?</td><td>monitoring, adversarial tests, fallbacks, rollback and incident exercises</td></tr>
+  <tr><td>Which expertise is missing?</td><td>named domain, security, privacy, legal, safety, accessibility, or social-science review</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>Escalation — match the path to urgency, authority, and harm</h3>
+<ol>
+  <li><strong>Verify and bound:</strong> preserve evidence, separate fact from inference, and avoid unnecessary personal data.</li>
+  <li><strong>Raise with the responsible owner:</strong> state the duty, affected people, uncertainty, and a practical remedy.</li>
+  <li><strong>Seek independent review:</strong> involve domain, privacy, legal, security, safety, audit, or ethics functions.</li>
+  <li><strong>Use formal channels:</strong> escalate to accountable leadership or protected reporting routes when ordinary resolution fails.</li>
+  <li><strong>Pause, refuse, or report externally where justified:</strong> follow applicable law, urgent-safety procedures, contracts, and qualified independent advice.</li>
+</ol>
+<pre><code>ESCALATE(concern):
+  if imminent serious harm: use the emergency route immediately
+  preserve dated evidence and the limits of what is known
+  state affected people, relevant duty, severity, reversibility, and urgency
+  propose a proportionate test, control, pause, or alternative
+  send to an owner with authority; request a decision and deadline
+  if unresolved: seek independent review and the next formal channel
+  record response, dissent, residual risk, and retaliation or conflict concerns safely
+  do not approve work outside your competence or authority</code></pre>
+<div class="box note">
+  <div class="box-title">Integrated go / change / pause guide</div>
+  <p><strong>Proceed with monitoring</strong> when evidence matches the intended domain and residual
+  risk has an accountable owner. <strong>Change and retest</strong> when a lower-risk design can meet
+  the legitimate purpose. <strong>Pause and escalate</strong> when severe harm, missing authority,
+  invalid consent, prohibited use, material evidence gaps, or ineffective controls remain. “Human in
+  the loop” counts only if the person has information, time, competence, authority, and a real ability
+  to disagree.</p>
+</div>
 
 <div class="box jargon">
   <div class="box-title">Jargon decoder</div>
   <dl>
-    <dt>protected attribute</dt><dd>A characteristic (race, sex, age, …) legally shielded from discriminatory treatment. Removing the column doesn't remove the signal — proxies (zip code, names) reconstruct it.</dd>
-    <dt>base rate</dt><dd>The prevalence of the outcome in a group. Different base rates are what make the fairness criteria collide.</dd>
-    <dt>COMPAS</dt><dd>The recidivism-scoring tool at the center of the 2016 ProPublica investigation that made fairness-criteria incompatibility famous.</dd>
-    <dt>PII</dt><dd>Personally Identifiable Information — data that can identify a person directly or in combination.</dd>
-    <dt>data subject</dt><dd>GDPR's term for the human the data is about — the holder of the rights.</dd>
-    <dt>disparate impact</dt><dd>A facially neutral practice with disproportionate adverse effect on a protected group — the legal cousin of demographic-parity violation.</dd>
+    <dt>protected attribute</dt><dd>A characteristic protected under applicable equality law; categories and permitted uses vary by jurisdiction. Removing its column does not remove correlated proxies.</dd>
+    <dt>base rate / prevalence</dt><dd>The proportion with observed outcome \(Y=1\) in a defined group and period. Unequal prevalences create specific metric tensions, not a universal impossibility claim.</dd>
+    <dt>proxy</dt><dd>A feature correlated with a sensitive or protected characteristic, sometimes reconstructing information the explicit field omitted.</dd>
+    <dt>COMPAS</dt><dd>A recidivism-risk tool central to a contested 2016 debate: different analyses emphasized calibration/predictive value versus error-rate disparities.</dd>
+    <dt>PII / personal data</dt><dd>PII is a jurisdiction- and policy-dependent term. GDPR “personal data” broadly covers information relating to an identified or identifiable person.</dd>
+    <dt>data subject</dt><dd>GDPR's term for the identified or identifiable person to whom personal data relate.</dd>
+    <dt>controller / processor</dt><dd>The controller determines purposes and means; a processor acts on the controller's documented instructions, subject to the regulation's precise definitions.</dd>
+    <dt>DPIA</dt><dd>Data Protection Impact Assessment—an assessment required under GDPR where processing is likely to result in high risk, with specified content and consultation rules.</dd>
+    <dt>pseudonymisation</dt><dd>Processing so data cannot be attributed without separately kept additional information. It reduces some risk but usually remains personal data.</dd>
+    <dt>disparate impact</dt><dd>A legal concept concerning disproportionate adverse effects of a facially neutral practice; doctrine and tests vary and are not identical to demographic parity.</dd>
+    <dt>residual risk</dt><dd>Risk remaining after controls credited with evidence, including uncertainty about whether those controls work.</dd>
+    <dt>dark pattern</dt><dd>An interface design that manipulates or materially impairs a person's autonomous, informed choice.</dd>
   </dl>
 </div>
 
 <h2>Self-check</h2>
-<div class="quiz" data-answer="c">
-  <p class="quiz-q">1. Two groups have repayment base rates of 60% and 40%. A lender's model is perfectly calibrated for both groups. It follows that:</p>
-  <div class="opts">
-    <button data-opt="a">the model also satisfies equalized odds</button>
-    <button data-opt="b">the model satisfies demographic parity</button>
-    <button data-opt="c">the model must violate equalized odds (unless it is a perfect predictor) — calibration + unequal base rates forces unequal error rates</button>
-    <button data-opt="d">the model is illegal under GDPR</button>
-  </div>
-  <div class="quiz-exp"><strong>c.</strong> The impossibility theorem: with unequal base rates, calibration and equalized odds are mutually exclusive short of perfection. This is the COMPAS geometry.</div>
-</div>
 <div class="quiz" data-answer="b">
-  <p class="quiz-q">2. A team removes "gender" from a hiring model's features and declares it fair. The strongest objection:</p>
+  <p class="quiz-q">1. A team tried 40 model variants against the final test set and wants to publish only the best score as untouched evaluation. Which response best satisfies integrity of work?</p>
   <div class="opts">
-    <button data-opt="a">gender improves accuracy so it should stay</button>
-    <button data-opt="b">correlated proxies (career gaps, sports, word choice) reconstruct the signal; fairness must be measured on outcomes across groups, not asserted from the feature list</button>
-    <button data-opt="c">the model is now unfair to the majority group</button>
-    <button data-opt="d">removing features always increases variance</button>
+    <button data-opt="a">publish it because every reported number was computed correctly</button>
+    <button data-opt="b">disclose the repeated test use, stop calling it untouched, and evaluate the selected process on genuinely held-out evidence</button>
+    <button data-opt="c">average only the five best variants</button>
+    <button data-opt="d">remove the experiment log so readers cannot be confused</button>
   </div>
-  <div class="quiz-exp"><strong>b.</strong> "Fairness through unawareness" reliably fails — the Amazon hiring-tool case is the canonical example (it learned to penalize the word "women's"). You must measure group outcomes on data where the attribute is available for auditing.</div>
-</div>
-<div class="quiz" data-answer="d">
-  <p class="quiz-q">3. Under the EU AI Act, a CV-screening tool that ranks job applicants is:</p>
-  <div class="opts">
-    <button data-opt="a">unacceptable risk — banned</button>
-    <button data-opt="b">limited risk — just disclose it's AI</button>
-    <button data-opt="c">minimal risk</button>
-    <button data-opt="d">high risk — permitted with conformity assessment, human oversight, logging, and documentation</button>
-  </div>
-  <div class="quiz-exp"><strong>d.</strong> Employment and worker-management uses are explicitly listed high-risk. Ban applies to things like state social scoring; disclosure-only applies to chatbots/deepfakes.</div>
+  <div class="quiz-exp"><strong>b.</strong> Repeated selection on the test set leaks test evidence into model choice. Integrity requires accurate provenance and a new evaluation boundary, not selective presentation.</div>
 </div>
 <div class="quiz" data-answer="a">
-  <p class="quiz-q">4. Your model ships tomorrow; subgroup evaluation wasn't run; your manager says "we'll check after launch." The Code-consistent move:</p>
+  <p class="quiz-q">2. A high-impact hiring model is scheduled tomorrow, but subgroup recall and the appeal workflow are unverified. What is the strongest first professional action?</p>
   <div class="opts">
-    <button data-opt="a">state in writing that subgroup performance is unverified, propose the fastest adequate audit, and escalate if overruled — competence and duty-to-users precede schedule</button>
-    <button data-opt="b">ship silently; bias is a research problem</button>
-    <button data-opt="c">refuse to ship and resign on the spot</button>
-    <button data-opt="d">delete the protected attributes so the issue is moot</button>
+    <button data-opt="a">document the precise evidence gap, propose blocking tests and remedy, set a release condition, and escalate to accountable independent review</button>
+    <button data-opt="b">ship silently because overall accuracy is known</button>
+    <button data-opt="c">announce publicly that discrimination has been proven</button>
+    <button data-opt="d">delete group fields and declare the issue resolved</button>
   </div>
-  <div class="quiz-exp"><strong>a.</strong> The professional sequence: document, propose a proportionate remedy, escalate. (c) is the last resort, not the first move — Topic 22 trains the full escalation ladder. (d) is question 2's fallacy.</div>
+  <div class="quiz-exp"><strong>a.</strong> TRACE separates verified gaps from unsupported conclusions, proposes a proportionate remedy, and routes the risk to people with authority and relevant competence.</div>
+</div>
+<div class="quiz" data-answer="c">
+  <p class="quiz-q">3. A team removes sex from a hiring model and declares it fair. What is the best technical objection?</p>
+  <div class="opts">
+    <button data-opt="a">a protected attribute must always be a model input</button>
+    <button data-opt="b">removing one feature guarantees demographic parity but not equalized odds</button>
+    <button data-opt="c">correlated proxies and lifecycle bias can remain; outcomes and errors need a justified, privacy-controlled audit</button>
+    <button data-opt="d">fairness can be proved from the feature list alone if accuracy is high</button>
+  </div>
+  <div class="quiz-exp"><strong>c.</strong> Representation, labels, proxies, objectives, deployment, and feedback can create disparities. Auditing protected groups may be necessary but must have appropriate legal and privacy governance.</div>
+</div>
+<div class="quiz" data-answer="d">
+  <p class="quiz-q">4. Groups A and B each contain 1,000 people. Their prevalences are 60% and 30%, and both have TPR 80% and FPR 20%. Which statement is correct?</p>
+  <div class="opts">
+    <button data-opt="a">demographic parity and predictive parity both follow from equal error rates</button>
+    <button data-opt="b">A and B must both have selection rate 50%</button>
+    <button data-opt="c">equalized odds fails because prevalence differs</button>
+    <button data-opt="d">equalized odds holds, while selection is 56% versus 38% and PPV is about 85.7% versus 63.2%</button>
+  </div>
+  <div class="quiz-exp"><strong>d.</strong> Shared TPR and FPR satisfy equalized odds. Different prevalence changes the mixture of true and false positives, so selection and PPV differ.</div>
+</div>
+<div class="quiz" data-answer="b">
+  <p class="quiz-q">5. Which statement about predictive parity, calibration, and impossibility results is precise?</p>
+  <div class="opts">
+    <button data-opt="a">predictive parity at one threshold proves score calibration everywhere</button>
+    <button data-opt="b">predictive parity compares PPV for a decision rule; calibration is score-level, and unequal prevalence creates incompatibilities only under stated non-degenerate conditions</button>
+    <button data-opt="c">all fairness definitions are mutually incompatible in every dataset</button>
+    <button data-opt="d">a perfect predictor necessarily violates equalized odds</button>
+  </div>
+  <div class="quiz-exp"><strong>b.</strong> The objects and conditions matter. Universal wording erases perfect, equal-base-rate, and degenerate cases and conflates a thresholded PPV condition with score calibration.</div>
+</div>
+<div class="quiz" data-answer="a">
+  <p class="quiz-q">6. A loan-approval label records past officer decisions, and access to officers differed by group. Before optimizing a fairness gap against that label, the team should:</p>
+  <div class="opts">
+    <button data-opt="a">investigate label validity and selective observation, map error harms, then justify criteria with stakeholders and applicable law</button>
+    <button data-opt="b">treat the historical label as ground truth because it is stored in the database</button>
+    <button data-opt="c">optimize demographic parity because it is universally the fairest criterion</button>
+    <button data-opt="d">report only overall accuracy to avoid political choices</button>
+  </div>
+  <div class="quiz-exp"><strong>a.</strong> Conditional metrics inherit the meaning and defects of \(Y\). The decision context, affected harms, uncertainty, and legal constraints determine which evidence is relevant.</div>
+</div>
+<div class="quiz" data-answer="c">
+  <p class="quiz-q">7. Which GDPR summary is most accurate?</p>
+  <div class="opts">
+    <button data-opt="a">consent is required for every processing operation and can never be withdrawn</button>
+    <button data-opt="b">Article 22 gives an unconditional explanation right for every algorithmic output</button>
+    <button data-opt="c">consent is one Article 6 basis; rights are qualified; Article 22 targets solely automated decisions with legal or similarly significant effects and has exceptions plus safeguards</button>
+    <button data-opt="d">pseudonymised data are automatically outside GDPR</button>
+  </div>
+  <div class="quiz-exp"><strong>c.</strong> Lawful basis, rights, and automated-decision rules all require contextual analysis. Pseudonymisation is a safeguard, not automatic anonymisation.</div>
+</div>
+<div class="quiz" data-answer="d">
+  <p class="quiz-q">8. An inventory has 100,000 records × 12 fields × 24 months. A justified design needs 5 fields × 6 months. What does the chapter's illustrative exposure calculation show?</p>
+  <div class="opts">
+    <button data-opt="a">a 58.3% reduction and proof of GDPR compliance</button>
+    <button data-opt="b">a zero privacy risk because five fields are anonymous</button>
+    <button data-opt="c">25.8 million people have been protected</button>
+    <button data-opt="d">28.8 million versus 3 million record-field-months, a reduction of about 89.6%, followed by qualitative sensitivity and access review</button>
+  </div>
+  <div class="quiz-exp"><strong>d.</strong> The arithmetic compares inventory surface only. It does not estimate breach probability or replace purpose, sensitivity, access, legal, and re-identification analysis.</div>
+</div>
+<div class="quiz" data-answer="b">
+  <p class="quiz-q">9. As of 18 August 2026, an AI system intended to rank job applicants should initially be treated how under the EU AI Act?</p>
+  <div class="opts">
+    <button data-opt="a">automatically prohibited in every configuration</button>
+    <button data-opt="b">as a potential Annex III high-risk use requiring role, purpose, significant-risk/profiling, exception, and phased-date analysis—not a one-word conclusion</button>
+    <button data-opt="c">as minimal risk because a human can view the ranking</button>
+    <button data-opt="d">only as GPAI, regardless of the deployed system's purpose</button>
+  </div>
+  <div class="quiz-exp"><strong>b.</strong> Employment uses can fall within Annex III, but classification and current obligations depend on facts and dates. Other privacy, equality, employment, and consumer duties may apply in parallel.</div>
+</div>
+<div class="quiz" data-answer="a">
+  <p class="quiz-q">10. A public voice-cloning release has severe impersonation potential, broad reach, easy misuse, and only proposed controls. What best satisfies dual-use and competence duties?</p>
+  <div class="opts">
+    <button data-opt="a">pause broad release, obtain independent threat and legal review, test layered capability/access/response controls, and document residual risk and authority</button>
+    <button data-opt="b">publish because beneficial uses make the capability ethically neutral</button>
+    <button data-opt="c">add a terms-of-service checkbox and treat all misuse as unforeseeable</button>
+    <button data-opt="d">let the engineer approve risks outside their expertise to preserve speed</button>
+  </div>
+  <div class="quiz-exp"><strong>a.</strong> High-severity, scalable misuse with weak evidence warrants escalation and staged, tested controls. Competence includes seeking review and declining authority one does not have.</div>
 </div>
 
 <h2>Go deeper</h2>
 <ul class="resources">
+  <li><a href="https://eur-lex.europa.eu/eli/reg/2016/679/oj/eng">GDPR — official regulation text on EUR-Lex</a><div class="rwhat">Read Articles 5–7, 9, 13–15, 17, 21–22, 25, 32, and 35 alongside qualified guidance for the real processing context.</div></li>
+  <li><a href="https://digital-strategy.ec.europa.eu/en/policies/regulatory-framework-ai">European Commission — AI Act regulatory framework</a><div class="rwhat">Official implementation overview and current timeline; pair it with the <a href="https://eur-lex.europa.eu/eli/reg/2024/1689/oj/eng">regulation text on EUR-Lex</a>.</div></li>
   <li><a href="https://fairmlbook.org/">Fairness and Machine Learning — Barocas, Hardt, Narayanan (free online)</a><div class="rwhat">Ch. 2–3 for the formal criteria and impossibility results. The standard text.</div></li>
   <li><a href="https://arxiv.org/abs/1609.05807">Kleinberg, Mullainathan, Raghavan 2016 — Inherent Trade-Offs in the Fair Determination of Risk Scores</a><div class="rwhat">The impossibility theorem itself; the introduction is readable without the proofs.</div></li>
   <li><a href="https://www.propublica.org/article/machine-bias-risk-assessments-in-criminal-sentencing">ProPublica — Machine Bias (2016)</a><div class="rwhat">The COMPAS investigation; read together with Northpointe's rebuttal to see both fairness definitions colliding in the wild.</div></li>
-  <li><a href="https://artificialintelligenceact.eu/">The AI Act Explorer</a><div class="rwhat">Searchable full text; the "high-level summary" page covers the tiers tested here.</div></li>
-  <li><a href="https://gdpr.eu/">GDPR.eu</a><div class="rwhat">Plain-language guides to consent, minimization, and data-subject rights.</div></li>
+  <li><a href="https://artificialintelligenceact.eu/">The AI Act Explorer</a><div class="rwhat">A convenient non-official interface; verify conclusions and dates against Commission and EUR-Lex sources.</div></li>
+  <li><a href="https://gdpr.eu/">GDPR.eu</a><div class="rwhat">Non-official plain-language orientation to consent, minimization, and data-subject rights; use regulator guidance and legal advice for decisions.</div></li>
   <li><a href="https://www.weaponsofmathdestructionbook.com/">Cathy O'Neil — Weapons of Math Destruction</a><div class="rwhat">The case-study book: opaque models, feedback loops, scale. Chapters on credit and hiring pair directly with this topic.</div></li>
 </ul>
 
@@ -221,129 +822,594 @@
 
 <script>
 document.addEventListener("caie:ready", () => {
-  // ---------- fairness widget ----------
-  (function () {
-    const canvas = document.getElementById("f-canvas");
-    function phi(z) { return Math.exp(-0.5 * z * z) / Math.sqrt(2 * Math.PI); }
+  // ---------- fairness score-distribution lab ----------
+  (function topic7FairnessDistributionLab() {
+    const id = name => document.getElementById(name);
+    const el = {
+      canvas: id("f-canvas"), table: id("f-table"), readout: id("f-readout"),
+      bA: id("f-bA"), bB: id("f-bB"), tA: id("f-tA"), tB: id("f-tB"),
+      bAv: id("f-bA-v"), bBv: id("f-bB-v"), tAv: id("f-tA-v"), tBv: id("f-tB-v"),
+      eqSel: id("f-eqSel"), eqTPR: id("f-eqTPR"), eqPPV: id("f-eqPPV")
+    };
+    if (Object.values(el).some(node => !node)) return;
+    const fields = [el.bA, el.bB, el.tA, el.tB];
+    const separation = 1.6;
+    const population = 1000;
+    const tolerance = 0.02;
+    let solverNote = "";
+
+    function phi(z) {
+      return Math.exp(-0.5 * z * z) / Math.sqrt(2 * Math.PI);
+    }
     function Phi(z) {
-      const t = 1 / (1 + 0.2316419 * Math.abs(z)), d = phi(z);
-      let p = d * t * (0.319381530 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))));
-      return z >= 0 ? 1 - p : p;
+      const t = 1 / (1 + 0.2316419 * Math.abs(z));
+      const tail = phi(z) * t * (0.319381530 + t * (-0.356563782 +
+        t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))));
+      return z >= 0 ? 1 - tail : tail;
     }
-    const SEP = 1.6; // score separation between repayers (+) and defaulters (0)
-    function groupStats(base, thr) {
-      const TPR = 1 - Phi(thr - SEP);       // repayers approved
-      const FPR = 1 - Phi(thr);             // defaulters approved
-      const sel = base * TPR + (1 - base) * FPR;
-      const PPV = base * TPR / Math.max(1e-9, sel);
-      return { TPR, FPR, sel, PPV };
+    function ratio(numerator, denominator) {
+      return denominator === 0 ? null : numerator / denominator;
     }
-    function vals() {
-      return {
-        bA: +document.getElementById("f-bA").value, bB: +document.getElementById("f-bB").value,
-        tA: +document.getElementById("f-tA").value, tB: +document.getElementById("f-tB").value
-      };
+    function groupStats(base, threshold) {
+      const tpr = 1 - Phi(threshold - separation);
+      const fpr = 1 - Phi(threshold);
+      const tp = population * base * tpr;
+      const fn = population * base * (1 - tpr);
+      const fp = population * (1 - base) * fpr;
+      const tn = population * (1 - base) * (1 - fpr);
+      const selection = ratio(tp + fp, population);
+      const ppv = ratio(tp, tp + fp);
+      return { tp, fp, fn, tn, tpr, fpr, selection, ppv };
     }
-    function gapCell(g, tol) {
-      const bad = Math.abs(g) > tol;
-      return '<td style="font-family:var(--mono);color:' + (bad ? "var(--critical)" : "var(--good)") + ';font-weight:700">' +
-        (g >= 0 ? "+" : "") + (100 * g).toFixed(1) + " pp " + (bad ? "✗" : "✓") + "</td>";
+    function percent(value) {
+      return value === null ? "undefined" : (100 * value).toFixed(1) + "%";
     }
-    function draw() {
-      const v = vals();
-      ["bA", "bB"].forEach(k => document.getElementById("f-" + k + "-v").textContent = (100 * v[k]).toFixed(0) + "%");
-      ["tA", "tB"].forEach(k => document.getElementById("f-" + k + "-v").textContent = v[k].toFixed(2));
-      const A = groupStats(v.bA, v.tA), B = groupStats(v.bB, v.tB);
+    function signedGap(value) {
+      return value === null ? "undefined" :
+        (value >= 0 ? "+" : "") + (100 * value).toFixed(1) + " pp";
+    }
+    function expected(value) {
+      return Math.abs(value - Math.round(value)) < 0.05
+        ? String(Math.round(value))
+        : value.toFixed(1);
+    }
+    function setInvalid(message) {
+      fields.forEach(field => field.setAttribute("aria-invalid", "true"));
+      el.readout.textContent = "Cannot calculate: " + message;
+      el.canvas.setAttribute("aria-label", "Fairness plot unavailable. " + message);
+    }
+    function clearInvalid() {
+      fields.forEach(field => field.removeAttribute("aria-invalid"));
+    }
+    function cell(value, isHeader) {
+      const node = document.createElement(isHeader ? "th" : "td");
+      if (isHeader) node.scope = "row";
+      node.textContent = value;
+      return node;
+    }
+    function gapCell(value) {
+      const td = cell(signedGap(value), false);
+      if (value !== null) {
+        td.style.fontFamily = "var(--mono)";
+        td.style.fontWeight = "700";
+        td.style.color = Math.abs(value) <= tolerance ? "var(--good)" : "var(--critical)";
+      }
+      return td;
+    }
+    function renderTable(A, B) {
+      const caption = document.createElement("caption");
+      caption.textContent = "Expected confusion counts per 1,000 people and rates at each group threshold.";
+      const headers = ["group", "TP", "FP", "FN", "TN", "selection", "TPR", "FPR", "PPV"];
+      const thead = document.createElement("thead");
+      const headerRow = document.createElement("tr");
+      headers.forEach(label => {
+        const th = document.createElement("th");
+        th.scope = "col";
+        th.textContent = label;
+        headerRow.append(th);
+      });
+      thead.append(headerRow);
+      const tbody = document.createElement("tbody");
+      [["Group A", A], ["Group B", B]].forEach(item => {
+        const tr = document.createElement("tr");
+        tr.append(cell(item[0], true));
+        [item[1].tp, item[1].fp, item[1].fn, item[1].tn].forEach(value =>
+          tr.append(cell(expected(value), false))
+        );
+        [item[1].selection, item[1].tpr, item[1].fpr, item[1].ppv].forEach(value =>
+          tr.append(cell(percent(value), false))
+        );
+        tbody.append(tr);
+      });
+      const gapRow = document.createElement("tr");
+      gapRow.append(cell("A - B gap", true));
+      ["—", "—", "—", "—"].forEach(value => gapRow.append(cell(value, false)));
+      gapRow.append(gapCell(A.selection - B.selection));
+      gapRow.append(gapCell(A.tpr - B.tpr));
+      gapRow.append(gapCell(A.fpr - B.fpr));
+      gapRow.append(gapCell(A.ppv === null || B.ppv === null ? null : A.ppv - B.ppv));
+      tbody.append(gapRow);
+      el.table.replaceChildren(caption, thead, tbody);
+    }
+    function canvasWidth() {
+      const measured = el.canvas.parentElement ? el.canvas.parentElement.clientWidth - 4 : 640;
+      return Math.max(1, Math.min(700, Number.isFinite(measured) && measured > 0 ? Math.floor(measured) : 640));
+    }
+    function renderCanvas(values, A, B) {
       const pal = CAIE.pal();
-      // draw densities for both groups side by side
-      const W = Math.min(640, canvas.parentNode.clientWidth - 4);
-      const { ctx, w, h } = CAIE.setupCanvas(canvas, W, 210);
+      const setup = CAIE.setupCanvas(el.canvas, canvasWidth(), 220);
+      const ctx = setup.ctx, w = setup.w, h = setup.h;
       ctx.clearRect(0, 0, w, h);
-      const half = w / 2 - 10;
-      [["Group A", v.bA, v.tA, 0], ["Group B", v.bB, v.tB, half + 20]].forEach(([nm, base, thr, x0]) => {
-        const X = x => x0 + (x + 3) / (SEP + 6) * half;
-        const Y = y => h - 24 - y / 0.45 * (h - 50);
-        ctx.font = "600 12px " + CAIE.css("--sans"); ctx.fillStyle = pal.ink2; ctx.textAlign = "left";
-        ctx.fillText(nm + " — base rate " + (100 * base).toFixed(0) + "%", x0 + 4, 14);
-        // defaulters at 0 (weighted 1-base), repayers at SEP (weighted base)
-        ctx.lineWidth = 2;
-        for (const [mu, wgt, col] of [[0, 1 - base, pal.s[5]], [SEP, base, pal.s[1]]]) {
-          ctx.strokeStyle = col; ctx.beginPath();
-          for (let i = 0; i <= 100; i++) {
-            const x = -3 + (SEP + 6) * i / 100;
-            const y = wgt * phi(x - mu);
-            if (i === 0) ctx.moveTo(X(x), Y(y)); else ctx.lineTo(X(x), Y(y));
+      const gap = 20;
+      const half = Math.max(1, (w - gap) / 2);
+      [
+        ["Group A", values.bA, values.tA, 0],
+        ["Group B", values.bB, values.tB, half + gap]
+      ].forEach(group => {
+        const name = group[0], base = group[1], threshold = group[2], x0 = group[3];
+        const X = x => x0 + (x + 3) / (separation + 6) * half;
+        const Y = y => h - 26 - y / 0.45 * (h - 54);
+        ctx.font = "600 12px " + CAIE.css("--sans");
+        ctx.fillStyle = pal.ink2;
+        ctx.textAlign = "left";
+        ctx.fillText(name + " - prevalence " + (100 * base).toFixed(0) + "%", x0 + 4, 15);
+        [[0, 1 - base, pal.s[5]], [separation, base, pal.s[1]]].forEach(curve => {
+          ctx.strokeStyle = curve[2];
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          for (let point = 0; point <= 100; point++) {
+            const x = -3 + (separation + 6) * point / 100;
+            const y = curve[1] * phi(x - curve[0]);
+            if (point === 0) ctx.moveTo(X(x), Y(y));
+            else ctx.lineTo(X(x), Y(y));
           }
           ctx.stroke();
-        }
-        ctx.strokeStyle = pal.s[2]; ctx.setLineDash([5, 4]); ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.moveTo(X(thr), 22); ctx.lineTo(X(thr), h - 24); ctx.stroke(); ctx.setLineDash([]);
+        });
+        ctx.strokeStyle = pal.s[2];
+        ctx.setLineDash([5, 4]);
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(X(threshold), 23);
+        ctx.lineTo(X(threshold), h - 26);
+        ctx.stroke();
+        ctx.setLineDash([]);
         ctx.strokeStyle = pal.baseline;
-        ctx.beginPath(); ctx.moveTo(x0, h - 24); ctx.lineTo(x0 + half, h - 24); ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(x0, h - 26);
+        ctx.lineTo(x0 + half, h - 26);
+        ctx.stroke();
       });
-      const lg = document.createElement("div");
-      // table
-      document.getElementById("f-table").innerHTML =
-        "<tr><th></th><th>selection rate</th><th>TPR (equal opportunity)</th><th>FPR</th><th>precision (PPV)</th></tr>" +
-        "<tr><td><b>Group A</b></td><td>" + (100 * A.sel).toFixed(1) + "%</td><td>" + (100 * A.TPR).toFixed(1) + "%</td><td>" + (100 * A.FPR).toFixed(1) + "%</td><td>" + (100 * A.PPV).toFixed(1) + "%</td></tr>" +
-        "<tr><td><b>Group B</b></td><td>" + (100 * B.sel).toFixed(1) + "%</td><td>" + (100 * B.TPR).toFixed(1) + "%</td><td>" + (100 * B.FPR).toFixed(1) + "%</td><td>" + (100 * B.PPV).toFixed(1) + "%</td></tr>" +
-        "<tr><td><b>gap</b></td>" + gapCell(A.sel - B.sel, 0.02) + gapCell(A.TPR - B.TPR, 0.02) + gapCell(A.FPR - B.FPR, 0.02) + gapCell(A.PPV - B.PPV, 0.02) + "</tr>";
+      el.canvas.setAttribute("aria-label",
+        "Two group score distributions. Group A selection " + percent(A.selection) +
+        ", TPR " + percent(A.tpr) + ", FPR " + percent(A.fpr) + ", PPV " + percent(A.ppv) +
+        "; Group B selection " + percent(B.selection) + ", TPR " + percent(B.tpr) +
+        ", FPR " + percent(B.fpr) + ", PPV " + percent(B.ppv) + ".");
+    }
+    function values() {
+      if (fields.some(field => !field.value.trim())) return null;
+      const result = {
+        bA: Number(el.bA.value), bB: Number(el.bB.value),
+        tA: Number(el.tA.value), tB: Number(el.tB.value)
+      };
+      return Object.values(result).every(Number.isFinite) ? result : null;
+    }
+    function render() {
+      clearInvalid();
+      const v = values();
+      if (!v || v.bA <= 0 || v.bA >= 1 || v.bB <= 0 || v.bB >= 1)
+        return setInvalid("prevalences must be strictly between 0 and 1 and thresholds must be finite.");
+      el.bAv.textContent = (100 * v.bA).toFixed(0) + "%";
+      el.bBv.textContent = (100 * v.bB).toFixed(0) + "%";
+      el.tAv.textContent = v.tA.toFixed(2);
+      el.tBv.textContent = v.tB.toFixed(2);
+      const A = groupStats(v.bA, v.tA), B = groupStats(v.bB, v.tB);
+      renderCanvas(v, A, B);
+      renderTable(A, B);
+      const dp = A.selection - B.selection;
+      const opportunity = A.tpr - B.tpr;
+      const fprGap = A.fpr - B.fpr;
+      const parity = A.ppv === null || B.ppv === null ? null : A.ppv - B.ppv;
+      const eoWithin = Math.abs(opportunity) <= tolerance && Math.abs(fprGap) <= tolerance;
+      el.readout.textContent =
+        "Demographic-parity gap (selection): " + signedGap(dp) +
+        ". Equal-opportunity gap (TPR): " + signedGap(opportunity) +
+        ". Equalized odds requires both TPR and FPR parity; FPR gap: " + signedGap(fprGap) +
+        " (" + (eoWithin ? "both within" : "at least one outside") + " this lab's 2 pp display tolerance)." +
+        " Predictive-parity gap (PPV among approved): " + signedGap(parity) +
+        ". PPV parity at one threshold is not calibration across score values." +
+        " This synthetic lab assumes identical conditional score shapes across groups; under that assumption equal TPR also implies equal FPR." +
+        (solverNote ? " " + solverNote : "");
     }
     function solve(metric) {
-      // adjust tB to match group A's metric by scanning
-      const v = vals();
+      const v = values();
+      if (!v) return render();
       const target = groupStats(v.bA, v.tA)[metric];
-      let best = v.tB, bd = 1e9;
-      for (let t = -2; t <= 4; t += 0.005) {
-        const m = groupStats(v.bB, t)[metric];
-        if (Math.abs(m - target) < bd) { bd = Math.abs(m - target); best = t; }
+      let best = Number(el.tB.value), error = Infinity;
+      for (let threshold = -2; threshold <= 4.0001; threshold += 0.02) {
+        const candidate = groupStats(v.bB, threshold)[metric];
+        if (candidate !== null && Math.abs(candidate - target) < error) {
+          error = Math.abs(candidate - target);
+          best = threshold;
+        }
       }
-      document.getElementById("f-tB").value = best;
-      draw();
+      el.tB.value = best.toFixed(2);
+      solverNote = "Bounded grid solver matched " + metric + " to within " +
+        (100 * error).toFixed(2) + " pp; this is approximate, not a proof of feasibility.";
+      render();
     }
-    ["f-bA", "f-bB", "f-tA", "f-tB"].forEach(id => document.getElementById(id).addEventListener("input", draw));
-    document.getElementById("f-eqSel").addEventListener("click", () => solve("sel"));
-    document.getElementById("f-eqTPR").addEventListener("click", () => solve("TPR"));
-    document.getElementById("f-eqPPV").addEventListener("click", () => solve("PPV"));
-    CAIE.onTheme(draw); window.addEventListener("resize", draw);
-    draw();
+    fields.forEach(field => field.addEventListener("input", () => { solverNote = ""; render(); }));
+    el.eqSel.addEventListener("click", () => solve("selection"));
+    el.eqTPR.addEventListener("click", () => solve("tpr"));
+    el.eqPPV.addEventListener("click", () => solve("ppv"));
+    CAIE.onTheme(render);
+    window.addEventListener("resize", render);
+    render();
   })();
 
-  // ---------- AI Act tier quiz ----------
-  (function () {
-    const scenarios = [
-      { s: "A municipal government scores citizens' 'trustworthiness' from their social behavior, affecting access to services.", a: 0, why: "Social scoring by public authorities is explicitly banned — the canonical unacceptable-risk example." },
-      { s: "A hospital deploys a model that prioritizes patients for ICU beds.", a: 1, why: "Health, safety, and access-to-essential-services decisions are high risk: conformity assessment, human oversight, logging." },
-      { s: "An e-commerce site's chatbot answers product questions.", a: 2, why: "Limited risk — the transparency duty: users must be told they're talking to an AI." },
-      { s: "A photo app suggests which of your own pictures are blurry.", a: 3, why: "Minimal risk — no meaningful rights or safety impact; no new obligations." },
-      { s: "A bank's model sets credit limits for consumer applicants.", a: 1, why: "Creditworthiness evaluation is listed high-risk in Annex III." },
-      { s: "A marketing tool generates photorealistic videos of real politicians saying things they never said, for 'satire'.", a: 2, why: "Deepfakes carry a labeling/transparency obligation (limited risk) — though other laws (defamation, election rules) may bite harder." },
-      { s: "An employer's software analyzes workers' keystrokes and webcam feeds to score productivity and flag 'low performers' for dismissal.", a: 1, why: "Worker management and employment decisions are high risk; emotion-recognition at work is banned in several configurations — at minimum this triggers the full high-risk regime." },
-      { s: "A toy uses voice AI to encourage children to perform dangerous stunts.", a: 0, why: "Exploiting vulnerabilities of a specific group (children) to cause harm is a banned manipulative practice." }
-    ];
-    const tiers = ["Unacceptable (banned)", "High risk", "Limited risk (transparency)", "Minimal risk"];
-    const body = document.getElementById("aia-body");
-    body.innerHTML = scenarios.map((sc, i) =>
-      '<div class="quiz" data-answer="' + "abcd"[sc.a] + '"><p class="quiz-q">' + (i + 1) + ". " + sc.s + '</p><div class="opts">' +
-      tiers.map((t, j) => '<button data-opt="' + "abcd"[j] + '">' + t + "</button>").join("") +
-      '</div><div class="quiz-exp">' + sc.why + "</div></div>"
-    ).join("");
-    // re-wire quizzes added after boot
-    body.querySelectorAll(".quiz").forEach(q => {
-      const ans = q.dataset.answer;
-      q.querySelectorAll(".opts button").forEach(btn => {
-        btn.addEventListener("click", () => {
-          if (q.classList.contains("revealed")) return;
-          q.classList.add("revealed");
-          q.querySelectorAll(".opts button").forEach(b => {
-            if (b.dataset.opt === ans) b.classList.add("correct");
-            else if (b === btn) b.classList.add("wrong");
-            b.disabled = true;
-          });
-        });
+  // ---------- editable confusion-count fairness audit ----------
+  (function topic7FairnessCountAudit() {
+    const id = name => document.getElementById(name);
+    const names = ["fa-a-tp", "fa-a-fp", "fa-a-fn", "fa-a-tn",
+      "fa-b-tp", "fa-b-fp", "fa-b-fn", "fa-b-tn"];
+    const fields = names.map(id);
+    const table = id("fa-table"), readout = id("fa-readout");
+    if (fields.some(node => !node) || !table || !readout) return;
+
+    function ratio(numerator, denominator) {
+      return denominator === 0 ? null : numerator / denominator;
+    }
+    function formatRate(value, numerator, denominator) {
+      return value === null ? "undefined (" + numerator + "/0)" :
+        (100 * value).toFixed(1) + "% (" + numerator + "/" + denominator + ")";
+    }
+    function gap(a, b) {
+      return a === null || b === null ? null : a - b;
+    }
+    function gapText(value) {
+      return value === null ? "undefined" :
+        (value >= 0 ? "+" : "") + (100 * value).toFixed(1) + " pp";
+    }
+    function stats(values) {
+      const tp = values[0], fp = values[1], fn = values[2], tn = values[3];
+      let n = 0;
+      for (const value of values) {
+        if (n > Number.MAX_SAFE_INTEGER - value) return null;
+        n += value;
+      }
+      return {
+        tp, fp, fn, tn, n,
+        prevalence: ratio(tp + fn, n),
+        selection: ratio(tp + fp, n),
+        tpr: ratio(tp, tp + fn),
+        fpr: ratio(fp, fp + tn),
+        ppv: ratio(tp, tp + fp)
+      };
+    }
+    function rowHeader(text) {
+      const th = document.createElement("th");
+      th.scope = "row"; th.textContent = text;
+      return th;
+    }
+    function dataCell(text) {
+      const td = document.createElement("td");
+      td.textContent = text;
+      return td;
+    }
+    function renderTable(A, B) {
+      const caption = document.createElement("caption");
+      caption.textContent = "Confusion counts and metric numerators/denominators by group.";
+      const labels = ["group", "TP", "FP", "FN", "TN", "prevalence", "selection", "TPR", "FPR", "PPV"];
+      const thead = document.createElement("thead");
+      const header = document.createElement("tr");
+      labels.forEach(label => {
+        const th = document.createElement("th");
+        th.scope = "col"; th.textContent = label; header.append(th);
       });
-    });
+      thead.append(header);
+      const tbody = document.createElement("tbody");
+      [["Group A", A], ["Group B", B]].forEach(item => {
+        const tr = document.createElement("tr");
+        const s = item[1];
+        tr.append(rowHeader(item[0]), dataCell(String(s.tp)), dataCell(String(s.fp)),
+          dataCell(String(s.fn)), dataCell(String(s.tn)),
+          dataCell(formatRate(s.prevalence, s.tp + s.fn, s.n)),
+          dataCell(formatRate(s.selection, s.tp + s.fp, s.n)),
+          dataCell(formatRate(s.tpr, s.tp, s.tp + s.fn)),
+          dataCell(formatRate(s.fpr, s.fp, s.fp + s.tn)),
+          dataCell(formatRate(s.ppv, s.tp, s.tp + s.fp)));
+        tbody.append(tr);
+      });
+      const metricGaps = [
+        gap(A.prevalence, B.prevalence), gap(A.selection, B.selection), gap(A.tpr, B.tpr),
+        gap(A.fpr, B.fpr), gap(A.ppv, B.ppv)
+      ];
+      const tr = document.createElement("tr");
+      tr.append(rowHeader("A - B gap"));
+      ["—", "—", "—", "—"].forEach(text => tr.append(dataCell(text)));
+      metricGaps.forEach(value => tr.append(dataCell(gapText(value))));
+      tbody.append(tr);
+      table.replaceChildren(caption, thead, tbody);
+      table.setAttribute("aria-label", "Fairness audit by group with confusion counts, denominators, and A minus B gaps.");
+    }
+    function fail(message, field) {
+      fields.forEach(node => node.removeAttribute("aria-invalid"));
+      if (field) field.setAttribute("aria-invalid", "true");
+      readout.textContent = "Cannot calculate: " + message;
+    }
+    function update() {
+      fields.forEach(node => node.removeAttribute("aria-invalid"));
+      const empty = fields.find(node => !node.value.trim());
+      if (empty) return fail("all confusion counts are required.", empty);
+      const values = fields.map(node => Number(node.value));
+      const bad = values.findIndex(value => !Number.isSafeInteger(value) || value < 0);
+      if (bad >= 0) return fail("counts must be nonnegative safe integers.", fields[bad]);
+      const A = stats(values.slice(0, 4)), B = stats(values.slice(4));
+      if (!A) {
+        fail("Group A total exceeds the safe integer range.", fields[0]);
+        fields.slice(1, 4).forEach(node => node.setAttribute("aria-invalid", "true"));
+        return;
+      }
+      if (!B) {
+        fail("Group B total exceeds the safe integer range.", fields[4]);
+        fields.slice(5).forEach(node => node.setAttribute("aria-invalid", "true"));
+        return;
+      }
+      renderTable(A, B);
+      const dp = gap(A.selection, B.selection);
+      const prevalence = gap(A.prevalence, B.prevalence);
+      const opportunity = gap(A.tpr, B.tpr);
+      const fprGap = gap(A.fpr, B.fpr);
+      const parity = gap(A.ppv, B.ppv);
+      readout.textContent =
+        "Prevalences are " + formatRate(A.prevalence, A.tp + A.fn, A.n) + " for A and " +
+        formatRate(B.prevalence, B.tp + B.fn, B.n) + " for B (gap " + gapText(prevalence) + "). " +
+        "Demographic parity compares selection: " + gapText(dp) +
+        ". Equal opportunity compares TPR: " + gapText(opportunity) +
+        ". Equalized odds requires both TPR and FPR parity; gaps are " +
+        gapText(opportunity) + " and " + gapText(fprGap) +
+        ". Predictive parity compares PPV among predicted positives: " + gapText(parity) +
+        ". Undefined means a required denominator is zero. Score calibration needs multiple score bins and is not established by this threshold audit.";
+    }
+    fields.forEach(node => node.addEventListener("input", update));
+    update();
   })();
+
+  // ---------- retention and exposure proxy ----------
+  (function topic7RetentionMinimizationCalculator() {
+    const id = name => document.getElementById(name);
+    const el = {
+      records: id("rm-records"), currentFields: id("rm-current-fields"),
+      neededFields: id("rm-needed-fields"), currentMonths: id("rm-current-months"),
+      neededMonths: id("rm-needed-months"), sensitive: id("rm-sensitive"),
+      current: id("rm-current"), minimized: id("rm-minimized"),
+      reduction: id("rm-reduction"), readout: id("rm-readout")
+    };
+    if (Object.values(el).some(node => !node)) return;
+    const fields = [el.records, el.currentFields, el.neededFields, el.currentMonths, el.neededMonths];
+    function safeProduct(values) {
+      let result = 1;
+      for (const value of values) {
+        if (result > Number.MAX_SAFE_INTEGER / value) return null;
+        result *= value;
+      }
+      return result;
+    }
+    function detail() {
+      let node = el.readout.querySelector("[data-rm-detail]");
+      if (!node) {
+        node = document.createElement("span");
+        node.dataset.rmDetail = "";
+        el.readout.append(node);
+      }
+      return node;
+    }
+    function fail(message, field) {
+      fields.forEach(node => node.removeAttribute("aria-invalid"));
+      el.sensitive.removeAttribute("aria-invalid");
+      if (field) field.setAttribute("aria-invalid", "true");
+      el.current.textContent = "undefined";
+      el.minimized.textContent = "undefined";
+      el.reduction.textContent = "undefined";
+      detail().textContent = "Cannot calculate: " + message;
+      el.readout.setAttribute("aria-label", detail().textContent);
+    }
+    function update() {
+      fields.forEach(node => node.removeAttribute("aria-invalid"));
+      el.sensitive.removeAttribute("aria-invalid");
+      const empty = fields.find(node => !node.value.trim());
+      if (empty) return fail("all numeric fields are required.", empty);
+      const values = fields.map(node => Number(node.value));
+      const bad = values.findIndex(value => !Number.isSafeInteger(value) || value <= 0);
+      if (bad >= 0) return fail("records, fields, and months must be positive safe integers.", fields[bad]);
+      if (values[2] > values[1])
+        return fail("purpose-needed fields cannot exceed current fields in this minimization comparison.", el.neededFields);
+      if (values[4] > values[3])
+        return fail("purpose-needed retention cannot exceed current retention in this comparison.", el.neededMonths);
+      if (el.sensitive.value !== "yes" && el.sensitive.value !== "no")
+        return fail("choose whether sensitive data is present.", el.sensitive);
+      const current = safeProduct([values[0], values[1], values[3]]);
+      const minimized = safeProduct([values[0], values[2], values[4]]);
+      if (current === null || minimized === null)
+        return fail("record-field-month estimate exceeds the safe integer range.", el.records);
+      const reduction = current === 0 ? null : 1 - minimized / current;
+      el.current.textContent = current.toLocaleString();
+      el.minimized.textContent = minimized.toLocaleString();
+      el.reduction.textContent = reduction === null ? "undefined" : (100 * reduction).toFixed(1) + "%";
+      detail().textContent =
+        "Illustrative exposure falls from " + current.toLocaleString() + " to " +
+        minimized.toLocaleString() + " record-field-months. This is an inventory proxy, not a breach probability or expected-harm score." +
+        (el.sensitive.value === "yes"
+          ? " Sensitive data is present, so safeguards and impact assessment deserve qualitative escalation; the flag does not multiply the proxy."
+          : " The absence of a sensitive-data label does not make the retained data harmless or anonymous.");
+      el.readout.setAttribute("aria-label", detail().textContent);
+    }
+    fields.forEach(node => node.addEventListener("input", update));
+    el.sensitive.addEventListener("change", update);
+    update();
+  })();
+
+  // ---------- ordinal dual-use triage ----------
+  (function topic7DualUseTriage() {
+    const id = name => document.getElementById(name);
+    const el = {
+      severity: id("du-severity"), reach: id("du-reach"), ease: id("du-ease"),
+      irreversibility: id("du-irreversibility"), mitigation: id("du-mitigation"),
+      score: id("du-score"), band: id("du-band"), readout: id("du-readout")
+    };
+    if (Object.values(el).some(node => !node)) return;
+    const fields = [el.severity, el.reach, el.ease, el.irreversibility, el.mitigation];
+    function detail() {
+      let node = el.readout.querySelector("[data-du-detail]");
+      if (!node) {
+        node = document.createElement("span");
+        node.dataset.duDetail = "";
+        el.readout.append(node);
+      }
+      return node;
+    }
+    function fail(message, field) {
+      fields.forEach(node => node.removeAttribute("aria-invalid"));
+      if (field) field.setAttribute("aria-invalid", "true");
+      el.score.textContent = "undefined";
+      el.band.textContent = "undefined";
+      detail().textContent = "Cannot triage: " + message;
+      el.readout.setAttribute("aria-label", detail().textContent);
+    }
+    function update() {
+      fields.forEach(node => node.removeAttribute("aria-invalid"));
+      const empty = fields.find(node => !node.value.trim());
+      if (empty) return fail("all ordinal ratings are required.", empty);
+      const values = fields.map(node => Number(node.value));
+      const bad = values.findIndex((value, index) =>
+        !Number.isSafeInteger(value) || value < (index === 4 ? 0 : 1) || value > 4
+      );
+      if (bad >= 0) return fail("harm dimensions must be 1–4 and mitigation must be 0–4.", fields[bad]);
+      const score = Math.max(4, values[0] + values[1] + values[2] + values[3] - values[4]);
+      const severityOverride = values[0] === 4;
+      let band, action;
+      if (severityOverride || score >= 11) {
+        band = "pause and escalate";
+        action = "Do not release on the original path. Obtain accountable independent review, strengthen controls, and document a go/no-go decision.";
+      } else if (score >= 7) {
+        band = "independent review";
+        action = "Add an independent reviewer, abuse cases, access controls, monitoring, and a staged-release decision.";
+      } else {
+        band = "routine documented controls";
+        action = "Document intended use and misuse cases, assign an owner, retain basic access and incident controls, and reassess when scope changes.";
+      }
+      el.score.textContent = String(score);
+      el.band.textContent = band;
+      detail().textContent =
+        action + (severityOverride
+          ? " Severity 4 forces escalation even when mitigation lowers the arithmetic score."
+          : "") +
+        " This additive ordinal screen is not a probability, legal determination, or substitute for domain-specific threat modelling; equal totals can hide different risk patterns.";
+      el.readout.setAttribute("aria-label", "Dual-use triage score " + score + ", " + band + ". " + detail().textContent);
+    }
+    fields.forEach(node => node.addEventListener("change", update));
+    fields.forEach(node => node.addEventListener("input", update));
+    update();
+  })();
+
+  // ---------- EU AI Act context classifier ----------
+  (function topic7AiActClassifier() {
+    const body = document.getElementById("aia-body");
+    const status = document.getElementById("aia-status");
+    if (!body || !status) return;
+    const categories = [
+      "Prohibited practice",
+      "High-risk use case",
+      "Article 50 transparency duty",
+      "GPAI-provider obligations",
+      "Other / no listed AI-Act category",
+      "Need more context"
+    ];
+    const scenarios = [
+      {
+        prompt: "A public authority combines unrelated social-behaviour data into a trustworthiness score and uses it to deny a service in an unjustified or disproportionate way.",
+        answer: 0,
+        why: "The facts supply the conditions that matter for the social-scoring prohibition: public-authority use, social scoring, and detrimental unjustified or disproportionate treatment. Remove those facts and the classification may change."
+      },
+      {
+        prompt: "Software is intended to rank and filter natural persons applying for jobs before a recruiter reviews the shortlist.",
+        answer: 1,
+        why: "Employment selection is an Annex III high-risk intended use. Classification is separate from the phased date on which each obligation applies and from any narrow statutory exclusion."
+      },
+      {
+        prompt: "A human-looking customer-support chatbot converses directly with shoppers, and its artificial nature is not obvious from the context.",
+        answer: 2,
+        why: "Article 50 requires people to be informed that they are interacting with AI unless that fact is obvious. This is a specific transparency obligation, not a general legal tier called limited risk."
+      },
+      {
+        prompt: "A photo app running locally suggests which of the user's own images are blurry and makes no decision about another person's rights, safety, or access.",
+        answer: 4,
+        why: "On the stated facts, no prohibited, Annex III high-risk, GPAI-provider, or named Article 50 use is apparent. Other consumer, privacy, or product law can still apply."
+      },
+      {
+        prompt: "A company places a general-purpose foundation model on the EU market for downstream developers to adapt to many tasks.",
+        answer: 3,
+        why: "Providers of general-purpose AI models have a distinct obligations framework. The downstream systems built from the model may separately become prohibited, high-risk, transparent, or otherwise regulated by their intended use."
+      },
+      {
+        prompt: "A campaign publishes a photorealistic AI video of a politician as obvious satire but does not disclose that the footage was generated.",
+        answer: 2,
+        why: "Deepfake deployment triggers disclosure. Evidently satirical or artistic works receive an accommodation in how disclosure is made, not a blanket rule that artificial origin may always remain hidden."
+      },
+      {
+        prompt: "An employer infers workers' emotions from webcam footage to score productivity, with no medical or workplace-safety purpose.",
+        answer: 0,
+        why: "Emotion inference in the workplace is prohibited subject to the stated medical or safety exception. Calling the broader employment domain high-risk does not override a specific prohibition."
+      },
+      {
+        prompt: "A hospital licenses a language model to 'support clinical work,' but the description does not say whether it diagnoses, controls a medical device, summarizes administration, or influences care.",
+        answer: 5,
+        why: "Sector alone is insufficient. Intended purpose, decision role, product-safety status, provider/deployer role, and actual workflow determine whether high-risk or other rules attach."
+      }
+    ];
+
+    body.replaceChildren();
+    scenarios.forEach((scenario, scenarioIndex) => {
+      const card = document.createElement("div");
+      card.className = "quiz";
+      const question = document.createElement("p");
+      question.className = "quiz-q";
+      question.textContent = (scenarioIndex + 1) + ". " + scenario.prompt;
+      const options = document.createElement("div");
+      options.className = "opts";
+      const explanation = document.createElement("div");
+      explanation.className = "quiz-exp";
+      explanation.id = "aia-exp-" + scenarioIndex;
+      explanation.textContent = scenario.why;
+      categories.forEach((label, optionIndex) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.dataset.opt = String(optionIndex);
+        button.textContent = label;
+        button.setAttribute("aria-describedby", explanation.id);
+        button.addEventListener("click", () => {
+          if (card.classList.contains("revealed")) return;
+          card.classList.add("revealed");
+          options.querySelectorAll("button").forEach(candidate => {
+            const candidateIndex = Number(candidate.dataset.opt);
+            if (candidateIndex === scenario.answer) candidate.classList.add("correct");
+            else if (candidate === button) candidate.classList.add("wrong");
+            candidate.disabled = true;
+          });
+          const correct = optionIndex === scenario.answer;
+          status.textContent = "Scenario " + (scenarioIndex + 1) + ": " +
+            (correct ? "correct. " : "review the classification. ") +
+            categories[scenario.answer] + ". " + scenario.why;
+        });
+        options.append(button);
+      });
+      card.append(question, options, explanation);
+      body.append(card);
+    });
+    status.textContent =
+      "Educational classification exercise based on official EU AI Act material available 18 August 2026. Intended purpose, affected role, exceptions, and phased application dates matter; this is not legal advice.";
+  })();
+
+
 });
 </script>
 </body>
