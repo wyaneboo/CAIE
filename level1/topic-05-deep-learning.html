@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Topic 5 — Deep Learning Fundamentals · CAIE Course</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%234f46e5'/%3E%3Ccircle cx='20' cy='20' r='5' fill='white'/%3E%3Ccircle cx='44' cy='20' r='5' fill='white'/%3E%3Ccircle cx='32' cy='44' r='5' fill='white'/%3E%3Cpath d='M24 22.5 29 39M40 22.5 35 39M25 20h14' stroke='white' stroke-width='3'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="../assets/course.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
@@ -24,10 +25,12 @@
 <div class="kicker">Level I · Topic 5 · Exam weight 16%</div>
 <h1>Deep Learning Fundamentals</h1>
 <p class="lead">
-  A neural network is a stack of matrix multiplications separated by cheap nonlinearities, trained
-  by the chain rule. That single sentence is the whole subject; the other 16% of the exam is the
-  engineering that makes it actually work — initialization, normalization, regularization, and the
-  diagnosis of the many ways training goes wrong.
+  Deep learning builds trainable functions by composing simple layers. A forward pass turns an input
+  into a prediction; a loss measures the error; backpropagation uses the chain rule to assign each
+  weight its share of that error. The central mathematics is compact, but reliable learning depends
+  on activation choice, initialization, normalization, regularization, optimization, and an
+  architecture that respects the structure of the data. This chapter develops those choices as one
+  connected workflow rather than a list of names.
 </p>
 
 <div class="box los">
@@ -41,301 +44,969 @@
   </ul>
 </div>
 
-<h2>5.1 From perceptron to universal approximator</h2>
+<p><strong>Orientation — the objects that move through a neural network</strong></p>
 <p>
-  A single <strong>perceptron</strong> computes \(f(x) = \phi(w^\top x + b)\) — a linear score and a
-  nonlinearity. Alone it can only draw a hyperplane (it famously cannot represent XOR — you proved
-  this to yourself in Topic 4's playground). Stack layers into a
-  <strong>multi-layer perceptron</strong>:
-  $$h^{(1)} = \phi(W^{(1)} x + b^{(1)}), \quad h^{(2)} = \phi(W^{(2)} h^{(1)} + b^{(2)}), \;\dots$$
-  and the <strong>universal approximation theorem</strong> says one sufficiently wide hidden layer
-  can approximate any continuous function on a compact set. Read it correctly: it's an existence
-  theorem. It promises nothing about how many neurons (possibly astronomically many), nothing about
-  whether gradient descent will <em>find</em> the weights, and nothing about generalization. Depth
-  matters in practice because deep compositions represent hierarchical structure exponentially more
-  efficiently than shallow width.
+  A <strong>sample</strong> is one case, such as one image, waveform, sentence, or experimental run. A
+  <strong>feature</strong> is one measured input. A <strong>tensor</strong> is a rectangular array that
+  carries numbers through the model: a vector is an order-1 tensor, a matrix is order 2, and a batch of
+  colour images might have shape \(B\times H\times W\times C\). A <strong>batch</strong> is the group
+  of samples used to estimate one update. Always read a tensor by asking what each axis represents;
+  compatible dimensions are a mathematical requirement, not merely a programming detail.
 </p>
+<div class="tablewrap">
+  <table>
+    <thead><tr><th>Term</th><th>Meaning in plain language</th><th>Typical symbol or example</th></tr></thead>
+    <tbody>
+      <tr><td>Neuron / unit</td><td>Computes a weighted sum, adds a bias, then usually applies an activation</td><td>\(h=\phi(w^\top x+b)\)</td></tr>
+      <tr><td>Weight</td><td>Learned multiplier controlling the strength and sign of a connection</td><td>\(w_j\) or matrix \(W\)</td></tr>
+      <tr><td>Bias</td><td>Learned offset that lets a response shift away from the origin</td><td>\(b\)</td></tr>
+      <tr><td>Layer</td><td>A collection of units transforming one tensor into another</td><td>\(z^{(l)}=W^{(l)}h^{(l-1)}+b^{(l)}\)</td></tr>
+      <tr><td>Activation</td><td>Usually nonlinear function applied after the affine calculation</td><td>ReLU, sigmoid, tanh, GELU</td></tr>
+      <tr><td>Logit</td><td>Raw class score before sigmoid or softmax; it is not yet a probability</td><td>\(z_k\in\mathbb R\)</td></tr>
+      <tr><td>Loss</td><td>Scalar penalty that says how wrong a prediction is</td><td>Cross-entropy or squared error</td></tr>
+      <tr><td>Forward pass</td><td>Compute activations, logits, prediction, and loss from input to output</td><td>\(x\rightarrow h\rightarrow\widehat y\rightarrow L\)</td></tr>
+      <tr><td>Backward pass</td><td>Apply the chain rule from loss back to every parameter</td><td>\(\nabla_W L,\nabla_b L\)</td></tr>
+      <tr><td>Gradient</td><td>Vector of local slopes; it points toward the fastest increase in loss</td><td>Update against it: \(W\leftarrow W-\eta\nabla_WL\)</td></tr>
+      <tr><td>Optimizer</td><td>Rule that converts gradients into parameter updates</td><td>SGD, momentum, Adam, AdamW</td></tr>
+      <tr><td>Step / epoch</td><td>One parameter update / one pass through all training samples</td><td>\(N/B\) steps per epoch when batches divide evenly</td></tr>
+    </tbody>
+  </table>
+</div>
+<div class="box note">
+  <div class="box-title">Training, validation, and test have different jobs</div>
+  <p>
+    The <strong>training set</strong> supplies gradients and fits weights. The
+    <strong>validation set</strong> selects architectures, regularization, stopping time, and other
+    hyperparameters. The <strong>test set</strong> is kept untouched until the end for one final
+    estimate. Preprocessing statistics, augmentation choices, and early-stopping decisions must not
+    learn from the test set. A low training loss says the optimizer fit known data; it does not by
+    itself demonstrate generalization.
+  </p>
+</div>
+<pre><code>split cases before any data-dependent preprocessing
+fit preprocessing on the training partition only
+repeat for each training step:
+    choose a training batch
+    run the forward pass and compute a batch loss
+    run the backward pass to obtain gradients
+    let the optimizer update parameters
+periodically evaluate validation loss without updating parameters
+select settings and stopping point from validation evidence
+evaluate the frozen procedure once on the untouched test set</code></pre>
+
+<h2>5.1 From perceptron to universal approximator</h2>
+<h3>Purpose and intuition — learn a useful representation, then a prediction</h3>
 <p>
-  <strong>Backpropagation, derived.</strong> For a loss \(L\), define at each layer the error signal
-  \(\delta^{(l)} = \partial L / \partial z^{(l)}\) (gradient w.r.t. pre-activations
-  \(z^{(l)} = W^{(l)} h^{(l-1)} + b^{(l)}\)). The chain rule gives the recursion:
-  $$\delta^{(L)} = \nabla_{\hat y} L \odot \phi'(z^{(L)}), \qquad
-  \delta^{(l)} = \big(W^{(l+1)\top} \delta^{(l+1)}\big) \odot \phi'(z^{(l)}),$$
-  $$\frac{\partial L}{\partial W^{(l)}} = \delta^{(l)} \, h^{(l-1)\top}, \qquad
-  \frac{\partial L}{\partial b^{(l)}} = \delta^{(l)}.$$
-  Two readings worth internalizing: (1) the forward pass sends activations up, the backward pass
-  sends \(\delta\)s down through the <em>transposed</em> weights — the network run in reverse;
-  (2) each weight's gradient is (its input activation) × (its output's error) — a local product,
-  which is what makes the whole thing \(O(\text{same as forward})\). For softmax + cross-entropy the
-  output error collapses to the beautiful \(\delta^{(L)} = \hat y - y\): predicted minus true.
+  A single <strong>perceptron</strong> first forms the affine score
+  \(z=w^\top x+b\), then applies an activation \(h=\phi(z)\). Without the activation, composing
+  layers would still be only one affine transformation. With nonlinear activations, later layers can
+  reuse simpler patterns learned by earlier layers. A single thresholded perceptron separates space
+  with one hyperplane, so it cannot represent XOR; a hidden layer can combine several half-spaces to
+  create a non-linear decision region.
+</p>
+
+<h3>From one unit to a multi-layer perceptron</h3>
+<p>
+  Let \(h^{(0)}=x\). A dense multi-layer perceptron (MLP) applies
+  $$z^{(l)}=W^{(l)}h^{(l-1)}+b^{(l)},\qquad h^{(l)}=\phi^{(l)}(z^{(l)}).$$
+  Row \(j\) of \(W^{(l)}\) contains the incoming weights for unit \(j\). If a batch has \(B\)
+  samples, implementations often store samples as rows and perform the equivalent batched matrix
+  operation. The last layer produces one regression value or a vector of class logits. For \(K\)
+  mutually exclusive classes, softmax converts logits to
+  \(p_k=e^{z_k}/\sum_j e^{z_j}\); subtract the largest logit first when calculating it to avoid
+  overflow.
+</p>
+
+<div class="box note">
+  <div class="box-title">Worked forward calculation</div>
+  <p>
+    Take one input \(x=2\), one ReLU hidden unit, and a sigmoid output. With
+    \(w_1=0.5,b_1=0.1,w_2=1.2,b_2=-0.3\), the hidden pre-activation is
+    \(z_1=0.5(2)+0.1=1.1\), so \(h=\max(0,1.1)=1.1\). The output logit is
+    \(z_2=1.2(1.1)-0.3=1.02\), hence \(p=\sigma(1.02)\approx0.735\). For target \(y=1\), binary
+    cross-entropy is \(-\log p\approx0.308\). Each number has a distinct role: activation \(h\),
+    logit \(z_2\), probability \(p\), and scalar loss \(L\).
+  </p>
+</div>
+
+<h3>Universal approximation — powerful, but not a training guarantee</h3>
+<p>
+  A common universal approximation result assumes a continuous, non-polynomial activation (the exact
+  assumptions vary by theorem) and says that a
+  sufficiently wide one-hidden-layer network can approximate any continuous function on a compact
+  domain as closely as desired. This is an <strong>existence statement</strong>. It does not give a
+  practical width, say that gradient-based training will find the required weights, remove the need
+  for data, or guarantee performance outside the observed domain. Depth is valuable because many
+  real relationships are compositions: a deep model can reuse intermediate features and may express
+  some structured functions far more efficiently than a shallow model. “Universal” therefore does
+  not mean “automatically suitable.”
+</p>
+
+<h3>Backpropagation — reuse the chain rule from output to input</h3>
+<p>
+  Backpropagation is not a separate learning rule; it is an efficient bookkeeping procedure for
+  derivatives. For the following single-example column-vector notation with elementwise hidden
+  activations, define the error signal at layer \(l\) as
+  \(\delta^{(l)}=\partial L/\partial z^{(l)}\). Starting at the output and moving backward gives
+  $$\delta^{(L)}=\nabla_{h^{(L)}}L\odot\phi^{(L)\prime}(z^{(L)}),$$
+  $$\delta^{(l)}=\left(W^{(l+1)\top}\delta^{(l+1)}\right)
+  \odot\phi^{(l)\prime}(z^{(l)}),$$
+  $$\frac{\partial L}{\partial W^{(l)}}=\delta^{(l)}h^{(l-1)\top},\qquad
+  \frac{\partial L}{\partial b^{(l)}}=\delta^{(l)}.$$
+  The transpose redistributes downstream sensitivity to the units that fed it. The outer product then
+  pairs each unit’s input activation with its output error. Reverse-mode differentiation stores or
+  recomputes forward intermediates, so its arithmetic cost is usually a small multiple of the forward
+  pass—not one full pass per parameter. Cached activations consume memory; checkpointing trades extra
+  recomputation for lower memory. For a minibatch, implementations carry a batch axis and sum or
+  average the per-example outer products according to the loss convention.
+  The Hadamard-product output formula assumes an elementwise output activation. Softmax is coupled
+  across classes, so its general backward step is a Jacobian–vector product; paired with
+  cross-entropy, that product simplifies to \(\delta^{(L)}=p-y\).
+</p>
+<div class="box note">
+  <div class="box-title">Worked backward calculation</div>
+  <p>
+    Continue the example above. Sigmoid plus binary cross-entropy gives
+    \(\partial L/\partial z_2=p-y\approx-0.265\). Therefore
+    \(\partial L/\partial w_2=(p-y)h\approx-0.292\). Because \(z_1>0\), ReLU's local derivative is
+    \(1\), so
+    \(\partial L/\partial w_1=(p-y)w_2\phi'(z_1)x\approx(-0.265)(1.2)(1)(2)=-0.636\).
+    Gradient descent subtracts these negative gradients, increasing both weights for this positive
+    example and thereby tending to increase its predicted probability. At \(z_1<0\), the ReLU path
+    would instead contribute zero gradient.
+  </p>
+</div>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Guided calculation — one complete forward and backward pass</div>
+    <div class="wsub">Edit a scalar two-layer network with ReLU hidden activation, sigmoid output, and binary cross-entropy.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label for="bp-x">input \(x\) <input id="bp-x" type="number" value="2" step="0.1"></label>
+      <label for="bp-w1">hidden weight \(w_1\) <input id="bp-w1" type="number" value="0.5" step="0.1"></label>
+      <label for="bp-b1">hidden bias \(b_1\) <input id="bp-b1" type="number" value="0.1" step="0.1"></label>
+      <label for="bp-w2">output weight \(w_2\) <input id="bp-w2" type="number" value="1.2" step="0.1"></label>
+      <label for="bp-b2">output bias \(b_2\) <input id="bp-b2" type="number" value="-0.3" step="0.1"></label>
+      <label for="bp-y">target \(y\in\{0,1\}\)
+        <select id="bp-y"><option value="0">0</option><option value="1" selected>1</option></select>
+      </label>
+    </div>
+    <div class="tiles">
+      <div class="tile"><div class="tv" id="bp-z1">—</div><div class="tl">hidden pre-activation \(z_1\)</div></div>
+      <div class="tile"><div class="tv" id="bp-h">—</div><div class="tl">ReLU activation \(h\)</div></div>
+      <div class="tile"><div class="tv" id="bp-p">—</div><div class="tl">predicted probability \(p\)</div></div>
+      <div class="tile"><div class="tv" id="bp-loss">—</div><div class="tl">cross-entropy loss</div></div>
+      <div class="tile"><div class="tv" id="bp-dw2">—</div><div class="tl">gradient \(\partial L/\partial w_2\)</div></div>
+      <div class="tile"><div class="tv" id="bp-dw1">—</div><div class="tl">gradient \(\partial L/\partial w_1\)</div></div>
+    </div>
+    <div class="readout" id="bp-readout" aria-live="polite">Enter finite values to trace the calculation.</div>
+    <p class="wcaption">A zero \(\partial L/\partial w_1\) when \(z_1\leq0\) is the dead-side behavior of ReLU, not a calculator error.</p>
+  </div>
+</div>
+
+<h3>Training pseudocode, assumptions, and failure modes</h3>
+<pre><code>initialize every weight matrix and bias vector
+repeat for each training step:
+    forward: cache each layer's pre-activation and activation
+    compute a loss averaged over the current training batch
+    backward: propagate output error through layers in reverse order
+    form each weight and bias gradient
+    optionally clip, regularize, or accumulate gradients
+    optimizer updates the parameters
+evaluate validation data with training-only randomness disabled</code></pre>
+<div class="tablewrap">
+  <table>
+    <thead><tr><th>Question</th><th>Clear reading</th><th>Failure mode to watch</th></tr></thead>
+    <tbody>
+      <tr><td>Can the model fit the relationship?</td><td>Width, depth, activation, and architecture determine capacity</td><td>Underfitting or an unsuitable inductive bias</td></tr>
+      <tr><td>Can optimization find useful weights?</td><td>Gradients must remain informative and updates must be well scaled</td><td>Vanishing/exploding gradients, poor initialization, excessive learning rate</td></tr>
+      <tr><td>Will the fit generalize?</td><td>Validation data tests behavior beyond the fitted samples</td><td>Overfitting, leakage, distribution shift</td></tr>
+      <tr><td>Are gradients correct?</td><td>Check shapes and compare a tiny analytic gradient with finite differences</td><td>Sign errors, missing averaging, overwritten caches</td></tr>
+    </tbody>
+  </table>
+</div>
+<p>
+  Use an MLP when inputs are fixed-length feature vectors or when a more specialized encoder has
+  already produced such a vector. On small tabular datasets, compare it with classical models rather
+  than assuming depth wins. Successful training requires differentiable—or almost everywhere
+  differentiable—operations along the path being optimized, representative data, a suitable loss,
+  and enough compute; none of these ensures causal understanding or safe extrapolation.
 </p>
 <div class="box bridge">
   <div class="box-title">⚛ Physics bridge</div>
   <p>
-    Backprop is the adjoint method — the same trick used in optimal control and in computing
-    sensitivities of ODE solutions: propagate a costate (here \(\delta\)) backwards instead of
-    perturbing every parameter forwards. The vanishing/exploding gradient problem is a product of
-    ~depth-many transfer matrices, i.e., a Lyapunov-exponent question: unless the typical Jacobian
-    spectral norm is pinned near 1, the signal grows or decays exponentially in depth. Xavier/He
-    initialization, normalization layers, and residual connections are all devices for holding that
-    Lyapunov exponent at zero — training networks at the edge of chaos.
+    Backpropagation is reverse-mode differentiation, closely related to the adjoint method in optimal
+    control and sensitivity analysis. Rather than perturbing every parameter separately, it
+    propagates one costate-like signal backward. Gradients through depth involve products of
+    Jacobians, much like perturbations propagated through a dynamical system. Their singular values
+    can amplify or contract directions, which connects exploding and vanishing gradients to
+    stability analysis. Initialization, normalization, gating, and residual paths help keep useful
+    sensitivity—but do not guarantee every Jacobian has norm exactly one.
   </p>
 </div>
 
 <h2>5.2 The nonlinearity zoo and why initialization matters</h2>
+<h3>Purpose — nonlinearities decide what signals and gradients can pass</h3>
 <p>
-  <strong>Sigmoid</strong> \(1/(1+e^{-z})\) squashes to (0,1); its gradient maxes at 0.25 and dies in
-  the tails — stacking sigmoids multiplies many numbers &lt; 0.25, hence classical nets deeper than a
-  few layers wouldn't train. <strong>tanh</strong> is the zero-centered fix, same saturation issue.
-  <strong>ReLU</strong> \(\max(0,z)\) has gradient exactly 1 on the positive side — no decay through
-  active units — at the price of <em>dead neurons</em>: a unit pushed permanently negative gets zero
-  gradient forever. <strong>GELU</strong> \(z\,\Phi(z)\) is the smooth ReLU used by transformers.
-  <strong>SwiGLU</strong> is a <em>gated</em> feed-forward variant used in Llama-class models:
-  \(\mathrm{Swish}(W_1 x) \odot W_3 x\) — one branch computes values, the other decides how much
-  passes, which is empirically a stronger FFN at equal parameters.
+  If every layer were affine, then \(W_2(W_1x+b_1)+b_2\) could be collapsed into one affine layer.
+  An activation prevents that collapse and shapes the derivative used in the backward pass. A good
+  hidden activation is computationally practical, keeps useful gradients across the range the model
+  visits, and works with the initialization and normalization scheme. Output activations have a
+  different job: sigmoid represents a Bernoulli probability; softmax represents a categorical
+  distribution; regression may need no output activation at all.
 </p>
-<p>
-  <strong>Initialization.</strong> If weights start too large, activations and gradients explode
-  layer by layer; too small, they vanish. Set the variance so the signal's scale is preserved:
-  <strong>Xavier/Glorot</strong> \(\mathrm{Var}(W) = 2/(n_{in}+n_{out})\) for tanh-like activations;
-  <strong>He</strong> \(\mathrm{Var}(W) = 2/n_{in}\) for ReLU (the factor 2 compensates for ReLU
-  zeroing half its inputs). Get this wrong by 2× per layer and a 50-layer net sees \(2^{50}\).
-</p>
+
+<h3>Activation comparison — read the function and its derivative together</h3>
+<div class="tablewrap">
+  <table>
+    <thead><tr><th>Choice</th><th>Function and local gradient</th><th>Strength</th><th>Main caveat / usual role</th></tr></thead>
+    <tbody>
+      <tr><td>Sigmoid</td><td>\(\sigma(z)=1/(1+e^{-z})\), \(\sigma'(z)=\sigma(z)(1-\sigma(z))\leq0.25\)</td><td>Smooth map to \((0,1)\)</td><td>Saturates for large \(|z|\); useful for binary outputs and gates, uncommon for deep hidden stacks</td></tr>
+      <tr><td>tanh</td><td>\(\tanh z\), derivative \(1-\tanh^2z\)</td><td>Zero-centred output in \((-1,1)\)</td><td>Still saturates; historically common in RNN state updates</td></tr>
+      <tr><td>ReLU</td><td>\(\max(0,z)\), derivative \(0\) for \(z&lt;0\), \(1\) for \(z&gt;0\)</td><td>Cheap and non-saturating on its positive side</td><td>A unit kept negative receives zero local gradient; derivative at zero is set by convention</td></tr>
+      <tr><td>GELU</td><td>\(\operatorname{GELU}(z)=z\Phi(z)\), derivative \(\Phi(z)+z\varphi(z)\), where \(\Phi\) and \(\varphi\) are the standard-normal CDF and density</td><td>Smooth input-dependent gate used in transformer feed-forward blocks</td><td>Libraries may use a tanh approximation; it does not eliminate vanishing or exploding gradients</td></tr>
+      <tr><td>SwiGLU block</td><td>\(\mathrm{Swish}(xW_g+b_g)\odot(xW_v+b_v)\), where \(\mathrm{Swish}(z)=z\sigma(z)\), then an output projection</td><td>One branch gates the information in another</td><td>A gated feed-forward design, not a single scalar activation; width is often adjusted for a fair parameter comparison</td></tr>
+    </tbody>
+  </table>
+</div>
+<div class="box warn">
+  <div class="box-title">Gradient size is a product, not a property of one activation alone</div>
+  <p>
+    Sigmoid derivatives at or below \(0.25\) encourage contraction when repeatedly multiplied, but weights,
+    normalization, residual connections, and loss derivatives also enter the Jacobian. ReLU passes a
+    local derivative of one only through active units; it does not guarantee the full network
+    gradient stays constant. Judge gradient flow from the whole block and actual training traces.
+  </p>
+</div>
 
 <div class="widget">
   <div class="widget-head">
     <div class="wtitle">Interactive — activations and the vanishing-gradient product</div>
-    <div class="wsub">Left: the function and its derivative. Right: the norm of the backpropagated gradient through N stacked layers at sensible init — the reason ReLU-era depth became possible.</div>
+    <div class="wsub">Compare the function with its local derivative, then inspect a simplified product of random layer gains.</div>
   </div>
   <div class="widget-body">
     <div class="controls">
-      <label>activation
-        <select id="a-fn">
+      <label for="a-fn">activation
+        <select id="a-fn" aria-label="Activation function">
           <option value="sigmoid">sigmoid</option>
           <option value="tanh" selected>tanh</option>
           <option value="relu">ReLU</option>
           <option value="gelu">GELU</option>
         </select>
       </label>
-      <label>depth <input type="range" id="a-depth" min="2" max="60" step="1" value="30"><span class="val" id="a-depth-v"></span></label>
+      <label for="a-depth">depth
+        <input type="range" id="a-depth" min="2" max="60" step="1" value="30" aria-label="Number of simulated layers">
+        <span class="val" id="a-depth-v"></span>
+      </label>
     </div>
     <div style="display:flex;gap:14px;flex-wrap:wrap">
-      <canvas id="a-left" width="320" height="250"></canvas>
-      <canvas id="a-right" width="300" height="250"></canvas>
+      <canvas id="a-left" width="320" height="250" role="img" aria-label="Selected activation and derivative curves">Activation and derivative graph.</canvas>
+      <canvas id="a-right" width="300" height="250" role="img" aria-label="Simplified simulated gradient magnitude by layer depth">Simulated gradient magnitude graph.</canvas>
     </div>
+    <div class="readout" id="a-readout" aria-live="polite">Choose an activation and depth to compare gradient behavior.</div>
     <p class="wcaption">
-      The right panel simulates gradient norm vs depth for a random net (log scale). Sigmoid's
-      ≤ 0.25 slope decays catastrophically; tanh survives moderately; ReLU/GELU hold near constant.
-      This picture is the single most cited motivation for both ReLU and (later) residual connections.
+      The right panel is an intuition-building simulation, not a theorem or a training prediction.
+      Real gradient flow also depends on learned weights, data, normalization, residual paths, and
+      loss. The plotted GELU uses the common tanh approximation rather than the exact \(z\Phi(z)\).
+      Use gradient-norm traces from the actual model when diagnosing a run.
     </p>
   </div>
 </div>
 
-<h2>5.3 Training deep networks — the stabilizer stack</h2>
+<h3>Initialization — preserve signal scale before learning begins</h3>
 <p>
-  <strong>Normalization.</strong> <em>BatchNorm</em> standardizes each channel using the statistics
-  of the current minibatch, then rescales with learned γ, β. It smooths optimization dramatically
-  but couples examples within a batch and behaves differently at train vs inference time (running
-  statistics) — a classic source of bugs. <em>LayerNorm</em> normalizes across features
-  <em>within each example</em> — batch-size independent, hence the default in transformers.
-  <em>RMSNorm</em> drops the mean-centering and just divides by the root-mean-square — cheaper,
-  works as well, used in Llama-class models. Where the normalization sits (pre-LN vs post-LN)
-  matters for stability — that story continues in Topic 8.
-</p>
-<p>
-  <strong>Regularization.</strong> <em>Dropout</em> randomly zeroes each unit with probability p
-  during training (scaling the survivors), forcing redundancy — you can read it as training an
-  implicit ensemble of subnetworks. <em>Weight decay</em> is the L2/Gaussian-prior story from Topics
-  2 and 4 (in Adam, done correctly it's "decoupled" — AdamW). <em>Early stopping</em> halts when
-  validation loss turns upward: capacity control via training time itself.
-</p>
-<p>
-  <strong>Learning-rate schedules.</strong> <em>Warmup</em> ramps the LR from ~0 over the first few
-  hundred/thousand steps: early on, Adam's second-moment estimates are noisy and normalization
-  statistics unsettled, so full-size steps at t=0 can fling the weights into bad regions.
-  <em>Cosine decay</em> then glides the LR down smoothly to near zero — large steps early to cross
-  the landscape, small steps late to settle into a minimum. The pair (linear warmup → cosine decay)
-  is the de-facto standard recipe for pretraining.
-</p>
-<p>
-  <strong>Diagnosis table</strong> — the exam's favorite vignette format:
+  Identical zero weights make units in the same layer receive identical gradients, so they remain
+  identical. Random initialization breaks that symmetry. Its scale matters: if independent inputs and
+  weights are approximately zero-centred, then for one pre-activation
+  \(z=\sum_{j=1}^{n_{in}}w_jx_j\),
+  $$\operatorname{Var}(z)\approx n_{in}\operatorname{Var}(w)\operatorname{Var}(x).$$
+  A variance much smaller than the scale-preserving choice contracts signals layer by layer; a much
+  larger variance amplifies them or drives saturating activations into flat tails.
 </p>
 <div class="tablewrap">
+  <table>
+    <thead><tr><th>Scheme</th><th>Common weight variance</th><th>Use and interpretation</th></tr></thead>
+    <tbody>
+      <tr><td>Xavier / Glorot</td><td>\(2/(n_{in}+n_{out})\)</td><td>Balances forward and backward scale; common for tanh or roughly symmetric activations</td></tr>
+      <tr><td>He / Kaiming</td><td>\(2/n_{in}\)</td><td>Compensates approximately for ReLU discarding the negative half of a symmetric signal</td></tr>
+      <tr><td>Custom variance</td><td>\(v_w\)</td><td>Useful for studying gain or for architectures with a separately derived scaling rule</td></tr>
+    </tbody>
+  </table>
+</div>
+<div class="box note">
+  <div class="box-title">Worked initialization calculation</div>
+  <p>
+    With \(n_{in}=100\) and \(n_{out}=50\), Xavier variance is
+    \(2/(100+50)=0.0133\), so a normal distribution would use standard deviation
+    \(\sqrt{0.0133}\approx0.115\). He variance is \(2/100=0.0200\), giving standard deviation
+    \(0.141\). Variance and standard deviation are not interchangeable. The estimate assumes
+    independent, similarly distributed signals; trained networks soon violate those assumptions, so
+    initialization is a starting condition rather than a permanent guarantee.
+  </p>
+</div>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Guided calculation — initialization variance through depth</div>
+    <div class="wsub">Compare Xavier, He, and a custom weight variance, then see how a simplified per-layer variance multiplier compounds.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label for="init-fanin">fan-in \(n_{in}\) <input id="init-fanin" type="number" min="1" step="1" value="100"></label>
+      <label for="init-fanout">fan-out \(n_{out}\) <input id="init-fanout" type="number" min="1" step="1" value="50"></label>
+      <label for="init-depth">number of layers <input id="init-depth" type="number" min="1" max="200" step="1" value="20"></label>
+      <label for="init-scheme">scheme
+        <select id="init-scheme">
+          <option value="xavier" selected>Xavier / Glorot</option>
+          <option value="he">He / Kaiming for ReLU</option>
+          <option value="custom">custom variance</option>
+        </select>
+      </label>
+      <label for="init-custom-var">custom weight variance
+        <input id="init-custom-var" type="number" min="0" step="0.001" value="0.01">
+      </label>
+    </div>
+    <div class="tiles">
+      <div class="tile"><div class="tv" id="init-weight-var">—</div><div class="tl">weight variance</div></div>
+      <div class="tile"><div class="tv" id="init-weight-std">—</div><div class="tl">weight standard deviation</div></div>
+      <div class="tile"><div class="tv" id="init-multiplier">—</div><div class="tl">estimated variance multiplier per layer</div></div>
+      <div class="tile"><div class="tv" id="init-output-var">—</div><div class="tl">estimated variance after chosen depth</div></div>
+    </div>
+    <div class="readout" id="init-readout" aria-live="polite">Enter valid positive fan dimensions to compare schemes.</div>
+    <p class="wcaption">The depth estimate deliberately uses a simplified independence model. Normalization, correlations, biases, residual paths, and changing activation statistics alter real networks.</p>
+  </div>
+</div>
+
+<h3>Practical choice and failure checks</h3>
+<pre><code>choose the hidden activation and block design
+derive or select an initialization matched to that activation
+sample weights independently with the chosen variance
+initialize most biases to zero unless the architecture specifies otherwise
+run one forward pass and inspect activation mean, variance, and saturation
+run one backward pass and inspect gradient norms by depth
+adjust only with evidence from these diagnostics</code></pre>
+<p>
+  ReLU plus He initialization is a strong baseline for many convolutional networks. GELU or a gated
+  block is common in transformer-style feed-forward layers, usually together with architecture-
+  specific scaling and normalization. Sigmoid belongs naturally at a binary output or inside gates;
+  tanh remains useful when bounded, signed state updates are desirable. Exact prescriptions depend on
+  whether weights are transposed in storage, whether the calculation preserves forward or backward
+  variance, and whether residual branches need additional depth scaling. Confirm the library's
+  fan-in/fan-out convention rather than selecting a scheme by name alone.
+</p>
+
+<h2>5.3 Training deep networks — the stabilizer stack</h2>
+<h3>Purpose — make useful gradient updates repeatably</h3>
+<p>
+  Training is a feedback loop. The batch supplies a noisy estimate of the population gradient; the
+  optimizer converts it into a step; the new weights change the next batch's activations and
+  gradients. Instability can enter through data scale, layer depth, numerical precision, the learning
+  rate, or the objective. The “stabilizer stack” addresses different parts of this loop—normalization
+  controls internal scale, regularization constrains effective capacity, scheduling controls update
+  size, and diagnostics reveal which mechanism has failed.
+</p>
+
+<h3>Optimizers and batches — what one step actually does</h3>
+<p>
+  Plain stochastic gradient descent uses \(\theta_{t+1}=\theta_t-\eta g_t\), where \(g_t\) is the
+  batch-average gradient and \(\eta\) is the learning rate. Momentum smooths recent directions.
+  Adam maintains exponential averages of the gradient and squared gradient, corrects their initial
+  bias, and scales each coordinate by its estimated root-mean-square. This often makes early
+  optimization forgiving, but it does not remove the need to tune learning rate or monitor
+  generalization. Small batches give noisier gradients and more updates per epoch; large batches give
+  steadier estimates but use more memory and may require schedule adjustments.
+</p>
+
+<h3>Normalization — specify the axis before quoting the formula</h3>
+<p>
+  For values \(x_i\) in the chosen normalization set \(S\), define
+  $$\mu_S=\frac1{|S|}\sum_{i\in S}x_i,\qquad
+  \sigma_S^2=\frac1{|S|}\sum_{i\in S}(x_i-\mu_S)^2,$$
+  $$\widehat x_i=\frac{x_i-\mu_S}{\sqrt{\sigma_S^2+\varepsilon}},\qquad
+  y_i=\gamma\widehat x_i+\beta.$$
+  The small \(\varepsilon\) prevents division by zero. For one illustrated slice, \(\gamma,\beta\)
+  can be read as scalars; actual layers normally learn one affine parameter pair per retained feature
+  or channel and share it across the members being normalized. The important difference between
+  methods is the set \(S\).
+</p>
+<div class="tablewrap">
+  <table>
+    <thead><tr><th>Method</th><th>Values normalized together</th><th>Training and inference behavior</th><th>Best-fit intuition and caveat</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>BatchNorm</td>
+        <td>Per feature over the batch; for CNNs, commonly per channel over batch and spatial positions</td>
+        <td>Training uses current-batch statistics; inference normally uses running estimates accumulated during training</td>
+        <td>Effective in many CNNs; small or non-representative batches make statistics noisy, and train/eval mode errors matter</td>
+      </tr>
+      <tr>
+        <td>LayerNorm</td>
+        <td>Features within one sample or token</td>
+        <td>Uses the current sample in both modes; no running mean or variance</td>
+        <td>Independent of batch size and standard in transformers; erases per-token mean and scale across normalized features</td>
+      </tr>
+      <tr>
+        <td>RMSNorm</td>
+        <td>Usually features within one sample or token</td>
+        <td>Uses the current sample in both modes</td>
+        <td>Divides by \(\sqrt{|S|^{-1}\sum x_i^2+\varepsilon}\) without subtracting the mean; simpler but not universally superior</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="box note">
+  <div class="box-title">Worked normalization calculation</div>
+  <p>
+    For \(x=(1,2,3)\), the mean is \(2\) and the population variance is \(2/3\). Ignoring a tiny
+    \(\varepsilon\), mean-centred normalization gives approximately
+    \((-1.225,0,1.225)\). RMSNorm uses
+    \(\sqrt{(1^2+2^2+3^2)/3}=\sqrt{14/3}\approx2.160\), giving
+    \((0.463,0.926,1.389)\). RMSNorm scales but does not centre, so its output mean need not be zero.
+    In a real layer, learned scale—and sometimes offset—follows this calculation.
+  </p>
+</div>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Guided calculation — normalization axes on an activation matrix</div>
+    <div class="wsub">Enter a small matrix using commas between columns and semicolons between rows; then change the normalization axis.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label for="norm-values">values
+        <input id="norm-values" type="text" value="1, 2, 3; 4, 8, 12" aria-label="Activation matrix with comma-separated columns and semicolon-separated rows">
+      </label>
+      <label for="norm-method">method
+        <select id="norm-method">
+          <option value="batch" selected>BatchNorm per column</option>
+          <option value="layer">LayerNorm per row</option>
+          <option value="rms">RMSNorm per row</option>
+        </select>
+      </label>
+      <label for="norm-eps">epsilon \(\varepsilon\)
+        <input id="norm-eps" type="number" min="0" step="0.00001" value="0.00001">
+      </label>
+    </div>
+    <div class="readout" id="norm-output" aria-live="polite">Normalized values will appear here.</div>
+    <div class="readout" id="norm-readout" aria-live="polite">This matrix makes the normalization axis explicit; it is still a small teaching example.</div>
+    <p class="wcaption">Each semicolon starts a new sample row. This simplified dense-tensor example treats columns as features: BatchNorm compares a feature across rows, while LayerNorm and RMSNorm compare features within each row.</p>
+  </div>
+</div>
+
+<h3>Regularization — reduce brittle reliance on the training sample</h3>
+<div class="tablewrap">
+  <table>
+    <thead><tr><th>Method</th><th>Training behavior</th><th>Inference behavior</th><th>Caveat</th></tr></thead>
+    <tbody>
+      <tr><td>Dropout</td><td>With inverted dropout, keep probability \(q=1-p\): \(\widetilde h=m\odot h/q\), \(m_i\sim\mathrm{Bernoulli}(q)\)</td><td>Use all units with no random mask or extra rescaling</td><td>Can harm architectures already strongly regularized; it adds noise, not guaranteed independence</td></tr>
+      <tr><td>Weight decay</td><td>If \(u_t\) is Adam's bias-corrected adaptive direction, AdamW uses \(\theta_{t+1}=(1-\eta_t\lambda)\theta_t-\eta_tu_t\)</td><td>No special change</td><td>Under adaptive optimizers, decoupled decay is not the same update as adding an L2 term to the loss</td></tr>
+      <tr><td>Early stopping</td><td>Checkpoint when a validation metric improves; stop after a declared patience</td><td>Restore the selected checkpoint</td><td>Validation noise can cause premature stops; the test set must not choose the epoch</td></tr>
+    </tbody>
+  </table>
+</div>
+<p>
+  Dropout discourages dependence on any one activation by training many random subnetworks that share
+  weights, but the ensemble analogy is approximate. L2 regularization and weight decay coincide for
+  plain SGD under matched conventions; they generally differ for Adam because adaptive scaling acts
+  on an L2 gradient term. Do not automatically decay biases and normalization scale/offset
+  parameters—many training recipes exclude them, and that choice is a tunable convention.
+</p>
+
+<h3>Warmup and cosine decay — control step size over time</h3>
+<p>
+  During linear warmup, the learning rate may follow
+  \(\eta_t=\eta_{\max}t/T_w\) for \(0\leq t\leq T_w\). Early gradients and Adam moment estimates can
+  be highly variable, and deep residual or attention blocks may be sensitive to a full target rate
+  before their parameters enter a stable regime. Warmup reduces that initial shock; it is a useful
+  recipe, not a law and not a substitute for sound initialization.
+  After warmup, one cosine schedule is
+  $$\eta_t=\eta_{\min}+\frac12(\eta_{\max}-\eta_{\min})
+  \left[1+\cos\left(\pi\frac{t-T_w}{T-T_w}\right)\right].$$
+  It changes smoothly from large exploratory updates to smaller late updates. The minimum rate,
+  warmup length, total step budget, and whether restarts are used remain hyperparameters.
+</p>
+<div class="box note">
+  <div class="box-title">Worked schedule calculation</div>
+  <p>
+    Let \(\eta_{\max}=10^{-3}\), \(\eta_{\min}=10^{-5}\), \(T_w=100\), and \(T=1000\).
+    At warmup step \(50\), \(\eta=5\times10^{-4}\). Halfway through the post-warmup interval,
+    \(t=550\), the cosine is zero, so
+    \(\eta=(10^{-3}+10^{-5})/2=5.05\times10^{-4}\). At \(t=1000\), it reaches \(10^{-5}\).
+  </p>
+</div>
+
+<h3>Diagnose before changing five settings at once</h3>
+<div class="tablewrap">
 <table>
-  <tr><th>Symptom</th><th>Likely causes</th><th>First moves</th></tr>
-  <tr><td>Loss = NaN at some step</td><td>LR too high; exp/log overflow (Topic 1); bad data row (inf/NaN feature); fp16 overflow</td><td>lower LR; check data; gradient clipping; loss-scaling / bf16</td></tr>
-  <tr><td>Loss stuck at ~ln(K) for K classes</td><td>predicting uniform — dead ReLUs, zero-init, LR ≈ 0, labels shuffled</td><td>check init &amp; LR; overfit a single batch as a sanity test</td></tr>
-  <tr><td>Train loss ↓, val loss ↑ from early on</td><td>overfitting; leakage making train too easy</td><td>regularize, augment, more data; audit the split</td></tr>
-  <tr><td>Gradient norm spikes, loss sawtooths</td><td>exploding gradients (recurrence, long context, bad norm placement)</td><td>gradient clipping; warmup; check normalization</td></tr>
-  <tr><td>Many units permanently output 0</td><td>dead ReLUs from a big early step or high LR</td><td>He init, lower LR, LeakyReLU/GELU</td></tr>
+  <thead><tr><th>Observed symptom</th><th>Plausible causes</th><th>High-value first checks or moves</th></tr></thead>
+  <tbody>
+    <tr><td>Loss becomes NaN or infinity</td><td>Non-finite data; unstable log/exp/division; excessive rate; exploding activations or gradients; low-precision overflow</td><td>Locate the first non-finite tensor; validate data; use stable loss formulas; reduce rate; inspect gradient norm; consider clipping or appropriate mixed-precision scaling</td></tr>
+    <tr><td>Classification loss stays near \(\log K\)</td><td>Near-uniform predictions; labels or pipeline broken; no effective update; saturated/dead path</td><td>Verify labels and logits; inspect gradient and parameter changes; deliberately overfit one tiny batch</td></tr>
+    <tr><td>Many ReLU outputs stay exactly zero</td><td>Pre-activations remain negative after poor scale or a large update</td><td>Inspect activation histograms; check He-style scale and rate; consider a nonzero-negative-slope or smooth activation</td></tr>
+    <tr><td>Gradient norm grows sharply with depth or time</td><td>Unstable Jacobian products, recurrence, bad scaling, long sequences</td><td>Inspect norms layer by layer; clip as a safeguard; lower rate; check initialization, normalization, gates, or residual path</td></tr>
+    <tr><td>Train loss falls while validation loss rises</td><td>Overfitting, split mismatch, augmentation mismatch, or leakage</td><td>Audit the split and evaluation mode; add justified regularization/data; stop training by the declared validation rule</td></tr>
+    <tr><td>Train and validation losses are both high</td><td>Under-capacity, optimization failure, weak features, excessive regularization, or label noise</td><td>Overfit a tiny batch; inspect learning curves; simplify the pipeline; then adjust capacity or optimization</td></tr>
+    <tr><td>BatchNorm differs sharply at evaluation</td><td>Poor running statistics, tiny batches, forgotten train/eval mode switch</td><td>Confirm mode, running-stat updates, batch construction, and evaluation preprocessing</td></tr>
+  </tbody>
 </table>
 </div>
 
 <div class="widget">
   <div class="widget-head">
     <div class="wtitle">Interactive — train a real neural network, right now</div>
-    <div class="wsub">A 2-16-16-1 MLP training live in your browser with Adam on 2-D toy data. Watch the decision boundary morph and the loss fall. This is the same algorithm — at 10⁹× smaller scale — that trains GPT-class models.</div>
+    <div class="wsub">A small MLP trains with Adam on two-dimensional toy data. Watch its class score surface and compare training with a fixed held-out validation sample.</div>
   </div>
   <div class="widget-body">
     <div class="controls">
-      <label>dataset
-        <select id="nn-data">
+      <label for="nn-data">dataset
+        <select id="nn-data" aria-label="Toy training dataset">
           <option value="circles" selected>concentric circles</option>
           <option value="xor">XOR quadrants</option>
           <option value="spiral">two spirals (hard)</option>
         </select>
       </label>
-      <label>hidden units <input type="range" id="nn-h" min="2" max="24" step="1" value="12"><span class="val" id="nn-h-v"></span></label>
-      <label>activation
-        <select id="nn-act"><option value="tanh" selected>tanh</option><option value="relu">ReLU</option></select>
+      <label for="nn-h">hidden units
+        <input type="range" id="nn-h" min="2" max="24" step="1" value="12" aria-label="Hidden units per layer">
+        <span class="val" id="nn-h-v"></span>
       </label>
-      <label>log₁₀ lr <input type="range" id="nn-lr" min="-3.5" max="-0.5" step="0.1" value="-2"><span class="val" id="nn-lr-v"></span></label>
-      <button class="btn" id="nn-train">Train</button>
-      <button class="btn ghost" id="nn-reset">Re-init</button>
+      <label for="nn-act">activation
+        <select id="nn-act" aria-label="MLP hidden activation"><option value="tanh" selected>tanh</option><option value="relu">ReLU</option></select>
+      </label>
+      <label for="nn-lr">log₁₀ learning rate
+        <input type="range" id="nn-lr" min="-3.5" max="-0.5" step="0.1" value="-2" aria-label="Base ten logarithm of learning rate">
+        <span class="val" id="nn-lr-v"></span>
+      </label>
+      <button class="btn" id="nn-train" type="button">Train</button>
+      <button class="btn ghost" id="nn-reset" type="button">Re-initialize</button>
     </div>
     <div style="display:flex;gap:14px;flex-wrap:wrap">
-      <canvas id="nn-canvas" width="380" height="300"></canvas>
-      <canvas id="nn-loss" width="240" height="300"></canvas>
+      <canvas id="nn-canvas" width="380" height="300" role="img" aria-label="Toy samples over the model's current class score surface">Neural-network class score visualization.</canvas>
+      <canvas id="nn-loss" width="240" height="300" role="img" aria-label="Training and held-out validation loss by optimization step">Training and validation loss curves.</canvas>
     </div>
-    <div class="readout" id="nn-readout"></div>
+    <div class="readout" id="nn-readout" aria-live="polite">The network is initialized and ready to train.</div>
     <p class="wcaption">
-      Things to try: (1) 2 hidden units on circles — underparameterized, it can't close the loop.
-      (2) lr = 10⁻⁰·⁵ — divergence, live. (3) The spiral with tanh vs ReLU — see the piecewise-linear
-      facets ReLU carves versus tanh's smooth curves. (4) Re-init several times: different random
-      seeds, different final boundaries — non-convexity in person.
+      Try two hidden units on circles, compare tanh with ReLU on the spiral, and re-initialize several
+      times. The held-out validation sample is fixed while the network initializes and trains, so its
+      curve offers a fairer generalization check than training accuracy alone. It remains a toy
+      demonstration, not a final test estimate. A high learning rate may make optimization unstable;
+      pause or re-initialize if values diverge.
     </p>
   </div>
 </div>
 
-<h2>5.4 Core architectures — matching structure to data</h2>
+<h3>A safe training loop and when each stabilizer helps</h3>
+<pre><code>initialize parameters with a scheme matched to each block
+for each training step:
+    draw a batch and apply training-only augmentation
+    forward pass in training mode
+    compute a numerically stable batch-mean loss
+    backward pass
+    inspect or clip the global gradient norm if justified
+    optimizer step with the scheduled learning rate
+    apply decoupled weight decay if the recipe uses it
+at evaluation checkpoints:
+    switch to evaluation mode
+    compute validation metrics without gradients or parameter updates
+    save a checkpoint if the declared selection metric improves
+stop according to the validation protocol, restore the selected checkpoint
+evaluate the frozen procedure once on the test set</code></pre>
 <p>
-  <strong>CNNs.</strong> A convolution slides one small kernel across the image, computing dot
-  products. Two ideas do all the work: <em>parameter sharing</em> (the same edge detector is useful
-  everywhere — translation symmetry baked into the architecture) and <em>locality</em> (nearby
-  pixels matter most). Stacking layers grows the <em>receptive field</em> — the input patch a deep
-  unit can see — so early layers learn edges, middle layers textures and parts, late layers objects.
-  <em>Pooling</em> (or strided conv) downsamples, buying translation tolerance and cheaper compute.
-  A conv layer with a k×k kernel, C_in→C_out channels costs k²·C_in·C_out parameters —
-  independent of image size, which is the entire trick versus a dense layer.
+  Normalization is most useful when internal scale makes optimization difficult; it is not a remedy
+  for wrong labels. Dropout and weight decay address overfitting or brittle weights, not an inability
+  to fit one batch. Gradient clipping limits the magnitude of a step after a spike; it does not repair
+  the source of consistently bad gradients. Warmup protects the early trajectory, while decay
+  allocates smaller updates late in a finite budget. Change one hypothesis-driven part of the recipe
+  at a time and record both training and validation evidence.
 </p>
+
+<h2>5.4 Core architectures — matching structure to data</h2>
+<h3>Purpose — put a useful structural assumption into the computation</h3>
+<p>
+  Architecture is an inductive bias: it makes some relationships easier to represent than others.
+  A convolution assumes local patterns should be detectable at many positions. A recurrent network
+  assumes a state should be updated in sequence order. Attention assumes each item may retrieve
+  information directly from a set of other items. An autoencoder assumes useful structure can be
+  learned through a reconstruction task and a constrained representation. These assumptions reduce
+  or reorganize the search space; none is automatically correct for every dataset.
+</p>
+<div class="tablewrap">
+  <table>
+    <thead><tr><th>Data relationship</th><th>Natural starting architecture</th><th>Reason</th><th>Important limitation</th></tr></thead>
+    <tbody>
+      <tr><td>Local spatial or grid structure</td><td>CNN</td><td>Local connectivity and shared kernels</td><td>Standard convolution does not natively model every rotation, scale, or long-range interaction</td></tr>
+      <tr><td>Ordered stream with state updated one item at a time</td><td>RNN, LSTM, or GRU</td><td>Shared recurrence and explicit hidden state</td><td>Sequential computation limits parallelism and long paths challenge gradients</td></tr>
+      <tr><td>Contextual interaction among many positions</td><td>Attention</td><td>Direct content-based retrieval</td><td>Dense self-attention uses quadratic score memory and work in sequence length</td></tr>
+      <tr><td>Unlabelled representation or reconstruction</td><td>Autoencoder</td><td>Encoder–bottleneck–decoder objective</td><td>Reconstruction may preserve nuisance detail rather than task-relevant meaning</td></tr>
+      <tr><td>Fixed tabular vector</td><td>MLP or classical baseline</td><td>No spatial or sequential structure required</td><td>Deep models may not win when data are limited</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3>Convolutional neural networks — local filters with shared parameters</h3>
+<p>
+  For a two-dimensional input \(X\), output channel \(c_o\), and kernel \(K\), the operation commonly
+  called convolution in deep-learning libraries is cross-correlation:
+  $$Y_{i,j,c_o}=b_{c_o}+
+  \sum_{a=0}^{k_h-1}\sum_{b=0}^{k_w-1}\sum_{c_i=1}^{C_{in}}
+  K_{a,b,c_i,c_o}\,X_{i s_h+a d_h-p_h,\;j s_w+b d_w-p_w,\;c_i}.$$
+  The same kernel values are reused at every valid output position: <strong>parameter sharing</strong>.
+  Each output initially sees a local patch: <strong>local connectivity</strong>. A shift in the input
+  generally shifts the feature map, so convolution is approximately translation equivariant away
+  from boundary, stride, and sampling effects. Pooling or strided convolution reduces spatial size
+  and compute and may increase tolerance to small shifts; it does not guarantee perfect invariance.
+</p>
+<p>
+  Along one spatial axis with input size \(n\), padding \(p\), kernel size \(k\), stride \(s\), and
+  dilation \(d\), the output size is
+  $$n_{out}=\left\lfloor\frac{n+2p-d(k-1)-1}{s}+1\right\rfloor.$$
+  A \(k_h\times k_w\) layer has
+  \(k_hk_wC_{in}C_{out}+C_{out}\) trainable parameters when each output channel has a bias—independent
+  of image width and height. The effective kernel or single-layer receptive-field width is
+  \(d(k-1)+1\). Across layers, if \(r_l\) is receptive field and \(j_l\) is the spacing between
+  adjacent features in input coordinates,
+  \(r_l=r_{l-1}+(k_l-1)d_lj_{l-1}\) and \(j_l=j_{l-1}s_l\), starting from \(r_0=j_0=1\).
+  In the displayed indexed sum, positions outside the stored input are defined as zero when
+  zero-padding is used; other padding modes would change those boundary values.
+</p>
+<div class="box note">
+  <div class="box-title">Worked convolution shape and parameter calculation</div>
+  <p>
+    For a \(32\times32\) RGB input, \(3\times3\) kernels, padding \(1\), stride \(1\), dilation \(1\),
+    and \(16\) output channels, each spatial output size is
+    \(\lfloor(32+2-2-1)/1+1\rfloor=32\). The output tensor per sample is
+    \(32\times32\times16\). With biases, the parameter count is
+    \(3\cdot3\cdot3\cdot16+16=448\), not \(32^2\) times that number, because the same \(448\)
+    parameters are reused at every position.
+  </p>
+</div>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Guided calculation — convolution shape, parameters, and receptive field</div>
+    <div class="wsub">Use one spatial axis; the same output-size formula applies independently to height and width.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label for="shape-n">input size \(n\) <input id="shape-n" type="number" min="1" step="1" value="32"></label>
+      <label for="shape-k">kernel size \(k\) <input id="shape-k" type="number" min="1" step="1" value="3"></label>
+      <label for="shape-s">stride \(s\) <input id="shape-s" type="number" min="1" step="1" value="1"></label>
+      <label for="shape-p">padding \(p\) <input id="shape-p" type="number" min="0" step="1" value="1"></label>
+      <label for="shape-d">dilation \(d\) <input id="shape-d" type="number" min="1" step="1" value="1"></label>
+      <label for="shape-cin">input channels \(C_{in}\) <input id="shape-cin" type="number" min="1" step="1" value="3"></label>
+      <label for="shape-cout">output channels \(C_{out}\) <input id="shape-cout" type="number" min="1" step="1" value="16"></label>
+    </div>
+    <div class="tiles">
+      <div class="tile"><div class="tv" id="shape-out">—</div><div class="tl">output size along one axis</div></div>
+      <div class="tile"><div class="tv" id="shape-params">—</div><div class="tl">square-kernel parameters including bias</div></div>
+      <div class="tile"><div class="tv" id="shape-rf">—</div><div class="tl">single-layer receptive-field width</div></div>
+    </div>
+    <div class="readout" id="shape-readout" aria-live="polite">Enter valid integer dimensions to calculate the layer.</div>
+    <p class="wcaption">The parameter tile assumes a \(k\times k\) kernel and one bias per output channel. An invalid geometry has no output positions.</p>
+  </div>
+</div>
+<pre><code>for each output channel:
+    for each valid output row and column:
+        total = that channel's bias
+        for each input channel and kernel position:
+            total += shared_kernel_weight * corresponding_input_value
+        store total at this output position
+apply activation; optionally downsample with stride or pooling</code></pre>
 
 <div class="widget">
   <div class="widget-head">
     <div class="wtitle">Interactive — convolution by hand</div>
-    <div class="wsub">A 3×3 kernel slides over an 8×8 image. Hover over any output cell to see exactly which inputs produced it and the arithmetic. Change kernels to see edge detection happen.</div>
+    <div class="wsub">A 3×3 kernel slides over an 8×8 image. Choose an output row and column—or point at the output—to inspect the exact input patch and arithmetic.</div>
   </div>
   <div class="widget-body">
     <div class="controls">
-      <label>kernel
-        <select id="cv-k">
+      <label for="cv-k">kernel
+        <select id="cv-k" aria-label="Convolution kernel">
           <option value="vedge" selected>vertical edge detector</option>
           <option value="hedge">horizontal edge detector</option>
           <option value="blur">box blur</option>
           <option value="sharp">sharpen</option>
         </select>
       </label>
-      <label>image
-        <select id="cv-img">
+      <label for="cv-img">image
+        <select id="cv-img" aria-label="Input image pattern">
           <option value="square" selected>bright square</option>
           <option value="stripes">vertical stripes</option>
           <option value="diag">diagonal edge</option>
         </select>
       </label>
+      <label for="cv-row">output row, 1–6
+        <input id="cv-row" type="number" min="1" max="6" step="1" value="1" inputmode="numeric">
+      </label>
+      <label for="cv-col">output column, 1–6
+        <input id="cv-col" type="number" min="1" max="6" step="1" value="1" inputmode="numeric">
+      </label>
+      <button class="btn ghost" id="cv-inspect" type="button">Inspect output cell</button>
     </div>
     <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start">
-      <div><div style="font-size:0.78rem;color:var(--muted);margin-bottom:4px">input 8×8</div><canvas id="cv-in" width="200" height="200"></canvas></div>
-      <div><div style="font-size:0.78rem;color:var(--muted);margin-bottom:4px">kernel 3×3</div><canvas id="cv-ker" width="78" height="78"></canvas></div>
-      <div><div style="font-size:0.78rem;color:var(--muted);margin-bottom:4px">output 6×6 (hover me)</div><canvas id="cv-out" width="152" height="152"></canvas></div>
+      <div><div style="font-size:0.78rem;color:var(--muted);margin-bottom:4px">input 8×8</div><canvas id="cv-in" width="200" height="200" role="img" aria-label="Eight by eight input grid with inspected patch highlighted">Input grid.</canvas></div>
+      <div><div style="font-size:0.78rem;color:var(--muted);margin-bottom:4px">kernel 3×3</div><canvas id="cv-ker" width="78" height="78" role="img" aria-label="Selected three by three convolution kernel">Kernel grid.</canvas></div>
+      <div><div style="font-size:0.78rem;color:var(--muted);margin-bottom:4px">output 6×6</div><canvas id="cv-out" width="152" height="152" role="img" aria-label="Six by six convolution output with inspected cell highlighted">Output grid.</canvas></div>
     </div>
-    <div class="readout" id="cv-readout">Hover an output cell to see its computation.</div>
+    <div class="readout" id="cv-readout" aria-live="polite">Choose row and column 1–6, then inspect the output cell.</div>
     <p class="wcaption">
-      Note the output is 6×6: with no padding, a 3×3 kernel eats a 1-pixel border ((8−3)/1+1 = 6).
-      The vertical-edge kernel outputs ~0 on flat regions and fires exactly on vertical transitions —
-      and its 9 weights are reused at all 36 positions: parameter sharing.
+      With no padding, \((8-3)/1+1=6\), so the output is \(6\times6\). An edge kernel gives a
+      signed response that depends on edge direction and contrast; “near zero on a flat patch” is
+      more precise than saying it always detects an object boundary. Its nine weights are reused at
+      all 36 positions.
     </p>
   </div>
 </div>
 
+<h3>RNNs — share one state-update rule across time</h3>
 <p>
-  <strong>RNNs, LSTMs, GRUs.</strong> A recurrent net processes a sequence by folding each token
-  into a hidden state: \(h_t = \phi(W_h h_{t-1} + W_x x_t)\). Backprop through time multiplies by
-  \(W_h\)'s Jacobian once <em>per timestep</em> — the vanishing/exploding gradient problem in its
-  purest form: long-range dependencies decay exponentially. The <strong>LSTM</strong> fixes this
-  with an additive <em>cell state</em> — a conveyor belt modified only by learned gates (forget,
-  input, output), so gradients can flow along it un-multiplied; the <strong>GRU</strong> is the
-  cheaper two-gate version. This "protected additive path" is the same design principle as residual
-  connections and is why you should see LSTMs and ResNets as siblings.
+  A vanilla recurrent neural network reads an ordered sequence using
+  $$h_t=\phi(W_xx_t+W_hh_{t-1}+b_h),\qquad \widehat y_t=g(W_yh_t+b_y).$$
+  The same matrices are reused at every time step, so the hidden state summarizes the prefix seen so
+  far. Training unfolds this computation across time and applies backpropagation through time. A
+  gradient from time \(T\) to an earlier state includes a product
+  \(\prod_{t=k+1}^{T}\partial h_t/\partial h_{t-1}\). Repeated singular values mainly below one
+  contract many directions; values mainly above one can amplify them. This is why long-range credit
+  assignment may vanish or explode even though the forward state appears finite.
 </p>
+<div class="box note">
+  <div class="box-title">LSTM gates create a controlled additive state path</div>
+  <p>
+    One common LSTM form computes
+    \(f_t=\sigma(W_f[x_t;h_{t-1}]+b_f)\),
+    \(i_t=\sigma(W_i[x_t;h_{t-1}]+b_i)\),
+    \(o_t=\sigma(W_o[x_t;h_{t-1}]+b_o)\), and
+    \(\widetilde c_t=\tanh(W_c[x_t;h_{t-1}]+b_c)\), then
+    $$c_t=f_t\odot c_{t-1}+i_t\odot\widetilde c_t,\qquad
+    h_t=o_t\odot\tanh(c_t).$$
+    Along the direct cell-state path, holding the gate computation fixed,
+    \(\partial c_t/\partial c_{t-1}=f_t\); across many steps the contribution contains a product of
+    forget gates. Gates near one can preserve a path much better than an unconstrained recurrent
+    matrix, but LSTMs <em>mitigate</em> rather than abolish vanishing gradients.
+  </p>
+</div>
 <p>
-  <strong>Attention, the preview.</strong> RNNs force all history through one fixed-size state.
-  Attention instead lets each position directly retrieve from every other:
-  compare a <em>query</em> against all <em>keys</em>, softmax the similarities into weights, take
-  the weighted sum of <em>values</em>. No distance decay, perfect parallelism — and quadratic cost.
-  Topic 8 devotes itself to this mechanism; here you need only the intuition: attention is a
-  <em>differentiable soft dictionary lookup</em>.
+  A conventional GRU uses
+  \(r_t=\sigma(W_rx_t+U_rh_{t-1}+b_r)\),
+  \(u_t=\sigma(W_ux_t+U_uh_{t-1}+b_u)\),
+  \(\widetilde h_t=\tanh(W_hx_t+U_h(r_t\odot h_{t-1})+b_h)\), and
+  \(h_t=(1-u_t)\odot h_{t-1}+u_t\odot\widetilde h_t\).
+  It therefore blends retained state with a candidate without a separate cell state and usually has
+  fewer parameters than an equally sized LSTM. Some sources reverse the update-gate convention or
+  place the reset multiplication differently, so compare equations rather than gate names alone.
 </p>
+<pre><code>state = initial_state
+for each sequence position t in order:
+    compute gates from current input and previous state
+    compute a candidate update
+    blend retained state with the candidate
+    optionally emit an output at position t
+backpropagate the sequence loss through the unrolled operations
+mask padded positions so they do not affect loss or state</code></pre>
 <p>
-  <strong>Autoencoders</strong> squeeze the input through a low-dimensional bottleneck and
-  reconstruct it: encoder \(z = f(x)\), decoder \(\hat x = g(z)\), loss \(\|x - \hat x\|^2\). The
-  bottleneck \(z\) — the <em>latent space</em> — is forced to keep only what matters; a linear
-  autoencoder provably recovers PCA's subspace, so think of autoencoders as nonlinear PCA. Latents
-  become the currency of generative modeling (VAEs and latent diffusion, Topics 8 and 10).
+  Use recurrence when streaming, bounded memory, or sequential state updates are central constraints.
+  Carrying state between unrelated sequences causes leakage; always define when state resets. Very
+  long sequences may still require clipping, truncated backpropagation, careful gates, or an
+  attention-based alternative. Padding masks and sequence lengths are part of the mathematics, not
+  cosmetic metadata.
 </p>
+
+<h3>Attention — content-based retrieval with explicit shapes</h3>
+<p>
+  Given \(L\) input representations in \(X\in\mathbb R^{L\times d_{model}}\), one attention head
+  forms \(Q=XW_Q\in\mathbb R^{L\times d_k}\),
+  \(K=XW_K\in\mathbb R^{L\times d_k}\), and
+  \(V=XW_V\in\mathbb R^{L\times d_v}\). Scaled dot-product attention is
+  $$A=\operatorname{softmax}_{rows}\left(\frac{QK^\top}{\sqrt{d_k}}+M\right),
+  \qquad O=AV.$$
+  Each query row compares with every permitted key. Softmax makes its permitted weights nonnegative
+  and sum to one, then the corresponding values are averaged. Dividing by \(\sqrt{d_k}\) prevents
+  dot-product variance from growing with key dimension under simple independence assumptions. The
+  mask \(M\) places a very negative value at forbidden pairs: padding masks hide nonexistent tokens,
+  while causal masks prevent a position from reading future tokens.
+</p>
+<div class="box note">
+  <div class="box-title">Worked one-query attention calculation</div>
+  <p>
+    Let \(q=(1,0)\), keys \(k_1=(1,0),k_2=(0,1)\), and values
+    \(v_1=(2,0),v_2=(0,4)\). With \(d_k=2\), scaled scores are
+    \((1/\sqrt2,0)\approx(0.707,0)\). Their softmax weights are approximately
+    \((0.670,0.330)\), so the retrieved output is
+    \(0.670v_1+0.330v_2\approx(1.340,1.320)\). A causal mask that forbade key 2 would change the
+    weights to \((1,0)\), regardless of its score.
+  </p>
+</div>
+<p>
+  Dense self-attention forms an \(L\times L\) score matrix, requiring
+  \(O(L^2d_k)\) score work and \(O(L^2)\) score storage per head before implementation refinements.
+  It shortens interaction paths and permits parallel computation across positions during training,
+  including with a causal mask. Autoregressive generation is still sequential across newly generated
+  tokens. Attention alone has no notion of order, so position information must be supplied. It also
+  does not guarantee interpretable or causal importance merely because a weight is large.
+</p>
+
+<h3>Autoencoders — learn by reconstructing a constrained input</h3>
+<p>
+  An autoencoder contains an encoder \(z=f_\theta(x)\) and decoder
+  \(\widehat x=g_\psi(z)\). A basic continuous-data objective is
+  $$\min_{\theta,\psi}\frac1n\sum_{i=1}^{n}
+  \left\|x_i-g_\psi(f_\theta(x_i))\right\|_2^2.$$
+  A bottleneck, noise corruption, sparsity penalty, or other constraint is intended to discourage the
+  trivial strategy of copying every coordinate unchanged, although a sufficiently capable model can
+  still learn a near-identity mapping. The latent \(z\) can support compression, anomaly scoring,
+  denoising, visualization, or downstream features—but reconstruction rewards whatever reduces its
+  loss, including nuisance details.
+</p>
+<div class="box warn">
+  <div class="box-title">“Nonlinear PCA” is an analogy with conditions</div>
+  <p>
+    For centred data, a linear encoder and decoder, squared reconstruction error, a bottleneck of the
+    chosen dimension, and a global optimum, the optimal reconstructed subspace matches PCA's principal
+    subspace. The latent coordinates and weights need not equal PCA's unique orthonormal loadings;
+    invertible rotations within the bottleneck can give the same reconstruction. Nonlinear
+    autoencoders can learn curved structure, but can also memorize if capacity overwhelms the
+    constraint. Select bottleneck size and regularization on validation behavior relevant to the
+    intended use.
+  </p>
+</div>
+<pre><code>for each training batch:
+    optionally corrupt the input according to a declared denoising rule
+    latent = encoder(model_input)
+    reconstruction = decoder(latent)
+    loss = reconstruction_error(reconstruction, clean_target)
+    backpropagate and update encoder and decoder
+validate on unseen samples using the same declared input protocol
+inspect both quantitative error and what information the latent retains</code></pre>
+<div class="tablewrap">
+  <table>
+    <thead><tr><th>Architecture</th><th>When to prefer it</th><th>Failure question to ask first</th></tr></thead>
+    <tbody>
+      <tr><td>CNN</td><td>Local patterns recur across a regular grid</td><td>Does the task require transformations or distant context the chosen receptive field misses?</td></tr>
+      <tr><td>RNN / LSTM / GRU</td><td>Streaming or sequential state is valuable</td><td>Is the dependency longer than gradients and state can retain?</td></tr>
+      <tr><td>Attention</td><td>Items must retrieve context directly and sequence length is manageable</td><td>Are masks, positions, and quadratic resource costs correct?</td></tr>
+      <tr><td>Autoencoder</td><td>Labels are absent and reconstruction is a meaningful proxy</td><td>Is the model learning useful structure or merely copying nuisance variation?</td></tr>
+    </tbody>
+  </table>
+</div>
 
 <div class="box jargon">
   <div class="box-title">Jargon decoder</div>
   <dl>
-    <dt>epoch / step / batch</dt><dd>One pass over the dataset / one gradient update / the examples in one update.</dd>
-    <dt>logits → softmax → loss</dt><dd>The standard classification tail: raw scores → probabilities → cross-entropy.</dd>
-    <dt>gradient clipping</dt><dd>Rescaling the gradient when its norm exceeds a cap — a seatbelt against exploding gradients.</dd>
-    <dt>residual / skip connection</dt><dd>\(h_{out} = h_{in} + F(h_{in})\); gives gradients an identity path, enabling very deep nets (Topic 10's ResNet).</dd>
-    <dt>receptive field</dt><dd>The region of the input that can influence a given unit.</dd>
-    <dt>embedding</dt><dd>A learned dense vector representing a discrete item (word, user, product).</dd>
-    <dt>fine-tuning</dt><dd>Continuing training of a pretrained model on your task (Topics 9–10).</dd>
-    <dt>AdamW</dt><dd>Adam with weight decay applied directly to weights instead of through the gradient — the correct, standard variant.</dd>
+    <dt>epoch / step / batch</dt><dd>One pass over the training set / one parameter update / the samples contributing to one gradient estimate.</dd>
+    <dt>logit → probability → loss</dt><dd>A raw score is normalized by sigmoid or softmax; the loss then compares the resulting distribution with the target.</dd>
+    <dt>gradient clipping</dt><dd>Limit a gradient's norm or values before the update. It contains spikes but does not identify their source.</dd>
+    <dt>residual / skip connection</dt><dd>\(h_{out}=h_{in}+F(h_{in})\), when shapes agree; the identity route can improve signal and gradient flow.</dd>
+    <dt>receptive field</dt><dd>The input region that can influence a unit. The theoretical field may be larger than the region used strongly in practice.</dd>
+    <dt>embedding</dt><dd>A learned dense vector associated with a discrete item or position.</dd>
+    <dt>mask</dt><dd>A rule that excludes padding, future tokens, missing values, or other forbidden interactions from a calculation.</dd>
+    <dt>checkpoint</dt><dd>A saved model and training state; the selected validation checkpoint need not be the last epoch.</dd>
+    <dt>fine-tuning</dt><dd>Continuing from pretrained parameters on new data or an objective, usually with a carefully chosen rate and evaluation plan.</dd>
+    <dt>AdamW</dt><dd>Adam with decoupled weight decay. It is a common choice, not automatically better for every task.</dd>
   </dl>
 </div>
 
 <h2>Self-check</h2>
 <div class="quiz" data-answer="b">
-  <p class="quiz-q">1. For softmax + cross-entropy, the gradient of the loss w.r.t. the logits is:</p>
+  <p class="quiz-q">1. For one example with softmax probabilities \(\widehat y\), one-hot target \(y\), and cross-entropy loss, the gradient with respect to the logits is:</p>
   <div class="opts">
-    <button data-opt="a">\(y \odot \log \hat y\)</button>
-    <button data-opt="b">\(\hat y - y\) — predicted probabilities minus the one-hot target</button>
-    <button data-opt="c">\(\hat y \odot (1-\hat y)\)</button>
-    <button data-opt="d">it must be computed numerically</button>
+    <button type="button" data-opt="a">\(y\odot\log\widehat y\)</button>
+    <button type="button" data-opt="b">\(\widehat y-y\)</button>
+    <button type="button" data-opt="c">\(\widehat y\odot(1-\widehat y)\)</button>
+    <button type="button" data-opt="d">It must be estimated with finite differences.</button>
   </div>
-  <div class="quiz-exp"><strong>b.</strong> The softmax Jacobian and the cross-entropy derivative cancel into ŷ−y. Derive it once by hand — it's a standard exam derivation and the reason this pairing is numerically pleasant.</div>
-</div>
-<div class="quiz" data-answer="c">
-  <p class="quiz-q">2. He initialization uses variance 2/n_in rather than Xavier's 2/(n_in+n_out) because:</p>
-  <div class="opts">
-    <button data-opt="a">ReLU networks have more parameters</button>
-    <button data-opt="b">it compensates for dropout</button>
-    <button data-opt="c">ReLU zeroes half its inputs on average, halving the variance each layer; the extra factor restores it</button>
-    <button data-opt="d">it makes the weights positive</button>
-  </div>
-  <div class="quiz-exp"><strong>c.</strong> E[ReLU(z)²] = Var(z)/2 for zero-mean z. Without the 2, activations shrink by √2 per layer — after 50 layers, 2²⁵× too small.</div>
-</div>
-<div class="quiz" data-answer="a">
-  <p class="quiz-q">3. Your transformer trains fine for 300 steps then loss spikes and NaNs. LR schedule is constant from step 0. Most likely fix:</p>
-  <div class="opts">
-    <button data-opt="a">add warmup — Adam's moment estimates and the normalization statistics are unreliable early, so initial full-size steps destabilize training</button>
-    <button data-opt="b">remove all normalization layers</button>
-    <button data-opt="c">switch to plain SGD without momentum</button>
-    <button data-opt="d">increase the learning rate to escape the bad region faster</button>
-  </div>
-  <div class="quiz-exp"><strong>a.</strong> The signature (early-step instability, constant LR) is the textbook warmup case. Gradient clipping is the complementary seatbelt. (d) is how you get NaN at step 30 instead.</div>
+  <div class="quiz-exp"><strong>b.</strong> The derivatives combine to “predicted probability minus target.” For a batch-mean loss, average these per-sample logit gradients over the batch before propagating them to earlier layers.</div>
 </div>
 <div class="quiz" data-answer="d">
-  <p class="quiz-q">4. LSTMs mitigate vanishing gradients primarily by:</p>
+  <p class="quiz-q">2. What does a universal approximation theorem justify most directly?</p>
   <div class="opts">
-    <button data-opt="a">using sigmoid activations everywhere</button>
-    <button data-opt="b">being shallower than vanilla RNNs</button>
-    <button data-opt="c">clipping gradients internally</button>
-    <button data-opt="d">an additive cell-state pathway whose gradient flow is gated multiplicatively near 1, instead of repeated matrix multiplication</button>
+    <button type="button" data-opt="a">A sufficiently wide network will always generalize.</button>
+    <button type="button" data-opt="b">Gradient descent will find the global optimum.</button>
+    <button type="button" data-opt="c">Depth is unnecessary for efficient representations.</button>
+    <button type="button" data-opt="d">Under stated conditions, a sufficiently wide network can approximate continuous functions on a compact domain to arbitrary accuracy.</button>
   </div>
-  <div class="quiz-exp"><strong>d.</strong> The cell state updates as c_t = f_t ⊙ c_{t−1} + i_t ⊙ ĉ_t; when the forget gate sits near 1, gradients flow back along it almost unchanged — the same "identity highway" idea as residual connections.</div>
+  <div class="quiz-exp"><strong>d.</strong> This is an existence result. It does not supply a practical width, an optimization guarantee, a sample-complexity guarantee, or safe extrapolation outside the domain.</div>
+</div>
+<div class="quiz" data-answer="c">
+  <p class="quiz-q">3. Which statement about hidden nonlinearities is correct?</p>
+  <div class="opts">
+    <button type="button" data-opt="a">ReLU guarantees a unit's gradient is one at every input.</button>
+    <button type="button" data-opt="b">Sigmoid's derivative can exceed one near the origin.</button>
+    <button type="button" data-opt="c">SwiGLU is a gated feed-forward construction in which one projected branch modulates another.</button>
+    <button type="button" data-opt="d">GELU prevents gradients from vanishing or exploding.</button>
+  </div>
+  <div class="quiz-exp"><strong>c.</strong> ReLU's derivative is zero on its negative side and convention-dependent at zero. Sigmoid's maximum derivative is \(0.25\). No activation alone guarantees stable whole-network gradients.</div>
+</div>
+<div class="quiz" data-answer="a">
+  <p class="quiz-q">4. A ReLU layer has fan-in \(200\). What is the usual He weight variance and approximate standard deviation?</p>
+  <div class="opts">
+    <button type="button" data-opt="a">Variance \(0.01\), standard deviation \(0.10\)</button>
+    <button type="button" data-opt="b">Variance \(0.10\), standard deviation \(0.01\)</button>
+    <button type="button" data-opt="c">Variance \(2\), standard deviation \(\sqrt2\)</button>
+    <button type="button" data-opt="d">Variance \(1/200\), standard deviation \(1/200\)</button>
+  </div>
+  <div class="quiz-exp"><strong>a.</strong> He variance is \(2/n_{in}=2/200=0.01\); the normal-distribution standard deviation is its square root, \(0.10\).</div>
+</div>
+<div class="quiz" data-answer="b">
+  <p class="quiz-q">5. Which normalization description is accurate?</p>
+  <div class="opts">
+    <button type="button" data-opt="a">BatchNorm always uses the current sample alone and has identical train/evaluation behavior.</button>
+    <button type="button" data-opt="b">LayerNorm usually normalizes features within each sample or token and does not require running batch statistics.</button>
+    <button type="button" data-opt="c">RMSNorm subtracts the feature mean before dividing by RMS.</button>
+    <button type="button" data-opt="d">All three methods normalize over the same tensor axes.</button>
+  </div>
+  <div class="quiz-exp"><strong>b.</strong> Axis choice is the central distinction. BatchNorm normally changes from batch statistics in training to running estimates at inference; RMSNorm scales by root-mean-square without mean subtraction.</div>
+</div>
+<div class="quiz" data-answer="d">
+  <p class="quiz-q">6. Which statement about regularization and scheduling is correct?</p>
+  <div class="opts">
+    <button type="button" data-opt="a">Dropout should remain random at inference to match training exactly.</button>
+    <button type="button" data-opt="b">The test set should choose the early-stopping epoch.</button>
+    <button type="button" data-opt="c">Adding an L2 loss term to Adam always produces exactly the AdamW update.</button>
+    <button type="button" data-opt="d">Warmup limits the early learning rate, while cosine decay can make the learning rate progressively smaller later in a fixed training budget.</button>
+  </div>
+  <div class="quiz-exp"><strong>d.</strong> Inverted dropout is disabled at inference; validation chooses early stopping; AdamW decouples parameter shrinkage from Adam's adaptive gradient transformation.</div>
+</div>
+<div class="quiz" data-answer="c">
+  <p class="quiz-q">7. A new model's classification loss remains near \(\log K\), and training accuracy stays at chance. What is the highest-value first diagnostic?</p>
+  <div class="opts">
+    <button type="button" data-opt="a">Add more layers immediately.</button>
+    <button type="button" data-opt="b">Open the test set after every step.</button>
+    <button type="button" data-opt="c">Verify labels, logits, gradients, and parameter updates, then try to overfit one tiny batch.</button>
+    <button type="button" data-opt="d">Increase dropout until the loss changes.</button>
+  </div>
+  <div class="quiz-exp"><strong>c.</strong> The tiny-batch test separates a broken optimization/data path from a generalization problem. If the model cannot memorize a few clean examples, regularizing it more is unlikely to help.</div>
+</div>
+<div class="quiz" data-answer="a">
+  <p class="quiz-q">8. A convolution uses input size \(n=28\), kernel \(k=5\), padding \(p=2\), stride \(s=2\), and dilation \(d=1\). What is the output size along that axis?</p>
+  <div class="opts">
+    <button type="button" data-opt="a">14</button>
+    <button type="button" data-opt="b">15</button>
+    <button type="button" data-opt="c">24</button>
+    <button type="button" data-opt="d">28</button>
+  </div>
+  <div class="quiz-exp"><strong>a.</strong> \(\left\lfloor(28+4-4-1)/2+1\right\rfloor=\lfloor14.5\rfloor=14\). The floor matters whenever stride does not divide the available positions evenly.</div>
+</div>
+<div class="quiz" data-answer="d">
+  <p class="quiz-q">9. Why can an LSTM retain gradients better than a vanilla RNN over many time steps?</p>
+  <div class="opts">
+    <button type="button" data-opt="a">Its sigmoid gates always have derivative one.</button>
+    <button type="button" data-opt="b">It never multiplies any quantities during backpropagation.</button>
+    <button type="button" data-opt="c">It automatically clips every gradient.</button>
+    <button type="button" data-opt="d">Its additive cell-state path has a direct derivative governed by forget gates, which can remain near one.</button>
+  </div>
+  <div class="quiz-exp"><strong>d.</strong> The direct path contributes products of forget gates. Values near one can preserve sensitivity, but the product can still contract; an LSTM mitigates rather than permanently solves the problem.</div>
+</div>
+<div class="quiz" data-answer="b">
+  <p class="quiz-q">10. Which combined statement about attention and autoencoders is correct?</p>
+  <div class="opts">
+    <button type="button" data-opt="a">Attention knows sequence order without positional information, and any autoencoder bottleneck guarantees semantic features.</button>
+    <button type="button" data-opt="b">Dense self-attention forms an \(L\times L\) score matrix; a centred linear MSE autoencoder at a global optimum can recover PCA's principal subspace under the stated bottleneck conditions.</button>
+    <button type="button" data-opt="c">Causal attention may read future tokens during training, and a linear autoencoder always learns PCA's unique coordinates.</button>
+    <button type="button" data-opt="d">Attention weights prove causal influence, and reconstruction error cannot preserve nuisance detail.</button>
+  </div>
+  <div class="quiz-exp"><strong>b.</strong> Dense attention has quadratic score structure and needs masks plus position information. The PCA relation is conditional and concerns the reconstructed subspace; latent coordinates may be rotated.</div>
 </div>
 
 <h2>Go deeper</h2>
@@ -355,267 +1026,908 @@
 <script>
 document.addEventListener("caie:ready", () => {
   // ---------- activations ----------
-  (function () {
-    const L = document.getElementById("a-left"), Rc = document.getElementById("a-right");
-    const acts = {
-      sigmoid: { f: z => 1 / (1 + Math.exp(-z)), d: z => { const s = 1 / (1 + Math.exp(-z)); return s * (1 - s); } },
-      tanh: { f: Math.tanh, d: z => 1 - Math.tanh(z) ** 2 },
-      relu: { f: z => Math.max(0, z), d: z => z > 0 ? 1 : 0 },
-      gelu: { f: z => 0.5 * z * (1 + Math.tanh(0.7978845608 * (z + 0.044715 * z * z * z))), d: z => { const h = 1e-4; return (acts.gelu.f(z + h) - acts.gelu.f(z - h)) / (2 * h); } }
+  (function aActivationLab() {
+    const fnInput = document.getElementById("a-fn");
+    const depthInput = document.getElementById("a-depth");
+    const depthOutput = document.getElementById("a-depth-v");
+    const leftCanvas = document.getElementById("a-left");
+    const rightCanvas = document.getElementById("a-right");
+    const readout = document.getElementById("a-readout");
+    if (!fnInput || !depthInput || !depthOutput || !leftCanvas || !rightCanvas) return;
+
+    const geluApprox = z => {
+      const u = 0.7978845608 * (z + 0.044715 * z * z * z);
+      return 0.5 * z * (1 + Math.tanh(u));
     };
+    const geluApproxDerivative = z => {
+      const u = 0.7978845608 * (z + 0.044715 * z * z * z);
+      const t = Math.tanh(u);
+      const du = 0.7978845608 * (1 + 3 * 0.044715 * z * z);
+      return 0.5 * (1 + t) + 0.5 * z * (1 - t * t) * du;
+    };
+    const acts = {
+      sigmoid: {
+        label: "sigmoid",
+        init: "Xavier",
+        variance: width => 1 / width,
+        f: z => z >= 0 ? 1 / (1 + Math.exp(-z)) : Math.exp(z) / (1 + Math.exp(z)),
+        d: z => { const s = z >= 0 ? 1 / (1 + Math.exp(-z)) : Math.exp(z) / (1 + Math.exp(z)); return s * (1 - s); }
+      },
+      tanh: { label: "tanh", init: "Xavier", variance: width => 1 / width, f: Math.tanh, d: z => 1 - Math.tanh(z) ** 2 },
+      relu: { label: "ReLU", init: "He", variance: width => 2 / width, f: z => Math.max(0, z), d: z => z > 0 ? 1 : 0 },
+      gelu: { label: "GELU (tanh approximation)", init: "He-style", variance: width => 2 / width, f: geluApprox, d: geluApproxDerivative }
+    };
+    leftCanvas.setAttribute("role", "img");
+    rightCanvas.setAttribute("role", "img");
+    if (readout) readout.setAttribute("aria-live", "polite");
+
+    function canvasWidth(canvas, maximum) {
+      return Math.max(160, Math.min(maximum, (canvas.parentNode.clientWidth || maximum) - 4));
+    }
     function draw() {
-      const name = document.getElementById("a-fn").value;
-      const depth = +document.getElementById("a-depth").value;
-      document.getElementById("a-depth-v").textContent = depth;
-      const pal = CAIE.pal(), a = acts[name];
-      const P = CAIE.plot(L, { w: Math.min(320, L.parentNode.clientWidth - 4), h: 250, xmin: -4, xmax: 4, ymin: -1.5, ymax: 2, pad: { l: 30, r: 8, t: 10, b: 26 } });
-      P.clear(); P.axes("z", "", { xfmt: v => v.toFixed(0), yfmt: v => v.toFixed(1) });
+      const name = fnInput.value;
+      const depth = Math.max(2, Math.round(+depthInput.value || 2));
+      const a = acts[name] || acts.tanh;
+      depthOutput.textContent = depth;
+      const pal = CAIE.pal();
+      const P = CAIE.plot(leftCanvas, { w: canvasWidth(leftCanvas, 320), h: 250, xmin: -4, xmax: 4, ymin: -1.5, ymax: 2, pad: { l: 30, r: 8, t: 10, b: 26 } });
+      P.clear();
+      P.axes("z", "", { xfmt: v => v.toFixed(0), yfmt: v => v.toFixed(1) });
       P.fn(a.f, pal.s[0], 2.5);
       P.fn(a.d, pal.s[2], 2);
-      P.label(-3.8, 1.85, "φ(z)", pal.s[0]);
-      P.label(-3.8, 1.45, "φ′(z)", pal.s[2]);
-      // gradient norm sim through depth
+      P.label(-3.8, 1.85, "activation", pal.s[0]);
+      P.label(-3.8, 1.45, "derivative", pal.s[2]);
+
+      // Mean-field illustration: independent N(0,1) pre-activations and square width-64 layers.
       const rand = CAIE.rng(5);
-      const trials = 40, width = 32;
-      const norms = [];
-      for (let d = 1; d <= depth; d++) norms.push(0);
-      for (let t = 0; t < trials; t++) {
-        let g = 1;
-        for (let d = 0; d < depth; d++) {
-          // typical |φ'| at random preactivation ~N(0,1), times weight scale ~1 (He/Xavier)
-          let s = 0;
-          for (let i2 = 0; i2 < 8; i2++) s += Math.abs(a.d(CAIE.gauss(rand)));
-          s /= 8;
-          const gain = (name === "relu" || name === "gelu") ? Math.sqrt(2) : (name === "tanh" ? 1.5 : 4);
-          g *= s * gain * (0.9 + 0.2 * rand());
-          norms[d] += Math.log10(Math.max(1e-30, g)) / trials;
+      const trials = 80;
+      const width = 64;
+      const weightVariance = a.variance(width);
+      const logNorms = new Array(depth).fill(0);
+      for (let trial = 0; trial < trials; trial++) {
+        let logGradient = 0;
+        for (let layer = 0; layer < depth; layer++) {
+          let meanSquaredDerivative = 0;
+          for (let unit = 0; unit < width; unit++) {
+            const derivative = a.d(CAIE.gauss(rand));
+            meanSquaredDerivative += derivative * derivative;
+          }
+          meanSquaredDerivative /= width;
+          const layerMultiplier = Math.sqrt(width * weightVariance * meanSquaredDerivative);
+          logGradient += Math.log10(Math.max(1e-30, layerMultiplier));
+          logNorms[layer] += logGradient / trials;
         }
       }
-      const ymin2 = Math.min(-16, Math.min(...norms) - 1), ymax2 = Math.max(4, Math.max(...norms) + 1);
-      const Q = CAIE.plot(Rc, { w: Math.min(300, Rc.parentNode.clientWidth - 4), h: 250, xmin: 1, xmax: depth, ymin: ymin2, ymax: ymax2, pad: { l: 40, r: 8, t: 10, b: 26 } });
-      Q.clear(); Q.axes("layer depth", "log₁₀ |gradient|", { xfmt: v => Math.round(v), yfmt: v => v.toFixed(0) });
+      const ymin = Math.min(-16, Math.floor(Math.min(...logNorms) - 1));
+      const ymax = Math.max(3, Math.ceil(Math.max(...logNorms) + 1));
+      const Q = CAIE.plot(rightCanvas, { w: canvasWidth(rightCanvas, 300), h: 250, xmin: 1, xmax: depth, ymin, ymax, pad: { l: 40, r: 8, t: 10, b: 26 } });
+      Q.clear();
+      Q.axes("layer depth", "log10 |gradient|", { xfmt: v => Math.round(v), yfmt: v => v.toFixed(0) });
       Q.line([[1, 0], [depth, 0]], pal.grid, 1.5);
-      Q.line(norms.map((v, i) => [i + 1, v]), pal.s[5], 2.5);
+      Q.line(logNorms.map((value, index) => [index + 1, value]), pal.s[5], 2.5);
+
+      const finalLog = logNorms[logNorms.length - 1];
+      const direction = finalLog < -0.3 ? "smaller" : (finalLog > 0.3 ? "larger" : "similar in scale");
+      const approximationNote = name === "gelu" ? " The plotted GELU uses the common tanh approximation to x times Phi(x)." : "";
+      const summary = a.label + " under an illustrative mean-field model: width 64, independent standard-normal pre-activations, and " + a.init +
+        " weight variance. After " + depth + " layers the mean log10 gradient ratio is " + finalLog.toFixed(2) +
+        ", or " + direction + " than its starting scale. This is not a training guarantee: learned weights, correlations, normalization, and residual paths change propagation." + approximationNote;
+      if (readout) readout.textContent = summary;
+      leftCanvas.setAttribute("aria-label", a.label + " activation and derivative plotted from z equals minus four to four." + approximationNote);
+      rightCanvas.setAttribute("aria-label", summary);
     }
-    document.getElementById("a-fn").addEventListener("change", draw);
-    document.getElementById("a-depth").addEventListener("input", draw);
-    CAIE.onTheme(draw); window.addEventListener("resize", draw);
+    fnInput.addEventListener("change", draw);
+    depthInput.addEventListener("input", draw);
+    CAIE.onTheme(draw);
+    window.addEventListener("resize", draw);
     draw();
   })();
 
-  // ---------- MLP playground ----------
-  (function () {
-    const cvs = document.getElementById("nn-canvas"), lossC = document.getElementById("nn-loss");
-    let net = null, data = [], lossHist = [], animId = null, steps = 0;
-    let seedN = 1;
-    function genData() {
-      const kind = document.getElementById("nn-data").value;
-      const r = CAIE.rng(21);
-      data = [];
-      if (kind === "circles") {
-        for (let i = 0; i < 70; i++) { const t = r() * 6.28, rr = 0.5 * Math.sqrt(r()); data.push([rr * Math.cos(t), rr * Math.sin(t), 0]); }
-        for (let i = 0; i < 70; i++) { const t = r() * 6.28, rr = 0.8 + 0.35 * r(); data.push([rr * Math.cos(t), rr * Math.sin(t), 1]); }
-      } else if (kind === "xor") {
-        for (let i = 0; i < 140; i++) { const x = (r() * 2 - 1) * 1.2, y = (r() * 2 - 1) * 1.2; data.push([x, y, x * y > 0 ? 1 : 0]); }
+  // ---------- bp-* scalar backpropagation calculator ----------
+  (function bpBackpropCalculator() {
+    const ids = ["bp-x", "bp-w1", "bp-b1", "bp-w2", "bp-b2", "bp-y", "bp-z1", "bp-h", "bp-p", "bp-loss", "bp-dw2", "bp-dw1", "bp-readout"];
+    const el = Object.fromEntries(ids.map(id => [id, document.getElementById(id)]));
+    if (ids.some(id => !el[id])) return;
+    const inputIds = ["bp-x", "bp-w1", "bp-b1", "bp-w2", "bp-b2", "bp-y"];
+    const outputIds = ["bp-z1", "bp-h", "bp-p", "bp-loss", "bp-dw2", "bp-dw1"];
+    el["bp-readout"].setAttribute("aria-live", "polite");
+
+    function bpFmt(value) {
+      if (!Number.isFinite(value)) return "undefined";
+      if (Math.abs(value) < 5e-13) return "0";
+      const magnitude = Math.abs(value);
+      return magnitude >= 1e5 || magnitude < 1e-4 ? value.toExponential(4) : String(Number(value.toPrecision(6)));
+    }
+    function bpSigmoid(value) {
+      if (value >= 0) return 1 / (1 + Math.exp(-value));
+      const expValue = Math.exp(value);
+      return expValue / (1 + expValue);
+    }
+    function bpSetUndefined(message) {
+      outputIds.forEach(id => { el[id].textContent = "undefined"; });
+      el["bp-readout"].textContent = message;
+    }
+    function bpCalculate() {
+      const valueTexts = inputIds.slice(0, 5).map(id => el[id].value.trim());
+      const values = valueTexts.map(Number);
+      const y = Number(el["bp-y"].value);
+      const finiteInputs = values.map((value, index) => valueTexts[index] !== "" && Number.isFinite(value));
+      inputIds.slice(0, 5).forEach((id, index) => el[id].setAttribute("aria-invalid", String(!finiteInputs[index])));
+      el["bp-y"].setAttribute("aria-invalid", String(y !== 0 && y !== 1));
+      if (finiteInputs.some(valid => !valid) || (y !== 0 && y !== 1)) {
+        bpSetUndefined("All network inputs must be finite numbers, and the binary target y must be 0 or 1.");
+        return;
+      }
+      const [x, w1, b1, w2, b2] = values;
+      const z1 = w1 * x + b1;
+      const h = Math.max(0, z1);
+      const z2 = w2 * h + b2;
+      const probability = bpSigmoid(z2);
+      const loss = Math.max(z2, 0) - y * z2 + Math.log1p(Math.exp(-Math.abs(z2)));
+      const dLdz2 = probability - y;
+      const dLdw2 = dLdz2 * h;
+      const dLdh = dLdz2 * w2;
+      const reluDerivative = z1 > 0 ? 1 : 0;
+      const dLdz1 = dLdh * reluDerivative;
+      const dLdw1 = dLdz1 * x;
+      if (![z1, h, z2, probability, loss, dLdz2, dLdw2, dLdh, dLdz1, dLdw1].every(Number.isFinite)) {
+        bpSetUndefined("The inputs are finite, but an intermediate value overflowed. Reduce their magnitudes to obtain a defined forward and backward pass.");
+        return;
+      }
+      const results = { "bp-z1": z1, "bp-h": h, "bp-p": probability, "bp-loss": loss, "bp-dw2": dLdw2, "bp-dw1": dLdw1 };
+      Object.entries(results).forEach(([id, value]) => { el[id].textContent = bpFmt(value); });
+      const branch = reluDerivative === 0
+        ? " Because z1 is at or below zero, this calculator uses ReLU'(z1) = 0, so the gradient to w1 and b1 is zero."
+        : " Because z1 is positive, ReLU'(z1) = 1 and the upstream gradient passes through this hidden unit.";
+      el["bp-readout"].textContent =
+        "Forward: z1 = w1*x + b1 = " + bpFmt(z1) + "; h = ReLU(z1) = " + bpFmt(h) +
+        "; z2 = w2*h + b2 = " + bpFmt(z2) + "; p = sigmoid(z2) = " + bpFmt(probability) +
+        "; binary cross-entropy = " + bpFmt(loss) + ". Backward: dL/dz2 = p - y = " + bpFmt(dLdz2) +
+        "; dL/dw2 = (p-y)h = " + bpFmt(dLdw2) + "; dL/db2 = " + bpFmt(dLdz2) +
+        "; dL/dh = (p-y)w2 = " + bpFmt(dLdh) + "; dL/dz1 = dL/dh * ReLU'(z1) = " + bpFmt(dLdz1) +
+        "; dL/dw1 = dL/dz1*x = " + bpFmt(dLdw1) + "; dL/db1 = " + bpFmt(dLdz1) + "." + branch;
+    }
+    inputIds.forEach(id => {
+      el[id].addEventListener("input", bpCalculate);
+      el[id].addEventListener("change", bpCalculate);
+    });
+    bpCalculate();
+  })();
+
+  // ---------- init-* initialization variance calculator ----------
+  (function initVarianceCalculator() {
+    const ids = ["init-fanin", "init-fanout", "init-depth", "init-scheme", "init-custom-var", "init-weight-var", "init-weight-std", "init-multiplier", "init-output-var", "init-readout"];
+    const el = Object.fromEntries(ids.map(id => [id, document.getElementById(id)]));
+    if (ids.some(id => !el[id])) return;
+    const outputIds = ["init-weight-var", "init-weight-std", "init-multiplier", "init-output-var"];
+    el["init-readout"].setAttribute("aria-live", "polite");
+
+    function initFmt(value) {
+      if (value === Infinity) return "> 1e308";
+      if (!Number.isFinite(value)) return "undefined";
+      if (value === 0) return "0";
+      return value >= 1e5 || value < 1e-4 ? value.toExponential(4) : String(Number(value.toPrecision(6)));
+    }
+    function initFail(message) {
+      outputIds.forEach(id => { el[id].textContent = "undefined"; });
+      el["init-readout"].textContent = message;
+    }
+    function initCalculate() {
+      const fanIn = Number(el["init-fanin"].value);
+      const fanOut = Number(el["init-fanout"].value);
+      const depth = Number(el["init-depth"].value);
+      const scheme = el["init-scheme"].value;
+      const customText = el["init-custom-var"].value.trim();
+      const customVariance = Number(customText);
+      const fanInValid = Number.isSafeInteger(fanIn) && fanIn > 0;
+      const fanOutValid = Number.isSafeInteger(fanOut) && fanOut > 0;
+      const depthValid = Number.isSafeInteger(depth) && depth > 0 && depth <= 200;
+      const customValid = customText !== "" && Number.isFinite(customVariance) && customVariance >= 0;
+      el["init-fanin"].setAttribute("aria-invalid", String(!fanInValid));
+      el["init-fanout"].setAttribute("aria-invalid", String(!fanOutValid));
+      el["init-depth"].setAttribute("aria-invalid", String(!depthValid));
+      el["init-custom-var"].disabled = scheme !== "custom";
+      el["init-custom-var"].setAttribute("aria-invalid", String(scheme === "custom" && !customValid));
+      if (!fanInValid || !fanOutValid || !depthValid || !["xavier", "he", "custom"].includes(scheme) || (scheme === "custom" && !customValid)) {
+        initFail("Fan-in and fan-out must be positive integers, depth must be an integer from 1 through 200, and a custom variance must be a finite nonnegative number.");
+        return;
+      }
+
+      let weightVariance;
+      let laterWeightVariance;
+      let activationFactor;
+      let assumption;
+      if (scheme === "he") {
+        weightVariance = 2 / fanIn;
+        laterWeightVariance = 2 / fanOut;
+        activationFactor = 0.5;
+        assumption = "He: Var(W) = 2/fan-in, with a ReLU second-moment factor of approximately one half";
+      } else if (scheme === "xavier") {
+        weightVariance = 2 / (fanIn + fanOut);
+        laterWeightVariance = 1 / fanOut;
+        activationFactor = 1;
+        assumption = "Xavier: Var(W) = 2/(fan-in + fan-out), using a near-linear tanh-like activation approximation";
       } else {
-        for (let c = 0; c < 2; c++) for (let i = 0; i < 70; i++) {
-          const t = i / 70 * 3.2 * Math.PI + (c ? Math.PI : 0);
-          const rr = 0.08 + i / 70 * 1.1;
-          data.push([rr * Math.cos(t) + 0.05 * CAIE.gauss(r), rr * Math.sin(t) + 0.05 * CAIE.gauss(r), c]);
+        weightVariance = customVariance;
+        laterWeightVariance = customVariance;
+        activationFactor = 1;
+        assumption = "Custom variance, using a linear-activation variance approximation";
+      }
+      const weightStd = Math.sqrt(weightVariance);
+      const firstMultiplier = fanIn * weightVariance * activationFactor;
+      const laterMultiplier = fanOut * laterWeightVariance * activationFactor;
+      let outputVariance;
+      if (firstMultiplier === 0 || (depth > 1 && laterMultiplier === 0)) outputVariance = 0;
+      else {
+        const logOutputVariance = Math.log(firstMultiplier) + (depth - 1) * Math.log(laterMultiplier);
+        outputVariance = logOutputVariance > Math.log(Number.MAX_VALUE) ? Infinity : Math.exp(logOutputVariance);
+      }
+      el["init-weight-var"].textContent = initFmt(weightVariance);
+      el["init-weight-std"].textContent = initFmt(weightStd);
+      el["init-multiplier"].textContent = depth === 1
+        ? initFmt(firstMultiplier) + "x"
+        : initFmt(firstMultiplier) + "x, then " + initFmt(laterMultiplier) + "x";
+      el["init-output-var"].textContent = initFmt(outputVariance);
+      const trend = outputVariance < 0.98 ? "decay" : (outputVariance > 1.02 ? "grow" : "stay near its starting scale");
+      const laterExplanation = depth > 1
+        ? " Layer 1 maps width " + fanIn + " to " + fanOut + " with the displayed variance and multiplier " + initFmt(firstMultiplier) + "x. Each later layer is modeled coherently as " + fanOut + " to " + fanOut + "; its scheme-matched variance is " + initFmt(laterWeightVariance) + " and its multiplier is " + initFmt(laterMultiplier) + "x."
+        : " This single layer maps width " + fanIn + " to " + fanOut + " with multiplier " + initFmt(firstMultiplier) + "x.";
+      el["init-readout"].textContent = assumption + ". The simplified recurrence is q_l approximately equal to fan-in * Var(W) * activation factor * q_(l-1)." +
+        laterExplanation + " Starting from variance 1, the estimate after " + depth + " layer" + (depth === 1 ? "" : "s") + " is " + initFmt(outputVariance) +
+        ", so this approximation predicts the overall variance will " + trend +
+        ". It is a diagnostic model, not a guarantee: correlations, biases, saturation, normalization, and residual connections alter real networks.";
+    }
+    ["init-fanin", "init-fanout", "init-depth", "init-custom-var"].forEach(id => el[id].addEventListener("input", initCalculate));
+    el["init-scheme"].addEventListener("change", initCalculate);
+    initCalculate();
+  })();
+
+  // ---------- norm-* normalization calculator ----------
+  (function normMatrixCalculator() {
+    const ids = ["norm-values", "norm-method", "norm-eps", "norm-output", "norm-readout"];
+    const el = Object.fromEntries(ids.map(id => [id, document.getElementById(id)]));
+    if (ids.some(id => !el[id])) return;
+    el["norm-output"].setAttribute("aria-live", "polite");
+    el["norm-readout"].setAttribute("aria-live", "polite");
+    el["norm-output"].style.whiteSpace = "pre-wrap";
+
+    function normFmt(value) {
+      if (!Number.isFinite(value)) return "undefined";
+      if (Math.abs(value) < 5e-10) return "0";
+      return Math.abs(value) >= 1e5 || Math.abs(value) < 1e-4 ? value.toExponential(4) : String(Number(value.toFixed(5)));
+    }
+    function normParseMatrix(raw) {
+      const rows = raw.split(";").map(row => row.trim());
+      if (!raw.trim() || rows.some(row => !row)) throw new Error("Use semicolons only between nonempty rows.");
+      const matrix = rows.map(row => row.split(/[\s,]+/).filter(Boolean).map(Number));
+      if (!matrix[0].length || matrix.some(row => row.length !== matrix[0].length)) throw new Error("Every row must contain the same number of columns.");
+      if (matrix.length > 50 || matrix[0].length > 50) throw new Error("Keep this teaching example to at most 50 rows and 50 columns.");
+      if (matrix.some(row => row.some(value => !Number.isFinite(value)))) throw new Error("Every matrix entry must be a finite number.");
+      return matrix;
+    }
+    function normMean(values) { return values.reduce((sum, value) => sum + value, 0) / values.length; }
+    function normVariance(values, mean) { return values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / values.length; }
+    function normFail(message) {
+      el["norm-output"].textContent = "undefined";
+      el["norm-readout"].textContent = "Cannot normalize: " + message;
+    }
+    function normCalculate() {
+      let matrix;
+      try {
+        matrix = normParseMatrix(el["norm-values"].value);
+        el["norm-values"].setAttribute("aria-invalid", "false");
+      } catch (error) {
+        el["norm-values"].setAttribute("aria-invalid", "true");
+        normFail(error.message);
+        return;
+      }
+      const epsilonText = el["norm-eps"].value.trim();
+      const epsilon = Number(epsilonText);
+      const method = el["norm-method"].value;
+      const epsilonValid = epsilonText !== "" && Number.isFinite(epsilon) && epsilon >= 0;
+      el["norm-eps"].setAttribute("aria-invalid", String(!epsilonValid));
+      if (!epsilonValid || !["batch", "layer", "rms"].includes(method)) {
+        normFail("epsilon must be a finite nonnegative number and the method must be recognized.");
+        return;
+      }
+
+      const rows = matrix.length;
+      const columns = matrix[0].length;
+      const result = matrix.map(row => row.map(() => 0));
+      const statistics = [];
+      let undefinedGroup = "";
+      if (method === "batch") {
+        for (let column = 0; column < columns; column++) {
+          const values = matrix.map(row => row[column]);
+          const mean = normMean(values);
+          const variance = normVariance(values, mean);
+          const denominator = Math.sqrt(variance + epsilon);
+          if (!(denominator > 0) || !Number.isFinite(denominator)) { undefinedGroup = "feature " + (column + 1); break; }
+          for (let row = 0; row < rows; row++) result[row][column] = (matrix[row][column] - mean) / denominator;
+          statistics.push("feature " + (column + 1) + ": mean " + normFmt(mean) + ", variance " + normFmt(variance));
+        }
+      } else {
+        for (let row = 0; row < rows; row++) {
+          const values = matrix[row];
+          if (method === "layer") {
+            const mean = normMean(values);
+            const variance = normVariance(values, mean);
+            const denominator = Math.sqrt(variance + epsilon);
+            if (!(denominator > 0) || !Number.isFinite(denominator)) { undefinedGroup = "row " + (row + 1); break; }
+            result[row] = values.map(value => (value - mean) / denominator);
+            statistics.push("row " + (row + 1) + ": mean " + normFmt(mean) + ", variance " + normFmt(variance));
+          } else {
+            const meanSquare = values.reduce((sum, value) => sum + value * value, 0) / values.length;
+            const denominator = Math.sqrt(meanSquare + epsilon);
+            if (!(denominator > 0) || !Number.isFinite(denominator)) { undefinedGroup = "row " + (row + 1); break; }
+            result[row] = values.map(value => value / denominator);
+            statistics.push("row " + (row + 1) + ": mean square " + normFmt(meanSquare) + ", RMS denominator " + normFmt(denominator));
+          }
         }
       }
+      if (undefinedGroup) {
+        normFail(undefinedGroup + " has a zero or non-finite denominator. Use a positive epsilon or change the values.");
+        return;
+      }
+      el["norm-output"].textContent = result.map(row => "[ " + row.map(normFmt).join(", ") + " ]").join("\n");
+      const description = method === "batch"
+        ? "BatchNorm standardizes each feature column across the " + rows + " sample rows."
+        : method === "layer"
+          ? "LayerNorm mean-centers and standardizes the " + columns + " features within each sample row."
+          : "RMSNorm scales each row by its root mean square without subtracting its mean.";
+      el["norm-readout"].textContent = description + " Population variance is used in this calculator and epsilon is " + normFmt(epsilon) + ". Group statistics: " + statistics.join("; ") + ". Learned scale and shift parameters are omitted.";
     }
-    function initNet() {
-      const H = +document.getElementById("nn-h").value;
-      const r = CAIE.rng(1000 + seedN * 7);
-      const mk = (nin, nout) => {
-        const W = [], sc = Math.sqrt(2 / nin);
-        for (let i = 0; i < nout; i++) { const row = []; for (let j = 0; j < nin; j++) row.push(sc * CAIE.gauss(r)); W.push(row); }
-        return { W, b: new Array(nout).fill(0), mW: W.map(row => row.map(() => 0)), vW: W.map(row => row.map(() => 0)), mb: new Array(nout).fill(0), vb: new Array(nout).fill(0) };
-      };
-      net = { l1: mk(2, H), l2: mk(H, H), l3: mk(H, 1), t: 0, H };
-      lossHist = []; steps = 0;
+    el["norm-values"].addEventListener("input", normCalculate);
+    el["norm-method"].addEventListener("change", normCalculate);
+    el["norm-eps"].addEventListener("input", normCalculate);
+    normCalculate();
+  })();
+
+  // ---------- shape-* convolution geometry calculator ----------
+  (function shapeConvolutionCalculator() {
+    const ids = ["shape-n", "shape-k", "shape-s", "shape-p", "shape-d", "shape-cin", "shape-cout", "shape-out", "shape-params", "shape-rf", "shape-readout"];
+    const el = Object.fromEntries(ids.map(id => [id, document.getElementById(id)]));
+    if (ids.some(id => !el[id])) return;
+    const inputIds = ["shape-n", "shape-k", "shape-s", "shape-p", "shape-d", "shape-cin", "shape-cout"];
+    const outputIds = ["shape-out", "shape-params", "shape-rf"];
+    el["shape-readout"].setAttribute("aria-live", "polite");
+
+    function shapeFail(message) {
+      outputIds.forEach(id => { el[id].textContent = "undefined"; });
+      el["shape-readout"].textContent = message;
     }
-    function act(z) { return document.getElementById("nn-act").value === "relu" ? Math.max(0, z) : Math.tanh(z); }
-    function dact(z) { return document.getElementById("nn-act").value === "relu" ? (z > 0 ? 1 : 0) : 1 - Math.tanh(z) ** 2; }
-    function forward(x, y) {
-      const { l1, l2, l3, H } = net;
-      const z1 = new Array(H), a1 = new Array(H), z2 = new Array(H), a2 = new Array(H);
-      for (let i = 0; i < H; i++) { z1[i] = l1.W[i][0] * x + l1.W[i][1] * y + l1.b[i]; a1[i] = act(z1[i]); }
-      for (let i = 0; i < H; i++) { let s = l2.b[i]; for (let j = 0; j < H; j++) s += l2.W[i][j] * a1[j]; z2[i] = s; a2[i] = act(s); }
-      let z3 = l3.b[0]; for (let j = 0; j < H; j++) z3 += l3.W[0][j] * a2[j];
-      const p = 1 / (1 + Math.exp(-z3));
-      return { z1, a1, z2, a2, z3, p };
+    function shapeCalculate() {
+      const valueTexts = inputIds.map(id => el[id].value.trim());
+      const values = valueTexts.map(Number);
+      const valid = values.map((value, index) => valueTexts[index] !== "" && Number.isSafeInteger(value) && (index === 3 ? value >= 0 : value > 0));
+      inputIds.forEach((id, index) => el[id].setAttribute("aria-invalid", String(!valid[index])));
+      if (valid.some(value => !value)) {
+        shapeFail("Input size, kernel, stride, dilation, and channel counts must be positive integers; padding must be a nonnegative integer.");
+        return;
+      }
+      const [n, k, stride, padding, dilation, channelsIn, channelsOut] = values;
+      const effectiveKernel = dilation * (k - 1) + 1;
+      const available = n + 2 * padding - effectiveKernel;
+      if (!Number.isSafeInteger(effectiveKernel) || !Number.isSafeInteger(available)) {
+        shapeFail("These dimensions are too large for an exact browser integer calculation.");
+        return;
+      }
+      const output = Math.floor(available / stride) + 1;
+      if (available < 0 || output < 1) {
+        shapeFail("Impossible geometry: the effective kernel width " + effectiveKernel + " does not fit inside input plus padding, so there is no valid output position.");
+        return;
+      }
+      const parameters = k * k * channelsIn * channelsOut + channelsOut;
+      if (!Number.isSafeInteger(parameters)) {
+        shapeFail("The parameter count is larger than JavaScript can represent exactly. Use smaller channel or kernel dimensions.");
+        return;
+      }
+      el["shape-out"].textContent = String(output);
+      el["shape-params"].textContent = parameters.toLocaleString("en-US");
+      el["shape-rf"].textContent = String(effectiveKernel);
+      const remainder = available % stride;
+      el["shape-readout"].textContent =
+        "Effective kernel = dilation*(kernel-1)+1 = " + dilation + "*(" + k + "-1)+1 = " + effectiveKernel +
+        ". Output = floor((input + 2*padding - effective kernel)/stride)+1 = floor((" + n + " + 2*" + padding + " - " + effectiveKernel + ")/" + stride + ")+1 = " + output +
+        ". Parameters = kernel^2 * C_in * C_out + C_out = " + parameters.toLocaleString("en-US") +
+        ", assuming one bias per output channel. The one-layer receptive-field width is " + effectiveKernel + "." +
+        (remainder ? " The floor discards a final partial stride of " + remainder + " position" + (remainder === 1 ? "" : "s") + "." : " The stride tiles this padded axis exactly.");
     }
-    function trainSteps(n, lr) {
-      const { l1, l2, l3, H } = net;
-      const b1 = 0.9, b2 = 0.999, eps = 1e-8;
-      for (let s = 0; s < n; s++) {
-        net.t++;
-        // accumulate full-batch grads (tiny data)
-        const g1W = l1.W.map(rw => rw.map(() => 0)), g1b = new Array(H).fill(0);
-        const g2W = l2.W.map(rw => rw.map(() => 0)), g2b = new Array(H).fill(0);
-        const g3W = l3.W.map(rw => rw.map(() => 0)), g3b = [0];
-        let L = 0;
-        for (const [x, y, c] of data) {
-          const f = forward(x, y);
-          L += -(c * Math.log(f.p + 1e-9) + (1 - c) * Math.log(1 - f.p + 1e-9));
-          const d3 = f.p - c;
-          g3b[0] += d3;
-          const d2 = new Array(H);
-          for (let j = 0; j < H; j++) { g3W[0][j] += d3 * f.a2[j]; d2[j] = d3 * l3.W[0][j] * dact(f.z2[j]); }
-          const d1 = new Array(H).fill(0);
-          for (let i = 0; i < H; i++) {
-            g2b[i] += d2[i];
-            for (let j = 0; j < H; j++) { g2W[i][j] += d2[i] * f.a1[j]; d1[j] += d2[i] * l2.W[i][j]; }
-          }
-          for (let j = 0; j < H; j++) d1[j] *= dact(f.z1[j]);
-          for (let j = 0; j < H; j++) { g1W[j][0] += d1[j] * x; g1W[j][1] += d1[j] * y; g1b[j] += d1[j]; }
+    inputIds.forEach(id => el[id].addEventListener("input", shapeCalculate));
+    shapeCalculate();
+  })();
+
+  // ---------- MLP playground ----------
+  (function nnMlpPlayground() {
+    const ids = ["nn-canvas", "nn-loss", "nn-data", "nn-h", "nn-h-v", "nn-act", "nn-lr", "nn-lr-v", "nn-train", "nn-reset", "nn-readout"];
+    const el = Object.fromEntries(ids.map(id => [id, document.getElementById(id)]));
+    if (ids.some(id => !el[id])) return;
+
+    const scoreCanvas = el["nn-canvas"];
+    const lossCanvas = el["nn-loss"];
+    const trainButton = el["nn-train"];
+    const maxSteps = 4000;
+    let net = null;
+    let trainData = [];
+    let validationData = [];
+    let trainLossHistory = [];
+    let validationLossHistory = [];
+    let animationId = null;
+    let running = false;
+    let steps = 0;
+    let seedNumber = 1;
+    let divergenceReason = "";
+
+    scoreCanvas.setAttribute("role", "img");
+    lossCanvas.setAttribute("role", "img");
+    el["nn-readout"].setAttribute("aria-live", "polite");
+    trainButton.setAttribute("aria-pressed", "false");
+
+    function nnSigmoid(value) {
+      if (value >= 0) return 1 / (1 + Math.exp(-value));
+      const expValue = Math.exp(value);
+      return expValue / (1 + expValue);
+    }
+    function nnSoftplus(value) {
+      return Math.max(value, 0) + Math.log1p(Math.exp(-Math.abs(value)));
+    }
+    function nnActivation(value) {
+      return el["nn-act"].value === "relu" ? Math.max(0, value) : Math.tanh(value);
+    }
+    function nnActivationDerivative(value) {
+      return el["nn-act"].value === "relu" ? (value > 0 ? 1 : 0) : 1 - Math.tanh(value) ** 2;
+    }
+    function nnMakeDataset(kind, seed, countPerClass) {
+      const random = CAIE.rng(seed);
+      const result = [];
+      if (kind === "circles") {
+        for (let i = 0; i < countPerClass; i++) {
+          const angle = random() * 2 * Math.PI;
+          const radius = 0.5 * Math.sqrt(random());
+          result.push([radius * Math.cos(angle), radius * Math.sin(angle), 0]);
         }
-        const N = data.length;
-        const adam = (layer, gW, gb) => {
-          const bc1 = 1 - Math.pow(b1, net.t), bc2 = 1 - Math.pow(b2, net.t);
+        for (let i = 0; i < countPerClass; i++) {
+          const angle = random() * 2 * Math.PI;
+          const radius = 0.8 + 0.35 * random();
+          result.push([radius * Math.cos(angle), radius * Math.sin(angle), 1]);
+        }
+      } else if (kind === "xor") {
+        for (let i = 0; i < 2 * countPerClass; i++) {
+          const x = (random() * 2 - 1) * 1.2;
+          const y = (random() * 2 - 1) * 1.2;
+          result.push([x, y, x * y > 0 ? 1 : 0]);
+        }
+      } else {
+        for (let classIndex = 0; classIndex < 2; classIndex++) {
+          for (let i = 0; i < countPerClass; i++) {
+            const angle = i / countPerClass * 3.2 * Math.PI + (classIndex ? Math.PI : 0);
+            const radius = 0.08 + i / countPerClass * 1.1;
+            result.push([
+              radius * Math.cos(angle) + 0.05 * CAIE.gauss(random),
+              radius * Math.sin(angle) + 0.05 * CAIE.gauss(random),
+              classIndex
+            ]);
+          }
+        }
+      }
+      return result;
+    }
+    function nnGenerateDatasets() {
+      const kind = el["nn-data"].value;
+      trainData = nnMakeDataset(kind, 21, 70);
+      // This seed never changes on re-initialization: validation remains held out and fixed.
+      validationData = nnMakeDataset(kind, 202405, 50);
+    }
+    function nnMakeLayer(fanIn, fanOut, random, variance) {
+      const standardDeviation = Math.sqrt(variance);
+      const W = [];
+      for (let output = 0; output < fanOut; output++) {
+        const row = [];
+        for (let input = 0; input < fanIn; input++) row.push(standardDeviation * CAIE.gauss(random));
+        W.push(row);
+      }
+      return {
+        W,
+        b: new Array(fanOut).fill(0),
+        mW: W.map(row => row.map(() => 0)),
+        vW: W.map(row => row.map(() => 0)),
+        mb: new Array(fanOut).fill(0),
+        vb: new Array(fanOut).fill(0)
+      };
+    }
+    function nnInitializeNetwork() {
+      const hidden = Number(el["nn-h"].value);
+      const random = CAIE.rng(1000 + seedNumber * 7);
+      const hiddenVariance1 = el["nn-act"].value === "relu" ? 2 / 2 : 2 / (2 + hidden);
+      const hiddenVariance2 = el["nn-act"].value === "relu" ? 2 / hidden : 2 / (hidden + hidden);
+      const outputVariance = 2 / (hidden + 1);
+      net = {
+        l1: nnMakeLayer(2, hidden, random, hiddenVariance1),
+        l2: nnMakeLayer(hidden, hidden, random, hiddenVariance2),
+        l3: nnMakeLayer(hidden, 1, random, outputVariance),
+        t: 0,
+        hidden
+      };
+      trainLossHistory = [];
+      validationLossHistory = [];
+      steps = 0;
+      divergenceReason = "";
+    }
+    function nnForward(x, y) {
+      const { l1, l2, l3, hidden } = net;
+      const z1 = new Array(hidden), a1 = new Array(hidden), z2 = new Array(hidden), a2 = new Array(hidden);
+      for (let i = 0; i < hidden; i++) {
+        z1[i] = l1.W[i][0] * x + l1.W[i][1] * y + l1.b[i];
+        a1[i] = nnActivation(z1[i]);
+      }
+      for (let i = 0; i < hidden; i++) {
+        let total = l2.b[i];
+        for (let j = 0; j < hidden; j++) total += l2.W[i][j] * a1[j];
+        z2[i] = total;
+        a2[i] = nnActivation(total);
+      }
+      let z3 = l3.b[0];
+      for (let j = 0; j < hidden; j++) z3 += l3.W[0][j] * a2[j];
+      return { z1, a1, z2, a2, z3, p: nnSigmoid(z3) };
+    }
+    function nnEvaluateSet(dataset) {
+      let loss = 0, correct = 0;
+      for (const [x, y, label] of dataset) {
+        const result = nnForward(x, y);
+        if (!Number.isFinite(result.z3) || !Number.isFinite(result.p)) return { loss: NaN, accuracy: NaN };
+        loss += nnSoftplus(result.z3) - label * result.z3;
+        if ((result.p >= 0.5 ? 1 : 0) === label) correct++;
+      }
+      return { loss: loss / dataset.length, accuracy: correct / dataset.length };
+    }
+    function nnCloneLayer(layer) {
+      return {
+        W: layer.W.map(row => row.slice()), b: layer.b.slice(),
+        mW: layer.mW.map(row => row.slice()), vW: layer.vW.map(row => row.slice()),
+        mb: layer.mb.slice(), vb: layer.vb.slice()
+      };
+    }
+    function nnCloneNetwork(source) {
+      return { l1: nnCloneLayer(source.l1), l2: nnCloneLayer(source.l2), l3: nnCloneLayer(source.l3), t: source.t, hidden: source.hidden };
+    }
+    function nnLayerIsFinite(layer) {
+      return [layer.W, layer.b, layer.mW, layer.vW, layer.mb, layer.vb].every(part => part.flat(Infinity).every(Number.isFinite));
+    }
+    function nnNetworkIsFinite() {
+      return Number.isFinite(net.t) && nnLayerIsFinite(net.l1) && nnLayerIsFinite(net.l2) && nnLayerIsFinite(net.l3);
+    }
+    function nnTrainSteps(numberOfSteps, learningRate) {
+      const checkpoint = nnCloneNetwork(net);
+      const checkpointSteps = steps;
+      if (!Number.isFinite(learningRate) || learningRate <= 0) {
+        divergenceReason = "Training stopped because the learning rate was not a finite positive number.";
+        return false;
+      }
+      const beta1 = 0.9, beta2 = 0.999, epsilon = 1e-8;
+      for (let stepIndex = 0; stepIndex < numberOfSteps; stepIndex++) {
+        const { l1, l2, l3, hidden } = net;
+        net.t++;
+        const g1W = l1.W.map(row => row.map(() => 0)), g1b = new Array(hidden).fill(0);
+        const g2W = l2.W.map(row => row.map(() => 0)), g2b = new Array(hidden).fill(0);
+        const g3W = l3.W.map(row => row.map(() => 0)), g3b = [0];
+        for (const [x, y, label] of trainData) {
+          const result = nnForward(x, y);
+          if (!Number.isFinite(result.z3) || !Number.isFinite(result.p)) {
+            net = checkpoint; steps = checkpointSteps;
+            divergenceReason = "Training stopped before a non-finite forward value could be drawn. The last finite parameters were restored.";
+            return false;
+          }
+          const d3 = result.p - label;
+          g3b[0] += d3;
+          const d2 = new Array(hidden);
+          for (let j = 0; j < hidden; j++) {
+            g3W[0][j] += d3 * result.a2[j];
+            d2[j] = d3 * l3.W[0][j] * nnActivationDerivative(result.z2[j]);
+          }
+          const d1 = new Array(hidden).fill(0);
+          for (let i = 0; i < hidden; i++) {
+            g2b[i] += d2[i];
+            for (let j = 0; j < hidden; j++) {
+              g2W[i][j] += d2[i] * result.a1[j];
+              d1[j] += d2[i] * l2.W[i][j];
+            }
+          }
+          for (let j = 0; j < hidden; j++) d1[j] *= nnActivationDerivative(result.z1[j]);
+          for (let j = 0; j < hidden; j++) {
+            g1W[j][0] += d1[j] * x;
+            g1W[j][1] += d1[j] * y;
+            g1b[j] += d1[j];
+          }
+        }
+        if (![g1W, g1b, g2W, g2b, g3W, g3b].every(part => part.flat(Infinity).every(Number.isFinite))) {
+          net = checkpoint; steps = checkpointSteps;
+          divergenceReason = "Training stopped because a gradient became non-finite. The last finite parameters were restored.";
+          return false;
+        }
+        const updateLayer = (layer, gradientW, gradientB) => {
+          const correction1 = 1 - Math.pow(beta1, net.t), correction2 = 1 - Math.pow(beta2, net.t);
           for (let i = 0; i < layer.W.length; i++) {
             for (let j = 0; j < layer.W[i].length; j++) {
-              const g = gW[i][j] / N;
-              layer.mW[i][j] = b1 * layer.mW[i][j] + (1 - b1) * g;
-              layer.vW[i][j] = b2 * layer.vW[i][j] + (1 - b2) * g * g;
-              layer.W[i][j] -= lr * (layer.mW[i][j] / bc1) / (Math.sqrt(layer.vW[i][j] / bc2) + eps);
+              const gradient = gradientW[i][j] / trainData.length;
+              layer.mW[i][j] = beta1 * layer.mW[i][j] + (1 - beta1) * gradient;
+              layer.vW[i][j] = beta2 * layer.vW[i][j] + (1 - beta2) * gradient * gradient;
+              layer.W[i][j] -= learningRate * (layer.mW[i][j] / correction1) / (Math.sqrt(layer.vW[i][j] / correction2) + epsilon);
             }
-            const g = gb[i] / N;
-            layer.mb[i] = b1 * layer.mb[i] + (1 - b1) * g;
-            layer.vb[i] = b2 * layer.vb[i] + (1 - b2) * g * g;
-            layer.b[i] -= lr * (layer.mb[i] / bc1) / (Math.sqrt(layer.vb[i] / bc2) + eps);
+            const gradient = gradientB[i] / trainData.length;
+            layer.mb[i] = beta1 * layer.mb[i] + (1 - beta1) * gradient;
+            layer.vb[i] = beta2 * layer.vb[i] + (1 - beta2) * gradient * gradient;
+            layer.b[i] -= learningRate * (layer.mb[i] / correction1) / (Math.sqrt(layer.vb[i] / correction2) + epsilon);
           }
         };
-        adam(l1, g1W, g1b); adam(l2, g2W, g2b); adam(l3, g3W, g3b);
-        lossHist.push(L / N);
+        updateLayer(l1, g1W, g1b);
+        updateLayer(l2, g2W, g2b);
+        updateLayer(l3, g3W, g3b);
+        if (!nnNetworkIsFinite()) {
+          net = checkpoint; steps = checkpointSteps;
+          divergenceReason = "Training stopped because an Adam update became non-finite. The last finite parameters were restored.";
+          return false;
+        }
         steps++;
       }
-    }
-    function draw() {
-      const pal = CAIE.pal();
-      const W = Math.min(380, cvs.parentNode.clientWidth - 4);
-      const { ctx, w, h } = CAIE.setupCanvas(cvs, W, 300);
-      const R = 1.5;
-      const nx = 60, ny = 46;
-      for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
-        const x = -R + (i + 0.5) / nx * 2 * R, y = -R + (j + 0.5) / ny * 2 * R;
-        const p = forward(x, y).p;
-        ctx.fillStyle = CAIE.div(2 * (0.5 - p));
-        ctx.fillRect(i / nx * w, h - (j + 1) / ny * h, w / nx + 0.5, h / ny + 0.5);
+      const trainMetrics = nnEvaluateSet(trainData), validationMetrics = nnEvaluateSet(validationData);
+      if (![trainMetrics.loss, trainMetrics.accuracy, validationMetrics.loss, validationMetrics.accuracy].every(Number.isFinite)) {
+        net = checkpoint; steps = checkpointSteps;
+        divergenceReason = "Training stopped because evaluation became non-finite. The last finite parameters were restored.";
+        return false;
       }
-      for (const [x, y, c] of data) {
-        ctx.fillStyle = c === 0 ? pal.s[0] : pal.s[7];
-        ctx.strokeStyle = pal.surface; ctx.lineWidth = 1.4;
-        ctx.beginPath(); ctx.arc((x + R) / (2 * R) * w, h - (y + R) / (2 * R) * h, 4, 0, 7); ctx.fill(); ctx.stroke();
-      }
-      // loss curve
-      const Lh = lossHist.length ? lossHist : [0.7];
-      const ymax = Math.max(0.75, Math.max(...Lh.slice(-2000)) * 1.05);
-      const Q = CAIE.plot(lossC, { w: Math.min(240, lossC.parentNode.clientWidth - 4), h: 300, xmin: 0, xmax: Math.max(50, Lh.length), ymin: 0, ymax, pad: { l: 36, r: 8, t: 10, b: 26 } });
-      Q.clear(); Q.axes("step", "loss", { xfmt: v => Math.round(v), yfmt: v => v.toFixed(1) });
-      Q.line(Lh.map((v, i) => [i, Math.min(v, ymax)]), pal.s[0], 2);
-      let acc = 0;
-      for (const [x, y, c] of data) if ((forward(x, y).p > 0.5 ? 1 : 0) === c) acc++;
-      document.getElementById("nn-readout").innerHTML =
-        "steps: <b>" + steps + "</b><span>loss: <b>" + (lossHist.length ? lossHist[lossHist.length - 1].toFixed(3) : "—") + "</b></span><span>train acc: <b>" + (100 * acc / data.length).toFixed(1) + "%</b></span>";
+      trainLossHistory.push([steps, trainMetrics.loss]);
+      validationLossHistory.push([steps, validationMetrics.loss]);
+      return true;
     }
-    function trainLoop() {
-      if (animId) { cancelAnimationFrame(animId); animId = null; document.getElementById("nn-train").textContent = "Train"; return; }
-      document.getElementById("nn-train").textContent = "Pause";
-      const lr = Math.pow(10, +document.getElementById("nn-lr").value);
+    function nnFormatMetric(value) {
+      if (!Number.isFinite(value)) return "undefined";
+      if (Math.abs(value) >= 1e4 || (Math.abs(value) > 0 && Math.abs(value) < 1e-4)) return value.toExponential(3);
+      return value.toFixed(3);
+    }
+    function nnCanvasWidth(canvas, maximum) {
+      return Math.max(150, Math.min(maximum, (canvas.parentNode.clientWidth || maximum) - 4));
+    }
+    function nnDraw() {
+      const palette = CAIE.pal();
+      const trainMetrics = nnEvaluateSet(trainData), validationMetrics = nnEvaluateSet(validationData);
+      const { ctx, w, h } = CAIE.setupCanvas(scoreCanvas, nnCanvasWidth(scoreCanvas, 380), 300);
+      const range = 1.5, columns = 60, rows = 46;
+      for (let row = 0; row < rows; row++) for (let column = 0; column < columns; column++) {
+        const x = -range + (column + 0.5) / columns * 2 * range;
+        const y = -range + (row + 0.5) / rows * 2 * range;
+        ctx.fillStyle = CAIE.div(2 * (0.5 - nnForward(x, y).p));
+        ctx.fillRect(column / columns * w, h - (row + 1) / rows * h, w / columns + 0.5, h / rows + 0.5);
+      }
+      for (const [x, y, label] of trainData) {
+        ctx.fillStyle = label === 0 ? palette.s[0] : palette.s[7];
+        ctx.strokeStyle = palette.surface; ctx.lineWidth = 1.4;
+        ctx.beginPath(); ctx.arc((x + range) / (2 * range) * w, h - (y + range) / (2 * range) * h, 4, 0, 2 * Math.PI); ctx.fill(); ctx.stroke();
+      }
+      const historyValues = trainLossHistory.concat(validationLossHistory).map(point => point[1]).filter(Number.isFinite);
+      const currentMaximum = Math.max(trainMetrics.loss, validationMetrics.loss, ...(historyValues.length ? historyValues : [0.75]));
+      const yMaximum = Math.max(0.75, Math.min(20, currentMaximum * 1.08));
+      const lossPlot = CAIE.plot(lossCanvas, { w: nnCanvasWidth(lossCanvas, 260), h: 300, xmin: 0, xmax: Math.max(50, steps), ymin: 0, ymax: yMaximum, pad: { l: 38, r: 8, t: 10, b: 26 } });
+      lossPlot.clear();
+      lossPlot.axes("step", "BCE loss", { xfmt: value => Math.round(value), yfmt: value => value.toFixed(1) });
+      if (trainLossHistory.length) lossPlot.line(trainLossHistory.map(([step, loss]) => [step, Math.min(loss, yMaximum)]), palette.s[0], 2.2);
+      if (validationLossHistory.length) lossPlot.line(validationLossHistory.map(([step, loss]) => [step, Math.min(loss, yMaximum)]), palette.s[2], 2.2);
+      lossPlot.label(Math.max(2, steps * 0.03), yMaximum * 0.94, "train", palette.s[0]);
+      lossPlot.label(Math.max(2, steps * 0.03), yMaximum * 0.84, "validation", palette.s[2]);
+      const architecture = "2-" + net.hidden + "-" + net.hidden + "-1";
+      const status = divergenceReason || (running ? "training" : (steps >= maxSteps ? "maximum demo steps reached" : "ready"));
+      el["nn-readout"].innerHTML =
+        "architecture: <b>" + architecture + "</b><span>steps: <b>" + steps + "</b></span>" +
+        "<span>train loss: <b>" + nnFormatMetric(trainMetrics.loss) + "</b></span>" +
+        "<span>train accuracy: <b>" + (100 * trainMetrics.accuracy).toFixed(1) + "%</b></span>" +
+        "<span>fixed validation loss: <b>" + nnFormatMetric(validationMetrics.loss) + "</b></span>" +
+        "<span>fixed validation accuracy: <b>" + (100 * validationMetrics.accuracy).toFixed(1) + "%</b></span>" +
+        "<span>status: <b>" + status + "</b></span>";
+      const datasetLabel = el["nn-data"].options[el["nn-data"].selectedIndex].text;
+      scoreCanvas.setAttribute("aria-label", "Illustrative class-score surface for " + datasetLabel + " using a " + architecture + " network. It displays " + trainData.length + " training points. Current training accuracy is " + (100 * trainMetrics.accuracy).toFixed(1) + " percent and fixed held-out validation accuracy is " + (100 * validationMetrics.accuracy).toFixed(1) + " percent.");
+      lossCanvas.setAttribute("aria-label", "Training and fixed held-out validation binary cross-entropy through step " + steps + ". Current training loss is " + nnFormatMetric(trainMetrics.loss) + " and validation loss is " + nnFormatMetric(validationMetrics.loss) + ".");
+    }
+    function nnUpdateLearningRateLabel() {
+      el["nn-lr-v"].textContent = Math.pow(10, Number(el["nn-lr"].value)).toPrecision(2);
+    }
+    function nnUpdateButton() {
+      trainButton.textContent = running ? "Pause" : (steps >= maxSteps ? "Train again" : "Train");
+      trainButton.setAttribute("aria-pressed", String(running));
+    }
+    function nnStopTraining() {
+      running = false;
+      if (animationId !== null) cancelAnimationFrame(animationId);
+      animationId = null;
+      nnUpdateButton();
+    }
+    function nnReinitialize(options) {
+      nnStopTraining();
+      if (options && options.newSeed) seedNumber++;
+      if (options && options.newData) nnGenerateDatasets();
+      nnInitializeNetwork();
+      nnUpdateLearningRateLabel();
+      el["nn-h-v"].textContent = el["nn-h"].value;
+      nnUpdateButton();
+      nnDraw();
+    }
+    function nnToggleTraining() {
+      if (running) { nnStopTraining(); nnDraw(); return; }
+      if (divergenceReason || steps >= maxSteps) nnInitializeNetwork();
+      running = true;
+      nnUpdateButton();
       function frame() {
-        trainSteps(10, Math.pow(10, +document.getElementById("nn-lr").value));
-        draw();
-        if (steps < 4000) animId = requestAnimationFrame(frame);
-        else { animId = null; document.getElementById("nn-train").textContent = "Train"; }
+        animationId = null;
+        if (!running) return;
+        const learningRate = Math.pow(10, Number(el["nn-lr"].value));
+        const ok = nnTrainSteps(Math.min(10, maxSteps - steps), learningRate);
+        if (ok && steps < maxSteps) {
+          nnDraw();
+          animationId = requestAnimationFrame(frame);
+        } else {
+          nnStopTraining();
+          nnDraw();
+        }
       }
-      animId = requestAnimationFrame(frame);
+      animationId = requestAnimationFrame(frame);
     }
-    document.getElementById("nn-train").addEventListener("click", trainLoop);
-    document.getElementById("nn-reset").addEventListener("click", () => { seedN++; initNet(); draw(); });
-    document.getElementById("nn-data").addEventListener("change", () => { genData(); initNet(); draw(); });
-    document.getElementById("nn-h").addEventListener("input", () => { document.getElementById("nn-h-v").textContent = document.getElementById("nn-h").value; initNet(); draw(); });
-    document.getElementById("nn-act").addEventListener("change", () => { initNet(); draw(); });
-    CAIE.bindQuiet("nn-lr", () => {}, v => Math.pow(10, v).toPrecision(2));
-    document.getElementById("nn-h-v").textContent = "12";
-    CAIE.onTheme(draw); window.addEventListener("resize", draw);
-    genData(); initNet(); draw();
+    trainButton.addEventListener("click", nnToggleTraining);
+    el["nn-reset"].addEventListener("click", () => nnReinitialize({ newSeed: true }));
+    el["nn-data"].addEventListener("change", () => nnReinitialize({ newData: true }));
+    el["nn-h"].addEventListener("input", () => nnReinitialize());
+    el["nn-act"].addEventListener("change", () => nnReinitialize());
+    el["nn-lr"].addEventListener("input", () => nnReinitialize());
+    CAIE.onTheme(nnDraw);
+    window.addEventListener("resize", nnDraw);
+    nnGenerateDatasets();
+    nnInitializeNetwork();
+    nnUpdateLearningRateLabel();
+    el["nn-h-v"].textContent = el["nn-h"].value;
+    nnUpdateButton();
+    nnDraw();
   })();
 
   // ---------- convolution ----------
-  (function () {
-    const imgs = {
-      square: [...Array(8)].map((_, i) => [...Array(8)].map((_, j) => (i >= 2 && i <= 5 && j >= 2 && j <= 5) ? 1 : 0)),
-      stripes: [...Array(8)].map((_, i) => [...Array(8)].map((_, j) => (j % 2 === 0) ? 1 : 0.1)),
-      diag: [...Array(8)].map((_, i) => [...Array(8)].map((_, j) => (j > i) ? 1 : 0))
+  (function cvConvolutionExplorer() {
+    const ids = ["cv-k", "cv-img", "cv-row", "cv-col", "cv-inspect", "cv-in", "cv-ker", "cv-out", "cv-readout"];
+    const el = Object.fromEntries(ids.map(id => [id, document.getElementById(id)]));
+    if (ids.some(id => !el[id])) return;
+    const images = {
+      square: [...Array(8)].map((_, row) => [...Array(8)].map((_, column) => row >= 2 && row <= 5 && column >= 2 && column <= 5 ? 1 : 0)),
+      stripes: [...Array(8)].map(() => [...Array(8)].map((_, column) => column % 2 === 0 ? 1 : 0.1)),
+      diag: [...Array(8)].map((_, row) => [...Array(8)].map((_, column) => column > row ? 1 : 0))
     };
-    const kers = {
+    const kernels = {
       vedge: [[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]],
       hedge: [[-1, -2, -1], [0, 0, 0], [1, 2, 1]],
       blur: [[1 / 9, 1 / 9, 1 / 9], [1 / 9, 1 / 9, 1 / 9], [1 / 9, 1 / 9, 1 / 9]],
       sharp: [[0, -1, 0], [-1, 5, -1], [0, -1, 0]]
     };
-    let hoverCell = null;
-    function conv(img, K) {
-      const out = [];
-      for (let i = 0; i < 6; i++) { const row = []; for (let j = 0; j < 6; j++) {
-        let s = 0;
-        for (let a = 0; a < 3; a++) for (let b = 0; b < 3; b++) s += img[i + a][j + b] * K[a][b];
-        row.push(s);
-      } out.push(row); }
-      return out;
+    let selectedCell = { row: 0, column: 0 };
+    let pointerCell = null;
+    ["cv-in", "cv-ker", "cv-out"].forEach(id => el[id].setAttribute("role", "img"));
+    el["cv-readout"].setAttribute("aria-live", "polite");
+
+    function cvConvolve(image, kernel) {
+      const output = [];
+      for (let row = 0; row < 6; row++) {
+        const outputRow = [];
+        for (let column = 0; column < 6; column++) {
+          let total = 0;
+          for (let kernelRow = 0; kernelRow < 3; kernelRow++) {
+            for (let kernelColumn = 0; kernelColumn < 3; kernelColumn++) {
+              total += image[row + kernelRow][column + kernelColumn] * kernel[kernelRow][kernelColumn];
+            }
+          }
+          outputRow.push(total);
+        }
+        output.push(outputRow);
+      }
+      return output;
     }
-    function drawGrid(canvas, grid, size, hi, signed) {
-      const n = grid.length;
+    function cvFormat(value) {
+      if (Math.abs(value) < 5e-10) return "0";
+      if (Number.isInteger(value)) return String(value);
+      return String(Number(value.toFixed(4)));
+    }
+    function cvDrawGrid(canvas, grid, size, highlight, signed) {
+      const count = grid.length;
       const { ctx } = CAIE.setupCanvas(canvas, size, size);
-      const cell = size / n;
+      const cellSize = size / count;
       const flat = grid.flat();
-      const mx = Math.max(...flat.map(Math.abs), 1e-9);
-      const pal = CAIE.pal();
-      for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
-        const v = grid[i][j];
-        ctx.fillStyle = signed ? CAIE.div(v / mx) : CAIE.seq(0.08 + 0.85 * v / mx);
-        ctx.fillRect(j * cell + 1, i * cell + 1, cell - 2, cell - 2);
-        if (n <= 3) {
-          ctx.fillStyle = Math.abs(v) / mx > 0.5 ? "#fff" : pal.ink;
-          ctx.font = "600 11px " + CAIE.css("--sans"); ctx.textAlign = "center"; ctx.textBaseline = "middle";
-          ctx.fillText(+v.toFixed(2), j * cell + cell / 2, i * cell + cell / 2);
+      const maximum = Math.max(...flat.map(Math.abs), 1e-9);
+      const palette = CAIE.pal();
+      for (let row = 0; row < count; row++) for (let column = 0; column < count; column++) {
+        const value = grid[row][column];
+        ctx.fillStyle = signed ? CAIE.div(value / maximum) : CAIE.seq(0.08 + 0.85 * value / maximum);
+        ctx.fillRect(column * cellSize + 1, row * cellSize + 1, cellSize - 2, cellSize - 2);
+        if (count <= 3) {
+          ctx.fillStyle = Math.abs(value) / maximum > 0.5 ? "#fff" : palette.ink;
+          ctx.font = "600 11px " + CAIE.css("--sans");
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(cvFormat(value), column * cellSize + cellSize / 2, row * cellSize + cellSize / 2);
         }
       }
-      if (hi) {
-        ctx.strokeStyle = pal.s[2]; ctx.lineWidth = 3;
-        ctx.strokeRect(hi.j * cell + 1, hi.i * cell + 1, cell * (hi.n || 1) - 2, cell * (hi.n || 1) - 2);
+      if (highlight) {
+        ctx.strokeStyle = palette.s[2];
+        ctx.lineWidth = 3;
+        ctx.strokeRect(highlight.column * cellSize + 1, highlight.row * cellSize + 1, cellSize * (highlight.size || 1) - 2, cellSize * (highlight.size || 1) - 2);
       }
     }
-    function draw() {
-      const img = imgs[document.getElementById("cv-img").value];
-      const K = kers[document.getElementById("cv-k").value];
-      const out = conv(img, K);
-      drawGrid(document.getElementById("cv-in"), img, 200, hoverCell ? { i: hoverCell.i, j: hoverCell.j, n: 3 } : null, false);
-      drawGrid(document.getElementById("cv-ker"), K, 78, null, true);
-      drawGrid(document.getElementById("cv-out"), out, 152, hoverCell ? { i: hoverCell.i, j: hoverCell.j, n: 1 } : null, true);
-      if (hoverCell) {
-        const { i, j } = hoverCell;
-        let terms = [];
-        let s = 0;
-        for (let a = 0; a < 3; a++) for (let b = 0; b < 3; b++) { s += img[i + a][j + b] * K[a][b]; terms.push(img[i + a][j + b].toFixed(1) + "×" + K[a][b].toFixed(1)); }
-        document.getElementById("cv-readout").innerHTML = "output[" + i + "," + j + "] = " + terms.slice(0, 5).join(" + ") + " + … = <b>" + s.toFixed(2) + "</b>";
+    function cvDescribeCell(cell, image, kernel, output) {
+      const terms = [];
+      for (let kernelRow = 0; kernelRow < 3; kernelRow++) {
+        for (let kernelColumn = 0; kernelColumn < 3; kernelColumn++) {
+          const kernelValue = el["cv-k"].value === "blur" ? "1/9" : cvFormat(kernel[kernelRow][kernelColumn]);
+          terms.push(cvFormat(image[cell.row + kernelRow][cell.column + kernelColumn]) + " * " + kernelValue);
+        }
       }
+      const roundingNote = el["cv-k"].value === "blur" ? " The 1/9 kernel weights are exact; the final decimal is rounded for display." : "";
+      return "Output row " + (cell.row + 1) + ", column " + (cell.column + 1) + " = " + terms.join(" + ") + " = " + cvFormat(output[cell.row][cell.column]) + "." + roundingNote + " All nine kernel weights are shared at every output position.";
     }
-    const outC = document.getElementById("cv-out");
-    outC.addEventListener("mousemove", e => {
-      const r = outC.getBoundingClientRect();
-      const j = Math.floor((e.clientX - r.left) / r.width * 6);
-      const i = Math.floor((e.clientY - r.top) / r.height * 6);
-      if (i >= 0 && i < 6 && j >= 0 && j < 6) { hoverCell = { i, j }; draw(); }
+    function cvDraw() {
+      const image = images[el["cv-img"].value] || images.square;
+      const kernel = kernels[el["cv-k"].value] || kernels.vedge;
+      const output = cvConvolve(image, kernel);
+      const activeCell = pointerCell || selectedCell;
+      cvDrawGrid(el["cv-in"], image, 200, { row: activeCell.row, column: activeCell.column, size: 3 }, false);
+      cvDrawGrid(el["cv-ker"], kernel, 78, null, true);
+      cvDrawGrid(el["cv-out"], output, 152, { row: activeCell.row, column: activeCell.column, size: 1 }, true);
+      const description = cvDescribeCell(activeCell, image, kernel, output);
+      el["cv-readout"].textContent = description;
+      const imageLabel = el["cv-img"].options[el["cv-img"].selectedIndex].text;
+      const kernelLabel = el["cv-k"].options[el["cv-k"].selectedIndex].text;
+      el["cv-in"].setAttribute("aria-label", "Eight by eight " + imageLabel + " input. The three by three patch beginning at row " + (activeCell.row + 1) + ", column " + (activeCell.column + 1) + " is highlighted.");
+      el["cv-ker"].setAttribute("aria-label", "Selected three by three " + kernelLabel + " kernel.");
+      el["cv-out"].setAttribute("aria-label", "Six by six convolution output. Row " + (activeCell.row + 1) + ", column " + (activeCell.column + 1) + " is highlighted and equals " + cvFormat(output[activeCell.row][activeCell.column]) + ".");
+    }
+    function cvCellFromPointer(event) {
+      const bounds = el["cv-out"].getBoundingClientRect();
+      if (!(bounds.width > 0) || !(bounds.height > 0)) return null;
+      const column = Math.floor((event.clientX - bounds.left) / bounds.width * 6);
+      const row = Math.floor((event.clientY - bounds.top) / bounds.height * 6);
+      return row >= 0 && row < 6 && column >= 0 && column < 6 ? { row, column } : null;
+    }
+    function cvInspectControls() {
+      const rowText = el["cv-row"].value.trim();
+      const columnText = el["cv-col"].value.trim();
+      const row = Number(rowText), column = Number(columnText);
+      const rowValid = rowText !== "" && Number.isInteger(row) && row >= 1 && row <= 6;
+      const columnValid = columnText !== "" && Number.isInteger(column) && column >= 1 && column <= 6;
+      el["cv-row"].setAttribute("aria-invalid", String(!rowValid));
+      el["cv-col"].setAttribute("aria-invalid", String(!columnValid));
+      if (!rowValid || !columnValid) {
+        el["cv-readout"].textContent = "Choose integer output row and column values from 1 through 6.";
+        return;
+      }
+      selectedCell = { row: row - 1, column: column - 1 };
+      pointerCell = null;
+      cvDraw();
+    }
+    el["cv-out"].addEventListener("pointermove", event => {
+      if (event.pointerType && event.pointerType !== "mouse" && event.pointerType !== "pen") return;
+      const cell = cvCellFromPointer(event);
+      if (cell && (!pointerCell || cell.row !== pointerCell.row || cell.column !== pointerCell.column)) {
+        pointerCell = cell;
+        cvDraw();
+      }
     });
-    outC.addEventListener("mouseleave", () => { hoverCell = null; draw(); });
-    document.getElementById("cv-k").addEventListener("change", draw);
-    document.getElementById("cv-img").addEventListener("change", draw);
-    CAIE.onTheme(draw);
-    draw();
+    el["cv-out"].addEventListener("pointerleave", () => { pointerCell = null; cvDraw(); });
+    el["cv-out"].addEventListener("pointerdown", event => {
+      const cell = cvCellFromPointer(event);
+      if (!cell) return;
+      selectedCell = cell;
+      pointerCell = null;
+      el["cv-row"].value = String(cell.row + 1);
+      el["cv-col"].value = String(cell.column + 1);
+      el["cv-row"].setAttribute("aria-invalid", "false");
+      el["cv-col"].setAttribute("aria-invalid", "false");
+      cvDraw();
+    });
+    el["cv-inspect"].addEventListener("click", cvInspectControls);
+    el["cv-k"].addEventListener("change", cvDraw);
+    el["cv-img"].addEventListener("change", cvDraw);
+    CAIE.onTheme(cvDraw);
+    cvInspectControls();
   })();
 });
 </script>
