@@ -4,11 +4,52 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Topic 13 — MLOps &amp; Production Engineering · CAIE Course</title>
+<link rel="icon" href="data:,">
 <link rel="stylesheet" href="../assets/course.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
 <script defer src="../assets/course.js"></script>
+<style>
+.incident-trainer-card {
+  border: none;
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  padding: 16px 20px;
+  margin: 1.1em 0;
+}
+.incident-trainer-card .quiz-q { font-weight: 700; margin: 0 0 10px; }
+.incident-trainer-card .opts { display: grid; gap: 8px; }
+.incident-trainer-card .opts button {
+  font: inherit;
+  font-size: 0.9rem;
+  text-align: left;
+  padding: 9px 14px;
+  border-radius: 12px;
+  border: 1.5px solid transparent;
+  background: var(--surface-2);
+  color: var(--ink);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.incident-trainer-card .opts button:hover { border-color: var(--brand); background: var(--tint-yellow); }
+.incident-trainer-card .opts button.correct { border-color: var(--good); background: rgba(12,163,12,0.10); }
+.incident-trainer-card .opts button.wrong { border-color: var(--critical); background: rgba(208,59,59,0.10); }
+.incident-trainer-card .quiz-exp {
+  display: none;
+  margin-top: 10px;
+  font-size: 0.88rem;
+  color: var(--ink-2);
+  border-top: 1px dashed var(--baseline);
+  padding-top: 10px;
+}
+.incident-trainer-card.revealed .quiz-exp { display: block; }
+@media (max-width: 700px) {
+  main { overflow-x: hidden; }
+  .tablewrap, pre, .widget { max-width: 100%; }
+}
+</style>
 </head>
 <body data-page="t13" data-root="..">
 <a class="skip" href="#main">Skip to content</a>
@@ -24,334 +65,793 @@
 <div class="kicker">Level II · Topic 13 · Exam weight 14%</div>
 <h1>MLOps &amp; Production Engineering</h1>
 <p class="lead">
-  A model in a notebook is a claim; a model in production is a promise. This topic is about keeping
-  that promise after the data shifts, the traffic spikes, and someone deploys a new tokenizer on a
-  Friday. The famous finding of Google's "Hidden Technical Debt" paper: the ML code is a small
-  black box in the middle of a sprawling system of pipelines, configuration, serving, and
-  monitoring — and the system, not the model, is where careers are made and incidents happen. The
-  exam tests this topic with vignettes: dashboards full of signals, and you diagnosing.
+  A production model is one versioned component in a changing service. It consumes live data,
+  shares a latency and reliability budget with dependencies, influences future data, and is judged
+  long after deployment when outcomes arrive. MLOps makes that system reproducible, observable,
+  safely changeable, and recoverable. This chapter teaches the reasoning chain behind each control,
+  not a vendor-specific checklist.
 </p>
 
 <div class="box los">
   <div class="box-title">Learning outcomes</div>
   <ul>
-    <li>Describe the ML lifecycle and diagnose training–serving skew.</li>
-    <li>Design CI/CD for models: tests, validation gates, registries, lineage, automated retraining.</li>
-    <li>Compare serving patterns (batch / real-time / streaming) and reason about the latency–throughput tradeoff.</li>
-    <li>Explain inference optimization: quantization, pruning, distillation, compilation.</li>
-    <li>Distinguish data drift, concept drift, and data-quality failures; design monitoring for each.</li>
-    <li>Compare shadow, canary, and A/B deployments; diagnose production incidents from signals.</li>
+    <li>Describe the end-to-end ML lifecycle and diagnose train/serve skew.</li>
+    <li>Design CI/CD pipelines for models, including tests, validation gates, and automated retraining.</li>
+    <li>Explain model registries, versioning, and lineage tracking.</li>
+    <li>Compare batch, real-time, and streaming serving and reason about latency versus throughput.</li>
+    <li>Describe inference optimization: quantization, pruning, distillation, and compilation with ONNX/TensorRT nuance.</li>
+    <li>Explain data drift, concept drift, performance degradation, label lag, and alerting.</li>
+    <li>Compare shadow, canary, and A/B deployments.</li>
+    <li>Diagnose production incidents from latency, error, saturation, data, and model signals.</li>
   </ul>
 </div>
 
+<div class="box jargon">
+  <div class="box-title">Vocabulary before the lifecycle</div>
+  <dl>
+    <dt>Artifact</dt><dd>A versioned output such as a model file, tokenizer, feature definition, calibration map, threshold, or compiled engine.</dd>
+    <dt>Build, release, deploy</dt><dd>Create an artifact; approve a version for use; place that version in an environment. These are separate events.</dd>
+    <dt>CI, CD, and CT</dt><dd>Continuous integration tests changes; continuous delivery/deployment promotes approved artifacts; continuous training produces new model candidates.</dd>
+    <dt>Registry and lineage</dt><dd>A catalog of versioned model metadata, and the trace from a deployed prediction back through artifacts, code, data, and configuration.</dd>
+    <dt>SLI, SLO, and SLA</dt><dd>A measured service indicator, an internal target for it, and an external agreement that may attach consequences.</dd>
+    <dt>Drift and degradation</dt><dd>A distribution changes; an outcome metric worsens. Either can occur without the other.</dd>
+    <dt>Rollback</dt><dd>Restore a known compatible release and its dependencies—not merely copy an older weight file.</dd>
+  </dl>
+</div>
+
+<div class="box note">
+  <div class="box-title">The production reasoning loop</div>
+  <p>
+    Specify the decision and SLOs → version data, code, features, and artifacts → test a candidate →
+    release progressively → observe system, data, prediction, and outcome signals → contain and
+    learn from failures → retrain only when evidence supports it. Every arrow needs an owner,
+    evidence, and a recovery path.
+  </p>
+</div>
+
 <h2>13.1 The lifecycle, CI/CD, and the registry</h2>
+
+<h3>Purpose — control a feedback loop, not a one-time model build</h3>
 <p>
-  The ML lifecycle is a loop, not a line: <em>data → features → training → validation → deployment
-  → monitoring → (new data) → retraining</em>. Everything in this topic exists because the loop
-  never terminates — the world that generated your training data keeps moving after you ship.
+  The lifecycle is cyclic: collect and validate data, construct point-in-time features, train,
+  evaluate, package, release, serve, monitor, join delayed outcomes, and decide whether to update.
+  A deployed model can change which users see an offer, which labels are later observed, and what
+  data the next model receives. Monitoring and retraining therefore sit inside a feedback system,
+  not after an independent prediction function.
 </p>
 <p>
-  <strong>Training–serving skew</strong> is the classic first failure: offline metrics are great,
-  online behavior is bad, and the cause is that the serving path computes features differently
-  from the training path. Typical culprits: a feature re-implemented in another language for
-  latency; a "last 30 days" aggregate that quietly used <em>future</em> data during training
-  (leakage — Topic 4); a library version bump that changes tokenization. The cures are
-  structural, not heroic: share one feature-computation code path (a feature store — Topic 6),
-  log the <em>serving-time</em> feature values and train on those logs, and pin every version.
+  Reproducibility asks, “Can we rebuild this candidate?” Operational traceability asks, “Which
+  exact release produced this prediction?” Governance asks, “Who approved it against which
+  evidence?” A mature lifecycle answers all three.
+</p>
+
+<h3>The artifact chain — version every behavior-changing dependency</h3>
+<div class="tablewrap"><table>
+  <thead><tr><th scope="col">Layer</th><th scope="col">Examples to version</th><th scope="col">Failure if omitted</th></tr></thead>
+  <tbody>
+    <tr><td>Data</td><td>Immutable snapshot/table version, event-time cutoff, labels, consent scope</td><td>The same query later returns different rows or leaks future information.</td></tr>
+    <tr><td>Features</td><td>Definitions, units, windows, defaults, category maps, freshness contract</td><td>Training and serving compute different meanings under one feature name.</td></tr>
+    <tr><td>Training</td><td>Code commit, configuration, random seeds, environment/container, hardware-relevant settings</td><td>The candidate cannot be rebuilt or compared fairly.</td></tr>
+    <tr><td>Model package</td><td>Weights, architecture, tokenizer, calibration, threshold, signature</td><td>Correct weights run with incompatible preprocessing or decision logic.</td></tr>
+    <tr><td>Serving release</td><td>Runtime, compiler/engine, dependency versions, routing and feature-service versions</td><td>A deployment changes numerical or operational behavior without a new model version.</td></tr>
+  </tbody>
+</table></div>
+
+<h3>Train/serve skew — compare meanings at the same entity and timestamp</h3>
+<p>
+  Train/serve skew means that the feature or preprocessing semantics used to learn differ from
+  those used to predict. It includes code duplication, units, missing-value policies, category
+  vocabularies, tokenizer versions, aggregation windows, feature freshness, and point-in-time
+  leakage. A shared library or feature store reduces risk but does not prove identical timestamps,
+  data availability, or rollout configuration.
+</p>
+<div class="box warn">
+  <div class="box-title">Worked skew failure — dollars versus cents</div>
+  <p>
+    Training records <code>cart_value</code> in dollars and learns coefficient \(0.02\). A typical
+    value 50 contributes \(0.02\times50=1\) to the logit. Serving sends 5,000 cents, contributing
+    \(100\), so probabilities saturate even though schema type and null checks pass. A semantic
+    contract with unit metadata and a replay test on identical entity-time examples catches what a
+    generic “number” schema cannot.
+  </p>
+</div>
+<pre><code>sample entity-time keys before release
+training_features = reconstruct_from_training_pipeline(keys, as_of_time)
+serving_features  = replay_serving_pipeline(keys, as_of_time)
+for each feature:
+    compare value, unit, missingness, category mapping, and freshness
+    fail on contract breach; investigate tolerated numeric differences
+also compare final logits, probabilities, calibration, and decisions</code></pre>
+<p>
+  Logging serving-time features can support parity checks and future training, but it introduces
+  privacy, retention, selection-bias, and feedback-loop questions. It is not a blanket instruction
+  to retain every input indefinitely.
+</p>
+
+<h3>CI/CD gates — turn acceptance criteria into executable evidence</h3>
+<div class="tablewrap"><table>
+  <thead><tr><th scope="col">Gate family</th><th scope="col">Representative checks</th><th scope="col">Why one aggregate score is unsafe</th></tr></thead>
+  <tbody>
+    <tr><td>Software and supply chain</td><td>Unit/integration tests, dependency scan, deterministic package smoke test</td><td>A high AUC does not compensate for a remote-code or serialization failure.</td></tr>
+    <tr><td>Data and features</td><td>Schema, ranges, freshness, leakage, point-in-time replay, parity</td><td>Averages can hide one broken high-impact feature.</td></tr>
+    <tr><td>Model behavior</td><td>Holdout and slice metrics, calibration, robustness, fairness, uncertainty</td><td>Overall improvement can coexist with an unacceptable slice regression.</td></tr>
+    <tr><td>Serving</td><td>Signature, numerical parity, p95/p99 latency, throughput, memory, cold start, load and failure tests</td><td>Offline quality says nothing about surviving production load.</td></tr>
+    <tr><td>Operations and governance</td><td>Lineage, approval, monitoring, rollback, privacy/security review</td><td>An untraceable candidate cannot be safely diagnosed or recovered.</td></tr>
+  </tbody>
+</table></div>
+<pre><code>build immutable candidate and manifest
+run software, data, skew, model, slice, and serving tests
+compare candidate with policy thresholds and incumbent confidence intervals
+if any hard guardrail fails: block and record the reason
+if eligible: require the defined approval, then shadow/canary as appropriate
+promote only the exact tested artifact digest and compatible dependencies
+retain evidence, monitor release cohorts, and keep rollback ready</code></pre>
+<p>
+  “Better than incumbent” is not the only valid rule: some metrics use non-inferiority margins,
+  hard floors, or safety ceilings. Thresholds should be chosen before observing the candidate and
+  interpreted with sample size and uncertainty.
+</p>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Editable promotion-gate lab</div>
+    <div class="wsub">A conjunctive hard-gate example: every listed requirement must pass. It is not a weighted risk score or an automatic production approval.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label for="gate-inc">Incumbent quality <input id="gate-inc" type="number" min="0" max="1" step="0.001" value="0.84" inputmode="decimal"></label>
+      <label for="gate-cand">Candidate quality <input id="gate-cand" type="number" min="0" max="1" step="0.001" value="0.86" inputmode="decimal"></label>
+      <label for="gate-delta">Required delta <input id="gate-delta" type="number" min="-1" max="1" step="0.001" value="0.01" inputmode="decimal"></label>
+      <label for="gate-slice">Worst-slice quality <input id="gate-slice" type="number" min="0" max="1" step="0.001" value="0.72" inputmode="decimal"></label>
+      <label for="gate-slice-floor">Slice floor <input id="gate-slice-floor" type="number" min="0" max="1" step="0.001" value="0.70" inputmode="decimal"></label>
+      <label for="gate-p99">Candidate p99 (ms) <input id="gate-p99" type="number" min="0" step="any" value="85" inputmode="decimal"></label>
+      <label for="gate-p99-max">p99 ceiling (ms) <input id="gate-p99-max" type="number" min="0" step="any" value="100" inputmode="decimal"></label>
+      <label for="gate-data"><input id="gate-data" type="checkbox" checked> data contracts pass</label>
+      <label for="gate-skew"><input id="gate-skew" type="checkbox" checked> train/serve replay passes</label>
+      <label for="gate-lineage"><input id="gate-lineage" type="checkbox" checked> lineage complete</label>
+      <label for="gate-recovery"><input id="gate-recovery" type="checkbox" checked> rollback rehearsed</label>
+    </div>
+    <div class="tiles">
+      <div class="tile"><div class="tv" id="gate-result">—</div><div class="tl">gate result</div></div>
+      <div class="tile"><div class="tv" id="gate-passed">—</div><div class="tl">requirements passed</div></div>
+      <div class="tile"><div class="tv" id="gate-failed">—</div><div class="tl">requirements failed</div></div>
+    </div>
+    <div class="readout" id="gate-readout" role="status" aria-live="polite"></div>
+    <p class="wcaption">The numeric comparison does not perform a significance test. In a real policy, metric estimator, evaluation population, confidence rule, slices, and exception authority must also be versioned.</p>
+  </div>
+</div>
+
+<h3>Automated retraining — automate candidate production, not blind promotion</h3>
+<p>
+  Continuous training may be scheduled, event-triggered, or requested after diagnosis. A drift
+  alert is evidence to investigate, not proof that a new model will help. The pipeline should freeze
+  the eligible data window, validate labels and sampling, reproduce a baseline, train a candidate,
+  and send it through the same gates and progressive delivery as any human-triggered build.
 </p>
 <p>
-  <strong>CI/CD for models</strong> extends software CI/CD with two new test families. Alongside
-  unit tests you add <em>data tests</em> (schema, ranges, null rates, distribution checks on every
-  incoming batch) and <em>model tests</em> (quality on a golden holdout, slice metrics — Topic 7,
-  behavioral invariance checks, latency budget). The load-bearing component is the
-  <strong>validation gate</strong>: a candidate model is promoted only if it beats the incumbent
-  on held-out and slice metrics, and never automatically otherwise — including candidates produced
-  by <em>automated retraining</em> (on a schedule, or triggered by the drift monitors of §13.4).
-  A pipeline that retrains automatically but promotes through a gate is "MLOps level 2" in
-  Google's maturity model; a notebook and a prayer is level 0.
+  Guard against feedback and label leakage: the incumbent may determine who receives treatment and
+  therefore whose outcome is observed. Retraining on that selected log can reinforce policy bias.
+  Define minimum label completeness, delay/censoring rules, trigger cooldowns, and a champion–
+  challenger record. If labels are insufficient, wait or use a separately justified proxy; do not
+  silently redefine success.
 </p>
+
+<h3>Registry, versioning, and lineage — make release and rollback compatible</h3>
 <p>
-  The <strong>model registry</strong> is the system of record: every model version with its
-  <strong>lineage</strong> — training-data snapshot/hash, code commit, hyperparameters, metrics,
-  and current stage (staging → production → archived). Lineage is what makes rollback trivial and
-  audits possible ("which data trained the model that made this decision?" — a regulatory
-  question, Topic 7 and Topic 20). Think of it as the lab notebook requirement: a result you
-  cannot reproduce is not a result, and a model you cannot trace is not deployable.
+  A registry stores model-version metadata and lifecycle state; an artifact store holds bytes.
+  Implementations may combine them, but the concepts differ. A useful manifest links immutable
+  digests for data, code, environment, feature definitions, weights, tokenizer, calibration,
+  threshold, compiled engine, evaluation report, approver, and deployment.
+</p>
+<pre><code>release_id: fraud-2026-08-25.3
+model_digest, tokenizer_digest, feature_contract_version
+training_data_snapshot + event_time_cutoff + label_definition
+code_commit + environment_digest + training_configuration
+evaluation_report + calibration_version + decision_threshold
+runtime/engine version + supported shapes + hardware target
+approval record + monitoring policy + compatible rollback release</code></pre>
+<p>
+  Rollback is fast only when interfaces and state remain compatible. A previous model may require an
+  old tokenizer, feature schema, or database interpretation. Rehearse rollback and roll-forward,
+  preserve old dependencies for the retention window, and record migrations that are not reversible.
 </p>
 
 <h2>13.2 Serving — patterns and the latency–throughput tradeoff</h2>
-<p>
-  Three serving patterns, chosen by <em>when predictions are needed</em>:
-</p>
-<ul>
-  <li><strong>Batch:</strong> score everything on a schedule (nightly churn scores, weekly
-  recommendations), store results in a database, serve lookups. Cheapest, simplest, hardware fully
-  utilized; predictions can be stale by up to one period.</li>
-  <li><strong>Real-time (online):</strong> a request arrives, the model answers within a latency
-  SLO (tens of ms typically). Needed when the input only exists at request time (a search query,
-  a fraud check on this transaction). All the hard problems of this topic live here.</li>
-  <li><strong>Streaming:</strong> predictions ride an event stream (Kafka et al.) — fresher than
-  batch without request/response coupling; natural for pipelines of events (clickstreams, sensor
-  feeds).</li>
-</ul>
-<p>
-  Real-time serving lives on one tension: GPUs are throughput machines that love big batches, but
-  users wait one request at a time. <strong>Dynamic batching</strong> is the standard resolution —
-  the server holds arriving requests for up to a few milliseconds, groups them, and runs one
-  batched forward pass. Batch size raises throughput (the fixed kernel-launch and memory-movement
-  overhead amortizes) and raises latency (requests wait for the batch, then for a longer forward).
-  Every serving stack (Triton, TorchServe, vLLM) is tuned around this dial.
-</p>
-<div class="box bridge">
-  <div class="box-title">⚛ Physics bridge</div>
-  <p>
-    A serving system near capacity is a system near a critical point. In queueing theory the wait
-    scales like \(\rho/(1-\rho)\) where \(\rho\) = load/capacity — the same divergence you know
-    from critical slowing down: susceptibility blowing up as the control parameter approaches the
-    transition. The practical law: <em>tail latency diverges long before utilization reaches
-    100%</em>. Operators leave headroom (ρ ≈ 0.6–0.8) for exactly the reason you never run a
-    magnet at its quench current. Watch the hockey stick form in the widget.
-  </p>
-</div>
 
-<div class="widget">
-  <div class="widget-head">
-    <div class="wtitle">Interactive — dynamic batching &amp; the latency hockey stick</div>
-    <div class="wsub">A simulated GPU server: forward pass costs 6 ms + 1.2 ms per request in the batch. Requests arrive at random (Poisson). The curve shows p99 latency vs offered load for your batching config; the dashed line is theoretical capacity.</div>
-  </div>
-  <div class="widget-body">
-    <div class="controls">
-      <label>Arrival rate <input type="range" id="bt-lam" min="20" max="600" step="20" value="200"><span class="val" id="bt-lam-v"></span></label>
-      <label>Max batch size <input type="range" id="bt-b" min="0" max="5" step="1" value="3"><span class="val" id="bt-b-v"></span></label>
-      <label>Max wait <input type="range" id="bt-w" min="0" max="20" step="1" value="5"><span class="val" id="bt-w-v"></span></label>
-    </div>
-    <div class="tiles" id="bt-tiles"></div>
-    <canvas id="bt-canvas" width="760" height="260"></canvas>
-    <div class="readout" id="bt-readout"></div>
-    <p class="wcaption">
-      Things to try: (1) Batch size 1: capacity ≈ 1000/(6+1.2) ≈ 139 req/s — push arrivals past it
-      and p99 explodes; the system is <em>unstable</em>, queue growing without bound. (2) Raise max
-      batch to 8: capacity jumps ~4× because the 6 ms overhead is shared — for a few ms of added
-      latency at low load. That asymmetry is why batching is nearly free lunch. (3) Note p99 bends
-      upward well before the dashed capacity line — the critical-slowing-down region where retries
-      and timeouts start cascading. Production runs left of the bend, not left of the line.
-    </p>
-  </div>
-</div>
-
-<h2>13.3 Making inference cheap — quantization, pruning, distillation, compilation</h2>
-<p>
-  Training optimizes for learning; serving optimizes for cost and latency. Four standard
-  compressions, usually composed:
-</p>
+<h3>Choose the serving pattern from freshness, deadline, and coupling</h3>
 <div class="tablewrap"><table>
-  <thead><tr><th>Technique</th><th>What it does</th><th>Typical win</th><th>Cost / risk</th></tr></thead>
+  <thead><tr><th scope="col">Pattern</th><th scope="col">Request and result</th><th scope="col">Strength</th><th scope="col">Characteristic risk</th></tr></thead>
   <tbody>
-    <tr><td><strong>Quantization</strong></td><td>Store/compute weights (and maybe activations) in INT8/INT4 instead of FP16</td><td>2–4× memory &amp; throughput</td><td>Accuracy loss if done naively; outlier channels in LLMs need care</td></tr>
-    <tr><td><strong>Pruning</strong></td><td>Remove weights (unstructured) or whole neurons/heads (structured)</td><td>Sparsity 50–90%; real speedup only if structured or hardware-sparse</td><td>Accuracy cliff past a threshold; retraining usually required</td></tr>
-    <tr><td><strong>Distillation</strong></td><td>Train a small student to match a big teacher's output distribution (soft labels)</td><td>Order-of-magnitude smaller model at modest quality loss</td><td>A full training job; student inherits teacher's blind spots</td></tr>
-    <tr><td><strong>Compilation</strong></td><td>Fuse kernels, optimize the graph for target hardware (ONNX Runtime, TensorRT, torch.compile)</td><td>1.5–3× latency, no accuracy change</td><td>Engineering time; operator-coverage gaps</td></tr>
+    <tr><td>Batch</td><td>Score a bounded dataset on a schedule; store outputs</td><td>High utilization, simple retries, reproducible snapshots</td><td>Predictions can be stale; jobs may miss their completion deadline.</td></tr>
+    <tr><td>Online / real-time</td><td>Serve a request synchronously within a deadline</td><td>Uses the newest request context</td><td>Tail latency, dependency failures, overload, cold starts.</td></tr>
+    <tr><td>Streaming</td><td>Consume events continuously and emit/update predictions asynchronously</td><td>Fresh event-driven state without request coupling</td><td>Late/out-of-order events, duplicate delivery, state and replay semantics.</td></tr>
   </tbody>
 </table></div>
 <p>
-  Quantization has two grades: <strong>post-training quantization (PTQ)</strong> — take the trained
-  model, measure activation ranges on a few hundred <em>calibration</em> examples, pick scale
-  factors, done in minutes; and <strong>quantization-aware training (QAT)</strong> — simulate the
-  rounding during fine-tuning so the weights learn to live with it. PTQ first; QAT when PTQ's
-  accuracy drop is unacceptable. The mechanics rhyme with Topic 12's precision story: quantizing
-  is choosing per-tensor (or per-channel) units so values fill the integer range — gain-staging
-  again, now at 8 bits. Distillation's soft labels work because the teacher's full distribution
-  ("this 7 looks 20% like a 1") carries more information per example than the hard label — the
-  dark knowledge argument of Hinton et al.
+  “Streaming” does not guarantee exactly-once business effects or lower latency than every online
+  service. “Batch” need not mean once nightly. Choose from the decision deadline, acceptable
+  staleness, input availability, state requirements, cost, and recovery semantics. Hybrid systems
+  often precompute expensive candidates in batch and rerank them online.
 </p>
 
-<h2>13.4 Monitoring — drift, label lag, and the metrics pyramid</h2>
+<h3>Latency, throughput, and queues — state the model before using the formula</h3>
 <p>
-  Production monitoring is layered, cheapest and fastest signals first:
-  <strong>system</strong> metrics (latency, error rate, saturation — seconds to detect),
-  <strong>data</strong> metrics (schema violations, null rates, per-feature distribution distance —
-  minutes), <strong>model</strong> metrics (prediction and confidence distributions — hours), and
-  <strong>business</strong> metrics (the thing you actually care about — often days, because of
-  <strong>label lag</strong>: you learn whether the loan defaulted months after you scored it).
-  The art is using the fast layers as proxies for the slow ones.
+  Arrival rate is \(\lambda\), sustainable service capacity is \(\mu\), and utilization is
+  \(\rho=\lambda/\mu\). Stability requires long-run \(\lambda&lt;\mu\). Little's law,
+  \(L=\lambda W\), relates average items \(L\), arrival rate, and average time \(W\) for a stable
+  system under consistent boundaries.
 </p>
 <p>
-  The drift taxonomy the exam expects — for input \(x\) and target \(y\):
+  The familiar divergence depends on a queue model. For an M/M/1 queue,
+  \(W=1/(\mu-\lambda)\) and mean queue wait is
+  \(W_q=\rho/(\mu-\lambda)\). Real inference has batching, multiple servers, heavy-tailed input
+  lengths, priorities, and correlated bursts, so measure p50/p95/p99 rather than transferring that
+  formula uncritically.
 </p>
-<ul>
-  <li><strong>Data (covariate) drift:</strong> \(P(x)\) changes, \(P(y\mid x)\) doesn't. New user
-  demographics, a new device type. Detectable <em>without labels</em> by comparing feature
-  distributions.</li>
-  <li><strong>Concept drift:</strong> \(P(y \mid x)\) changes — the world's rule changed. Fraudsters
-  adapt, consumer taste shifts. <em>Invisible to input monitoring</em>; only labeled outcomes
-  reveal it, after the lag.</li>
-  <li><strong>Data-quality failure:</strong> not drift at all — a pipeline broke (nulls, unit
-  change, stuck sensor). The most common in practice, the most sudden, and the most fixable.</li>
-</ul>
+<div class="box note">
+  <div class="box-title">Worked capacity calculation</div>
+  <p>
+    Suppose a full batch of \(B=8\) takes \(6+1.2B=15.6\) ms. Ideal saturated capacity is
+    \(1000B/15.6=512.8\) requests/s. At 400 requests/s, offered utilization against that ideal is
+    \(0.78\). This does not predict p99: low load may not fill batches, requests wait up to the batch
+    window, long inputs vary service time, and retries can add load.
+  </p>
+</div>
+
+<h3>Dynamic batching — trade bounded waiting for denser execution</h3>
 <p>
-  The workhorse distance is <strong>PSI</strong> (population stability index): bin the reference
-  (training) distribution, bin the live window, and compute
-  \(\sum_i (p_i - q_i)\ln(p_i/q_i)\) — a symmetrized KL divergence (Topic 2). Rules of thumb:
-  &lt; 0.1 stable, 0.1–0.25 watch, &gt; 0.25 investigate. Alternatives: Kolmogorov–Smirnov per
-  feature, classifier two-sample tests. Alert on <em>per-feature</em> PSI, not one global score —
-  localization is half the diagnosis.
+  A batcher starts work when it reaches a size limit or a wait/deadline limit. Larger batches may
+  amortize launch, scheduling, and memory-transfer overhead, but can raise latency, padding work,
+  activation/KV memory, and head-of-line blocking. Bucket compatible shapes or lengths, propagate
+  deadlines, and prevent a long request from delaying every short one.
 </p>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Dynamic batching and finite-queue simulator</div>
+    <div class="wsub">A deterministic Poisson-arrival simulation for one illustrative server. The capacity tile assumes continuously full batches; the latency tiles come from a finite simulated window.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label for="bt-lam">Arrival rate (req/s) <input id="bt-lam" type="number" min="1" max="5000" step="1" value="200" inputmode="numeric"></label>
+      <label for="bt-b">Max batch
+        <select id="bt-b"><option value="1">1</option><option value="2">2</option><option value="4">4</option><option value="8" selected>8</option><option value="16">16</option><option value="32">32</option></select>
+      </label>
+      <label for="bt-w">Max wait (ms) <input id="bt-w" type="number" min="0" max="100" step="any" value="5" inputmode="decimal"></label>
+      <label for="bt-base">Batch overhead (ms) <input id="bt-base" type="number" min="0" max="1000" step="any" value="6" inputmode="decimal"></label>
+      <label for="bt-per">Per-request work (ms) <input id="bt-per" type="number" min="0" max="1000" step="any" value="1.2" inputmode="decimal"></label>
+      <label for="bt-slo">p99 SLO (ms) <input id="bt-slo" type="number" min="0.1" max="100000" step="any" value="100" inputmode="decimal"></label>
+    </div>
+    <div class="tiles" id="bt-tiles">
+      <div class="tile"><div class="tv" id="bt-capacity">—</div><div class="tl">ideal full-batch capacity</div></div>
+      <div class="tile"><div class="tv" id="bt-rho">—</div><div class="tl">offered utilization</div></div>
+      <div class="tile"><div class="tv" id="bt-p50">—</div><div class="tl">simulated p50</div></div>
+      <div class="tile"><div class="tv" id="bt-p99">—</div><div class="tl">simulated p99</div></div>
+    </div>
+    <canvas id="bt-canvas" width="760" height="270" role="img" aria-label="Simulated p99 latency across offered load">Latency-versus-load chart; current capacity, utilization, and latency values are reported in the live text below.</canvas>
+    <div class="readout" id="bt-readout" role="status" aria-live="polite"></div>
+    <p class="wcaption">
+      The simulation drains its finite arrival window, so an overloaded p99 is finite even though
+      the corresponding infinite-horizon queue is unstable. It omits replicas, length variation,
+      priorities, network time, failures, and retries; use a production load test for an SLO claim.
+    </p>
+  </div>
+</div>
+
+<h3>Serving reliability — bound work before autoscaling it</h3>
+<div class="tablewrap"><table>
+  <thead><tr><th scope="col">Control</th><th scope="col">Purpose</th><th scope="col">Failure mode it prevents</th></tr></thead>
+  <tbody>
+    <tr><td>Deadline and cancellation propagation</td><td>Stop work after the result is no longer useful</td><td>Orphaned requests consume capacity and deepen overload.</td></tr>
+    <tr><td>Bounded queue and load shedding</td><td>Reject early with a controlled fallback</td><td>Unbounded memory and seconds of useless queue delay.</td></tr>
+    <tr><td>Retry budget, jitter, and idempotency</td><td>Retry only transient, safe operations</td><td>A retry storm multiplies the original failure.</td></tr>
+    <tr><td>Input limits and bucketing</td><td>Control service time and memory by shape/length</td><td>Long-input OOMs and head-of-line blocking.</td></tr>
+    <tr><td>Warm capacity and safe autoscaling signal</td><td>Absorb bursts while new replicas initialize</td><td>Scaling on CPU/GPU utilization reacts after the queue has already exploded.</td></tr>
+    <tr><td>Fallback and circuit breaker</td><td>Degrade safely when a model or dependency is unhealthy</td><td>One failing dependency cascades through the product.</td></tr>
+  </tbody>
+</table></div>
+<p>
+  Capacity planning should use the input-shape distribution and a tail-latency SLO at expected peak
+  traffic with headroom. A server that achieves maximum throughput in a saturated benchmark may be
+  unsuitable for an interactive deadline.
+</p>
+
 <div class="box bridge">
   <div class="box-title">⚛ Physics bridge</div>
   <p>
-    This is detector calibration drift. The training distribution is your reference spectrum; PSI
-    compares today's spectrum against it, channel by channel — and a pipeline break looks exactly
-    like a dead channel: a spike concentrated in one bin, instantly recognizable. Concept drift is
-    nastier: the detector reads perfectly but the <em>physics changed</em> — no internal check can
-    catch it; you need ground truth, and ground truth arrives with the delay of offline
-    reconstruction. That's label lag.
+    Queue growth near capacity resembles critical slowing down, but the equation is model-specific.
+    Utilization is a control parameter; tail latency reveals fluctuations and heavy tails that a
+    mean hides. Measure the actual system rather than treating \(\rho/(1-\rho)\) as a universal law.
+  </p>
+</div>
+
+<h2>13.3 Making inference cheap — quantization, pruning, distillation, compilation</h2>
+
+<h3>Start with the objective — optimize an end-to-end measured path</h3>
+<p>
+  Decide whether the constraint is artifact size, device memory, energy, batch throughput, cold
+  start, p99 latency, or cost per successful decision. Profile preprocessing, tokenization,
+  feature lookup, host-to-device transfer, model kernels, postprocessing, and queueing. Optimizing
+  model FLOPs cannot remove a remote feature-service bottleneck.
+</p>
+<p>
+  Preserve a reference package and evaluation set. Each transformation must pass numerical parity
+  within a justified tolerance, task and slice metrics, calibration/threshold checks, supported
+  shapes, load tests, and failure tests on the actual runtime and hardware.
+</p>
+
+<h3>Quantization — map real values to integers with explicit scales</h3>
+<p>
+  Linear quantization represents approximately
+  $$
+    x \approx s(q-z),
+  $$
+  with integer \(q\), positive scale \(s\), and zero-point \(z\). Choices include weight-only or
+  weight-and-activation, static or dynamic activation scales, symmetric or asymmetric mapping, and
+  tensor/channel/group granularity. Smaller groups often track outliers better but add metadata and
+  may change kernel support.
+</p>
+<p>
+  Post-training quantization (PTQ) converts a trained model; static activation PTQ needs
+  representative calibration data. Quantization-aware training (QAT) simulates quantize/dequantize
+  effects during training or fine-tuning. Neither guarantees speed: unsupported operators,
+  dequantization/cast overhead, packing, small batches, or hardware without suitable integer kernels
+  can erase or reverse the gain.
+</p>
+<div class="box note">
+  <div class="box-title">Worked weight-memory calculation</div>
+  <p>
+    Seven billion FP16 weights occupy 14.0 GB. INT4 payload is 3.5 GB, but with one two-byte scale
+    per 64 weights, metadata adds \(7\text{B}/64\times2=0.21875\) GB. Total 3.71875 GB gives
+    \(14/3.71875\approx3.76\times\) compression—not exactly \(4\times\). Alignment, zero-points,
+    sparse indices, tied weights, and runtime buffers can change the deployed total.
   </p>
 </div>
 
 <div class="widget">
   <div class="widget-head">
-    <div class="wtitle">Interactive — drift monitor simulator</div>
-    <div class="wsub">300 days of production. Top: per-feature PSI against the training reference, with your alert threshold. Bottom: true model accuracy (thin) vs what your dashboard shows (thick) — delayed by label lag. Inject a failure and see which alarm fires first.</div>
+    <div class="wtitle">Quantized weight-artifact calculator</div>
+    <div class="wsub">Exact byte accounting for the entered dense-payload and group-metadata assumptions. It deliberately makes no latency claim.</div>
   </div>
   <div class="widget-body">
-    <div class="tabs" data-tabgroup="dr">
-      <button data-tab="ok" class="active">Healthy</button>
-      <button data-tab="cov">Covariate drift (gradual)</button>
-      <button data-tab="con">Concept drift (sudden)</button>
-      <button data-tab="brk">Pipeline break</button>
-    </div>
     <div class="controls">
-      <label>Label lag <input type="range" id="dr-lag" min="0" max="45" step="5" value="15"><span class="val" id="dr-lag-v"></span></label>
-      <label>PSI alert threshold <input type="range" id="dr-th" min="0.05" max="0.6" step="0.05" value="0.2"><span class="val" id="dr-th-v"></span></label>
+      <label for="opt-params">Original parameters (B) <input id="opt-params" type="number" min="0.001" step="any" value="7" inputmode="decimal"></label>
+      <label for="opt-retained">Deployed parameter count (%) <input id="opt-retained" type="number" min="0.001" max="100" step="any" value="100" inputmode="decimal"></label>
+      <label for="opt-bits">Weight payload
+        <select id="opt-bits"><option value="16">16 bit</option><option value="8">8 bit</option><option value="4" selected>4 bit</option></select>
+      </label>
+      <label for="opt-group">Weights/metadata group <input id="opt-group" type="number" min="1" step="1" value="64" inputmode="numeric"></label>
+      <label for="opt-meta">Metadata bytes/group <input id="opt-meta" type="number" min="0" step="any" value="2" inputmode="decimal"></label>
     </div>
-    <canvas id="dr-psi" width="760" height="170"></canvas>
-    <canvas id="dr-acc" width="760" height="180"></canvas>
-    <div class="readout" id="dr-readout"></div>
-    <p class="wcaption">
-      Things to try: (1) Covariate drift: PSI climbs as the feature distribution slides — the input
-      monitor fires days before any label arrives. This is why unlabeled monitoring exists.
-      (2) Concept drift: PSI stays flat <em>forever</em> — inputs never changed — while true
-      accuracy has already fallen; your dashboard finds out one label-lag later. Slide the lag to
-      45 days and feel the exposure. (3) Pipeline break: PSI leaps in a day (one bin swallows the
-      null-imputed values). Fast, loud, and the reason data tests run on every batch.
-    </p>
+    <div class="tiles">
+      <div class="tile"><div class="tv" id="opt-baseline">—</div><div class="tl">original FP16 weights</div></div>
+      <div class="tile"><div class="tv" id="opt-payload">—</div><div class="tl">deployed payload</div></div>
+      <div class="tile"><div class="tv" id="opt-metadata">—</div><div class="tl">scale/zero metadata</div></div>
+      <div class="tile"><div class="tv" id="opt-total">—</div><div class="tl">estimated artifact total</div></div>
+      <div class="tile"><div class="tv" id="opt-ratio">—</div><div class="tl">compression vs FP16</div></div>
+    </div>
+    <div class="readout" id="opt-readout" role="status" aria-live="polite"></div>
+    <p class="wcaption">Set a smaller deployed parameter percentage only for a genuinely smaller dense student/structured model. Unstructured zero weights remain dense unless a sparse encoding and matching runtime are actually used.</p>
+  </div>
+</div>
+
+<h3>Pruning — distinguish zeros, storage sparsity, and executable speedup</h3>
+<p>
+  Unstructured pruning sets individual weights to zero. It may reduce compressible storage, but a
+  dense tensor and dense kernel still execute the same shape. Sparse formats need indices and a
+  supported sparsity pattern; their overhead can dominate small or irregular tensors. Structured
+  pruning removes channels, neurons, heads, blocks, or layers, changing dense shapes that ordinary
+  kernels can exploit, but it may damage quality more per removed parameter.
+</p>
+<p>
+  Measure layer sensitivity, prune gradually, fine-tune, and export the actual smaller or sparse
+  representation. “90% sparsity” is not “10× lower latency.” Report payload size, encoded size,
+  realized kernel speed, end-to-end p99, and accuracy separately.
+</p>
+
+<h3>Distillation — train a smaller student from labels and teacher behavior</h3>
+<p>
+  With teacher and student temperature-\(T\) distributions \(p_t^T,p_s^T\), one common objective is
+  $$
+    L=\alpha\,\mathrm{CE}(y,p_s)+(1-\alpha)T^2
+      D_{\mathrm{KL}}\!\left(p_t^T\Vert p_s^T\right).
+  $$
+  Temperature softens logits so relative probabilities expose similarities between classes.
+  Distillation can also match hidden states or task-specific outputs. It requires a new training
+  and evaluation job; the student can inherit teacher errors and may fail differently on rare
+  slices. A smaller architecture is the source of deployability, not the word “distillation.”
+</p>
+
+<h3>Compilation, ONNX, and TensorRT — representation is not a speed guarantee</h3>
+<p>
+  ONNX is a versioned intermediate representation and operator-set ecosystem for exchanging model
+  graphs. A compatible runtime may perform graph rewrites and dispatch subgraphs to execution
+  providers. Export can fail or change behavior because of unsupported/custom operators, operator
+  version semantics, control flow, dynamic shapes, or preprocessing outside the graph.
+</p>
+<p>
+  TensorRT is NVIDIA's GPU inference optimizer/runtime. Its build phase selects tactics and produces
+  a hardware/runtime-specific engine; dynamic dimensions require supported ranges and optimization
+  profiles. Precision choices and different accumulation orders need accuracy checks, and engines
+  have compatibility constraints. ONNX export and TensorRT compilation are steps in a measured
+  deployment pipeline, not synonyms and not guarantees of unchanged predictions or fixed speedup.
+</p>
+
+<h3>Compose optimizations — change one uncertainty at a time</h3>
+<div class="tablewrap"><table>
+  <thead><tr><th scope="col">Constraint</th><th scope="col">Promising first experiment</th><th scope="col">Evidence before promotion</th></tr></thead>
+  <tbody>
+    <tr><td>Weight memory / bandwidth</td><td>Weight-only PTQ with appropriate group/channel scales</td><td>Artifact ledger, kernel support, slice quality, end-to-end load test.</td></tr>
+    <tr><td>Activation memory / integer throughput</td><td>Static or dynamic activation quantization</td><td>Representative calibration, saturation analysis, operator coverage.</td></tr>
+    <tr><td>Dense compute</td><td>Smaller student or structured pruning</td><td>Actual exported shapes, retrained quality, measured kernels and p99.</td></tr>
+    <tr><td>Kernel launch / graph overhead</td><td>Graph compilation and fusion</td><td>Supported shapes/operators, numerical parity, cold build/start behavior.</td></tr>
+    <tr><td>Several constraints</td><td>Compose after isolated baselines</td><td>Ablations reveal which transformation caused a regression.</td></tr>
+  </tbody>
+</table></div>
+<pre><code>measure reference by input shape, batch, slice, and percentile
+apply one transformation to one immutable candidate
+compare outputs and task/calibration metrics against reference tolerances
+benchmark warm and cold end-to-end serving on target hardware
+test unsupported shapes, fallback paths, memory, and concurrency
+record tool/opset/engine versions and promote progressively</code></pre>
+
+<h2>13.4 Monitoring — drift, label lag, and the metrics pyramid</h2>
+
+<h3>The metrics pyramid — connect fast proxies to delayed outcomes</h3>
+<div class="tablewrap"><table>
+  <thead><tr><th scope="col">Layer</th><th scope="col">Signals</th><th scope="col">Typical detection delay</th><th scope="col">What it cannot prove alone</th></tr></thead>
+  <tbody>
+    <tr><td>System</td><td>Traffic, errors, latency percentiles, saturation, queue, retries</td><td>Seconds–minutes</td><td>Whether predictions are useful or fair.</td></tr>
+    <tr><td>Data</td><td>Schema, units, missingness, freshness, category rates, distributions</td><td>Minutes–hours</td><td>Concept drift or outcome quality without labels.</td></tr>
+    <tr><td>Prediction</td><td>Score/class distribution, confidence, abstention, calibration proxy</td><td>Minutes–hours</td><td>True accuracy when labels are absent.</td></tr>
+    <tr><td>Outcome/model</td><td>Loss, AUC, precision/recall, calibration, slice metrics</td><td>Label-dependent</td><td>Causality if treatment changes who is labeled.</td></tr>
+    <tr><td>Business and harm</td><td>Conversion, fraud loss, complaints, appeals, adverse events</td><td>Hours–months</td><td>Attribution without an experimental or causal design.</td></tr>
+  </tbody>
+</table></div>
+<p>
+  Define each SLI's population, event time, processing time, aggregation window, release cohort, and
+  minimum sample size. Track the model and feature versions with every prediction so an alert can be
+  localized. Alerts need severity, owner, runbook, deduplication/cooldown, and an action; otherwise a
+  dashboard becomes decoration.
+</p>
+
+<h3>Drift taxonomy — separate observable changes from causal claims</h3>
+<ul>
+  <li><strong>Data drift:</strong> \(P(X)\) changes. It is observable without outcome labels. <em>Covariate shift</em> is the narrower setting that additionally assumes \(P(Y\mid X)\) stays stable.</li>
+  <li><strong>Concept drift:</strong> \(P(Y\mid X)\) changes. Stable inputs do not rule it out; labels or justified outcome proxies are needed.</li>
+  <li><strong>Label/prior shift:</strong> \(P(Y)\) changes, sometimes with more specific conditional assumptions. It is not interchangeable with every concept shift.</li>
+  <li><strong>Data-quality failure:</strong> a contract or pipeline breaks—units, nulls, joins, timestamps, stuck sensors. It can create apparent drift and should be repaired, not learned.</li>
+  <li><strong>Performance degradation:</strong> an outcome metric worsens. Causes include drift, bugs, policy/threshold changes, serving errors, label-pipeline changes, and selection effects.</li>
+</ul>
+<p>
+  A detector identifies a statistical difference under its sampling assumptions; it does not name
+  the cause or prescribe retraining. Compare seasonal/segment-matched baselines and investigate
+  upstream changes before teaching the model to absorb a data bug.
+</p>
+
+<h3>Drift metrics — PSI is binned evidence, not a universal traffic light</h3>
+<p>
+  For reference proportions \(p_i\) and current proportions \(q_i\) over identical bins,
+  $$
+    \mathrm{PSI}=\sum_i(p_i-q_i)\ln\frac{p_i}{q_i}
+    =D_{\mathrm{KL}}(p\Vert q)+D_{\mathrm{KL}}(q\Vert p).
+  $$
+  This is the binned Jeffreys divergence. It is symmetric but not a metric; zero bins require a
+  documented smoothing rule. The result depends on binning, sample size, segmentation, and the
+  baseline. Conventional cutoffs such as 0.1 or 0.25 are domain heuristics, not significance levels.
+</p>
+<div class="box note">
+  <div class="box-title">Worked PSI calculation</div>
+  <p>
+    Reference proportions \((0.4,0.3,0.2,0.1)\) and live proportions
+    \((0.2,0.3,0.3,0.2)\) give
+    \(0.2\ln2+0+(-0.1)\ln(2/3)+(-0.1)\ln(1/2)\approx0.2485\).
+    That localizes contributions by bin but does not prove performance loss. Inspect counts,
+    uncertainty, seasonality, feature semantics, and outcome metrics.
+  </p>
+</div>
+<p>
+  Alternatives include KS for one-dimensional continuous distributions, chi-square/category tests,
+  Wasserstein distance, maximum mean discrepancy, and classifier two-sample tests. Multiple features
+  and repeated windows create multiple-testing and alert-fatigue problems; monitor effect size and
+  persistence as well as a p-value.
+</p>
+
+<h3>Label lag and performance — align prediction cohorts with mature outcomes</h3>
+<p>
+  At day \(t\), labels may describe predictions made at \(t-\ell\), where \(\ell\) is the label
+  delay. Plot metrics by <em>prediction cohort</em> and outcome maturity; otherwise a current model
+  can be blamed for an old model's outcomes. Censoring matters: unresolved loans or patients are not
+  negative outcomes, and only some decisions may ever receive a label.
+</p>
+<p>
+  During the blind window, use fast proxies—data contracts, score distributions, disagreement with a
+  shadow reference, human-review samples—but name them as proxies. Also monitor label arrival rate,
+  join success, class balance, and definition version: a broken label pipeline can look exactly like
+  sudden performance collapse.
+</p>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Drift and label-lag scenario lab</div>
+    <div class="wsub">Compare a fast input signal with delayed measured accuracy. Synthetic paths illustrate observability limits; they are not calibrated failure probabilities.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label for="dr-scenario">Scenario
+        <select id="dr-scenario">
+          <option value="healthy">healthy</option>
+          <option value="covariate">gradual data drift</option>
+          <option value="concept">sudden concept drift</option>
+          <option value="quality">pipeline/unit failure</option>
+        </select>
+      </label>
+      <label for="dr-lag">Label lag
+        <input id="dr-lag" type="range" min="0" max="45" step="5" value="15">
+        <span class="val" id="dr-lag-v"></span>
+      </label>
+      <label for="dr-th">Illustrative PSI threshold
+        <input id="dr-th" type="range" min="0.05" max="0.60" step="0.05" value="0.20">
+        <span class="val" id="dr-th-v"></span>
+      </label>
+    </div>
+    <div class="tiles">
+      <div class="tile"><div class="tv" id="dr-psi-now">—</div><div class="tl">latest synthetic PSI</div></div>
+      <div class="tile"><div class="tv" id="dr-psi-alert">—</div><div class="tl">first PSI alert day</div></div>
+      <div class="tile"><div class="tv" id="dr-quality-alert">—</div><div class="tl">first visible quality alert</div></div>
+    </div>
+    <canvas id="dr-psi" width="760" height="190" role="img" aria-label="Synthetic input drift signal over time">Synthetic PSI timeline; the latest value and alert day are reported in the live text below.</canvas>
+    <canvas id="dr-acc" width="760" height="210" role="img" aria-label="Synthetic true and label-delayed accuracy over time">True and label-delayed accuracy timeline; the visible quality-alert day is reported in the live text below.</canvas>
+    <div class="readout" id="dr-readout" role="status" aria-live="polite"></div>
+    <p class="wcaption">The input alert compares one synthetic feature to a fixed baseline. Production needs sampling uncertainty, segment/season baselines, contract checks, and multiple-feature alert policy.</p>
   </div>
 </div>
 
 <h2>13.5 Progressive delivery — shadow, canary, A/B</h2>
+
+<h3>The delivery ladder — each method answers a different question</h3>
+<div class="tablewrap"><table>
+  <thead><tr><th scope="col">Method</th><th scope="col">Routing and user effect</th><th scope="col">Best evidence</th><th scope="col">Important limitation</th></tr></thead>
+  <tbody>
+    <tr><td>Shadow / dark launch</td><td>Mirror live inputs; incumbent response remains authoritative</td><td>Compatibility, latency, errors, disagreement, real-input distributions</td><td>No causal user response; mirrored sensitive data, compute, and accidental side effects still create risk.</td></tr>
+    <tr><td>Canary</td><td>Candidate serves a bounded real cohort</td><td>Safety, stability, latency, and quality guardrails under real interaction/load</td><td>A canary cohort may be too small or non-random for a business-effect conclusion.</td></tr>
+    <tr><td>A/B experiment</td><td>Randomized units receive control or treatment</td><td>Causal effect on pre-specified outcomes under experimental assumptions</td><td>Needs power, stable assignment, interference checks, time, and ethical/operational eligibility.</td></tr>
+  </tbody>
+</table></div>
 <p>
-  Never swap 100% of traffic to a new model. The standard ladder:
-</p>
-<ul>
-  <li><strong>Shadow (dark launch):</strong> the new model receives a copy of live traffic; its
-  answers are logged and <em>discarded</em>. Zero user risk. Validates latency, error rate, and
-  output distributions on real inputs — but can't measure anything requiring user reaction.</li>
-  <li><strong>Canary:</strong> route a small slice (1–10%) of real users to the new model, watch
-  <em>guardrail metrics</em> (errors, latency, complaint rate, prediction sanity), and auto-rollback
-  on breach. Catches what shadow can't: real feedback, real load interactions.</li>
-  <li><strong>A/B test:</strong> a controlled experiment (Topic 2's hypothesis testing, alive and
-  billing you): randomize users into arms, run to a pre-registered sample size, compare the
-  <em>business</em> metric. The only rung that answers "is the new model actually better for
-  users?" — noisier and slower than offline eval, and the final word.</li>
-</ul>
-<p>
-  The three answer different questions — <em>does it run</em> (shadow), <em>does it break anyone</em>
-  (canary), <em>does it win</em> (A/B) — and mature teams run all three in sequence. Rollback must
-  be one command, which is what the registry's version pinning bought you.
+  Teams may use one, two, or all three depending on risk and measurability. Shadow outputs must be
+  prevented from calling side-effecting downstream systems. Canary rollback triggers should be
+  predeclared and compared by release cohort. A/B assignment is usually by persistent user/entity,
+  not request, to avoid cross-arm contamination.
 </p>
 
-<h2>13.6 Incident triage — reading the dashboard</h2>
+<h3>A/B design — choose the effect and sample before watching the result</h3>
 <p>
-  The exam's favorite format for this topic: here are six signals, what broke? The method is
-  correlation-and-elimination: <em>what moved together, what stayed flat, and what changed at that
-  timestamp</em> (deploys are the prime suspect — check the deploy log first). Latency moving
-  without error/drift points at infrastructure; quality moving without latency points at data or
-  concept; everything moving at a timestamp points at a deploy. Practice below.
+  For two independent proportions \(p_0,p_1\), a common normal-approximation sample-size formula is
+  $$
+  n\approx
+  \frac{\left[
+    z_{1-\alpha/2}\sqrt{2\bar p(1-\bar p)}
+    +z_{1-\beta}\sqrt{p_0(1-p_0)+p_1(1-p_1)}
+  \right]^2}{(p_1-p_0)^2},
+  \qquad \bar p=\frac{p_0+p_1}{2}.
+  $$
+  With baseline 10%, minimum detectable absolute lift 1 percentage point, two-sided
+  \(\alpha=0.05\), and 80% power, this gives about 14,750 observations per arm. The approximation
+  assumes independent units and fixed-horizon analysis.
+</p>
+<p>
+  Pre-register the primary metric, guardrails, randomization unit, eligibility, duration, analysis,
+  and stopping rule. Check sample-ratio mismatch, novelty and day-of-week effects, missing outcomes,
+  interference, multiple metrics, and repeated peeking. Statistical significance is not practical
+  importance, and business uplift does not waive safety or fairness guardrails.
 </p>
 
 <div class="widget">
   <div class="widget-head">
-    <div class="wtitle">Interactive — incident triage trainer</div>
-    <div class="wsub">Four real-world-shaped incidents. Read the dashboard, form a hypothesis, commit to a diagnosis. The explanation shows the reasoning chain a senior engineer would run.</div>
+    <div class="wtitle">Two-proportion A/B planning calculator</div>
+    <div class="wsub">Approximate fixed-horizon sample size for equal arms. Increase the plan for clustering, attrition, multiple tests, sequential monitoring, or noncompliance.</div>
   </div>
   <div class="widget-body">
-    <div class="tabs" data-tabgroup="tr">
-      <button data-tab="0" class="active">Case 1</button>
-      <button data-tab="1">Case 2</button>
-      <button data-tab="2">Case 3</button>
-      <button data-tab="3">Case 4</button>
+    <div class="controls">
+      <label for="ab-base">Baseline conversion (%) <input id="ab-base" type="number" min="0.001" max="99.999" step="any" value="10" inputmode="decimal"></label>
+      <label for="ab-mde">Absolute MDE (percentage points) <input id="ab-mde" type="number" min="0.001" max="99" step="any" value="1" inputmode="decimal"></label>
+      <label for="ab-confidence">Two-sided confidence
+        <select id="ab-confidence"><option value="1.645">90%</option><option value="1.96" selected>95%</option><option value="2.576">99%</option></select>
+      </label>
+      <label for="ab-power">Power
+        <select id="ab-power"><option value="0.842" selected>80%</option><option value="1.282">90%</option></select>
+      </label>
+      <label for="ab-traffic">Eligible units/day <input id="ab-traffic" type="number" min="1" step="1" value="100000" inputmode="numeric"></label>
+      <label for="ab-exposure">Traffic in experiment (%) <input id="ab-exposure" type="number" min="0.001" max="100" step="any" value="20" inputmode="decimal"></label>
+    </div>
+    <div class="tiles">
+      <div class="tile"><div class="tv" id="ab-per-arm">—</div><div class="tl">approx units / arm</div></div>
+      <div class="tile"><div class="tv" id="ab-total">—</div><div class="tl">approx total units</div></div>
+      <div class="tile"><div class="tv" id="ab-days">—</div><div class="tl">minimum collection days</div></div>
+    </div>
+    <div class="readout" id="ab-readout" role="status" aria-live="polite"></div>
+  </div>
+</div>
+
+<h2>13.6 Incident triage — reading the dashboard</h2>
+
+<h3>Triage workflow — contain harm, preserve evidence, then explain</h3>
+<ol>
+  <li><strong>Declare and scope:</strong> user impact, affected release/region/slice, start time, severity, incident lead.</li>
+  <li><strong>Contain:</strong> stop rollout, shed load, disable unsafe automation, or roll back only when the path is known compatible.</li>
+  <li><strong>Build a timeline:</strong> deploys, data/schema changes, traffic, dependency events, and first signal movement.</li>
+  <li><strong>Compare cohorts:</strong> candidate versus incumbent, region, shape/length, feature version, and control traffic.</li>
+  <li><strong>Test hypotheses:</strong> seek a discriminating signal; do not change several variables at once.</li>
+  <li><strong>Recover and verify:</strong> watch user-impact SLIs, queues, labels, and delayed consequences—not only process health.</li>
+  <li><strong>Learn:</strong> blameless timeline, root and contributing causes, detection gap, owner and due date for corrective actions.</li>
+</ol>
+<p>
+  Preserve request IDs, release/feature/model versions, traces, sampled inputs under privacy rules,
+  predictions, and rollback decisions. Do not “fix” an incident by deleting the evidence needed to
+  understand it.
+</p>
+
+<h3>Signal patterns — use timing and contrasts, not one metric in isolation</h3>
+<div class="tablewrap"><table>
+  <thead><tr><th scope="col">Pattern</th><th scope="col">Strong hypotheses</th><th scope="col">Next discriminating check</th></tr></thead>
+  <tbody>
+    <tr><td>Latency and queue rise; traffic/saturation rise; drift flat</td><td>Capacity, slow dependency, request-shape change, retry amplification</td><td>Service-time by shape, dependency spans, retry rate, incumbent cohort.</td></tr>
+    <tr><td>Errors jump exactly at release; control healthy</td><td>Artifact/config incompatibility</td><td>Canary versus control diff, signature/operator/version log, safe rollback.</td></tr>
+    <tr><td>One feature shifts with units/null/category change</td><td>Data-quality or producer change</td><td>Schema/contract version, raw samples, upstream deploy; quarantine before retraining.</td></tr>
+    <tr><td>Inputs stable; mature quality falls</td><td>Concept/policy change—or label pipeline failure</td><td>Label completeness/definition/join first, then segmented outcomes.</td></tr>
+    <tr><td>Only long-input canary requests OOM</td><td>Batch/shape memory regression</td><td>Memory by length and concurrency, caps/bucketing, candidate versus control.</td></tr>
+  </tbody>
+</table></div>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Incident triage trainer</div>
+    <div class="wsub">Read the timestamped signals, choose one diagnosis/action, then inspect the discriminating evidence and containment step.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label for="tr-case">Incident case
+        <select id="tr-case">
+          <option value="0">1 · tokenizer release</option>
+          <option value="1">2 · queue overload</option>
+          <option value="2">3 · feature unit change</option>
+          <option value="3">4 · delayed quality alarm</option>
+          <option value="4">5 · canary long-input OOM</option>
+        </select>
+      </label>
     </div>
     <div id="tr-body"></div>
+    <div id="tr-status" class="readout" role="status" aria-live="polite"></div>
   </div>
 </div>
 
 <div class="box jargon">
   <div class="box-title">Jargon decoder</div>
   <dl>
-    <dt>training–serving skew</dt><dd>The serving path computes features/preprocessing differently from the training path; offline metrics stop predicting online behavior.</dd>
-    <dt>validation gate</dt><dd>Automated promotion criterion: candidate beats incumbent on holdout + slices + latency, or it doesn't ship.</dd>
-    <dt>model registry / lineage</dt><dd>Versioned catalog of models with their data hash, code commit, params, metrics, and stage — the audit trail and the rollback lever.</dd>
-    <dt>PSI</dt><dd>Population stability index — symmetrized-KL distance between training and live feature distributions; &gt;0.25 ≈ investigate.</dd>
-    <dt>label lag</dt><dd>Delay between a prediction and learning its true outcome; the blind window during which only proxy metrics exist.</dd>
-    <dt>shadow / canary</dt><dd>New model sees mirrored traffic, answers discarded / new model serves a small % of real users behind guardrail metrics.</dd>
-    <dt>PTQ / QAT</dt><dd>Post-training quantization (calibrate, convert) vs quantization-aware training (learn with simulated rounding).</dd>
-    <dt>dynamic batching</dt><dd>Serving trick: hold requests a few ms to batch them through the GPU; trades a little latency for a lot of throughput.</dd>
-    <dt>ONNX / TensorRT</dt><dd>A portable model-graph format / NVIDIA's compiler that fuses and optimizes it for specific GPUs.</dd>
-    <dt>guardrail metric</dt><dd>A metric a rollout must not damage (latency, errors, complaints) — monitored with auto-rollback during canary.</dd>
+    <dt>Train/serve skew</dt><dd>A mismatch in feature, preprocessing, freshness, or point-in-time semantics between learning and prediction.</dd>
+    <dt>Champion/challenger</dt><dd>The incumbent production version and a candidate evaluated against it under defined gates.</dd>
+    <dt>Dynamic batching</dt><dd>Wait briefly to combine compatible requests, bounded by size and time/deadline.</dd>
+    <dt>PTQ / QAT</dt><dd>Convert after training / train with simulated quantization effects.</dd>
+    <dt>PSI</dt><dd>A binned symmetric divergence between reference and current proportions; sensitive to bins, zeros, sample, and baseline.</dd>
+    <dt>Label lag</dt><dd>Delay and censoring between prediction time and trustworthy outcome availability.</dd>
+    <dt>Shadow / canary</dt><dd>Mirrored non-authoritative inference / a bounded real cohort served by the candidate.</dd>
+    <dt>Sample-ratio mismatch</dt><dd>Observed experimental allocation differs unexpectedly from the randomized design, often indicating instrumentation or eligibility bias.</dd>
   </dl>
 </div>
 
 <h2>Self-check</h2>
-<div class="quiz" data-answer="c">
-  <p class="quiz-q">1. A weekly automated retraining pipeline produces a candidate that scores worse than the production model on the golden holdout. A correctly designed system will:</p>
-  <div class="opts">
-    <button data-opt="a">deploy it anyway — fresher data always wins</button>
-    <button data-opt="b">page the on-call engineer to decide manually every week</button>
-    <button data-opt="c">block promotion at the validation gate, keep the incumbent serving, log the failure for investigation</button>
-    <button data-opt="d">average the two models' weights</button>
-  </div>
-  <div class="quiz-exp"><strong>c.</strong> Automation retrains; gates promote. A worse-than-incumbent candidate shipping automatically is the signature failure of "level 2 pipeline, level 0 governance." Repeated gate failures are themselves a signal — often upstream data drift.</div>
-</div>
 <div class="quiz" data-answer="b">
-  <p class="quiz-q">2. A fraud model's precision decays over three months. Per-feature PSI: all &lt; 0.08. Latency and error rates: flat. Most likely:</p>
+  <p class="quiz-q">1. Offline quality is strong, but the deployed model saturates its probabilities. Training used cart value in dollars while serving sends cents. What is the most precise diagnosis and control?</p>
   <div class="opts">
-    <button data-opt="a">covariate drift — the inputs have shifted</button>
-    <button data-opt="b">concept drift — fraudsters changed tactics, so P(y|x) moved while P(x) didn't; only labeled outcomes can catch it</button>
-    <button data-opt="c">a data-quality failure in the feature pipeline</button>
-    <button data-opt="d">the monitoring system is broken</button>
+    <button data-opt="a">Concept drift; retrain on more historical data.</button>
+    <button data-opt="b">Train/serve semantic skew; enforce unit contracts and replay identical entity-time examples through both paths.</button>
+    <button data-opt="c">Queue overload; add replicas.</button>
+    <button data-opt="d">Data drift; lower the PSI threshold.</button>
   </div>
-  <div class="quiz-exp"><strong>b.</strong> Flat PSI rules out (a) and (c) — those move input distributions. Adversarial domains are concept-drift machines: the opponents' whole job is changing P(y|x) while staying inside normal-looking P(x). Defense: short retraining cadence and fast label collection.</div>
+  <div class="quiz-exp"><strong>b.</strong> The numeric type is valid but its meaning changed by 100×. Unit metadata and parity replay target this failure; retraining on the same dollar convention does not.</div>
 </div>
 <div class="quiz" data-answer="d">
-  <p class="quiz-q">3. Product wants personalized "weekly picks" emails, sent Mondays, for 40M users. The right serving pattern:</p>
+  <p class="quiz-q">2. A scheduled retraining job produces a candidate after a drift alert. What should happen next?</p>
   <div class="opts">
-    <button data-opt="a">real-time GPU service with autoscaling for the Monday spike</button>
-    <button data-opt="b">streaming inference over the click event stream</button>
-    <button data-opt="c">an LLM agent that composes each email on demand</button>
-    <button data-opt="d">batch: score all users over the weekend on cheap capacity, store results, mail-merge Monday</button>
+    <button data-opt="a">Replace production automatically because fresh data is always better.</button>
+    <button data-opt="b">Promote if overall accuracy rises, ignoring slices and serving tests.</button>
+    <button data-opt="c">Retrain repeatedly until one candidate passes by chance.</button>
+    <button data-opt="d">Freeze lineage, validate data/labels, run predeclared model and serving gates, approve, then release progressively.</button>
   </div>
-  <div class="quiz-exp"><strong>d.</strong> Predictions are needed at a known time, inputs exist in advance, staleness of hours is irrelevant — the definition of a batch workload. Choosing real-time here burns 10–100× the cost for zero user benefit. Pattern-matching workload to serving mode is a straight exam points.</div>
+  <div class="quiz-exp"><strong>d.</strong> Continuous training automates candidate creation. It does not turn a drift detector into a diagnosis or waive independent promotion evidence.</div>
 </div>
 <div class="quiz" data-answer="a">
-  <p class="quiz-q">4. INT8 post-training quantization drops your model's accuracy 4 points — too much. Reasonable next steps, in order:</p>
+  <p class="quiz-q">3. Which registry record best supports reproducibility and rollback?</p>
   <div class="opts">
-    <button data-opt="a">better calibration data and per-channel scales; if still bad, quantization-aware training; if still bad, keep sensitive layers in FP16</button>
-    <button data-opt="b">abandon quantization — it never works for this architecture</button>
-    <button data-opt="c">quantize to INT4 instead, since more compression amortizes the loss</button>
-    <button data-opt="d">retrain the model from scratch at INT8 precision only</button>
+    <button data-opt="a">Immutable model, tokenizer, feature, data, code, environment, calibration, threshold, engine, evaluation, approval, and compatibility versions</button>
+    <button data-opt="b">Only a filename such as final_model_v7.bin</button>
+    <button data-opt="c">Only the training AUC and author name</button>
+    <button data-opt="d">The latest branch and a mutable SQL query</button>
   </div>
-  <div class="quiz-exp"><strong>a.</strong> The escalation ladder: PTQ's failure is usually scale granularity (outlier channels — common in LLMs), fixed per-channel or by mixed-precision fallback for the worst layers; QAT is the heavier hammer. (c) increases the error; (b) and (d) are overreactions.</div>
+  <div class="quiz-exp"><strong>a.</strong> Weights alone do not define behavior. Rollback also needs compatible preprocessing, runtime, interfaces, and state.</div>
+</div>
+<div class="quiz" data-answer="c">
+  <p class="quiz-q">4. A full batch of 8 takes \(6+1.2(8)=15.6\) ms. Which statement is correct?</p>
+  <div class="opts">
+    <button data-opt="a">Capacity is 64.1 requests/s because a batch counts as one request.</button>
+    <button data-opt="b">At exactly capacity, an infinite-horizon queue is guaranteed stable.</button>
+    <button data-opt="c">Ideal full-batch capacity is about 512.8 requests/s, but p99 still depends on arrivals, batching wait, shapes, and service variability.</button>
+    <button data-opt="d">Dynamic batching can only lower both latency and throughput.</button>
+  </div>
+  <div class="quiz-exp"><strong>c.</strong> \(1000\times8/15.6=512.8\). Capacity arithmetic is not a tail-latency model, and stable operation needs headroom.</div>
+</div>
+<div class="quiz" data-answer="b">
+  <p class="quiz-q">5. Which inference-optimization claim is technically sound?</p>
+  <div class="opts">
+    <button data-opt="a">INT4 weights guarantee fourfold end-to-end speedup.</button>
+    <button data-opt="b">Quantization can reduce payload, but scales, casts, operator support, hardware, calibration, and quality determine realized memory and speed.</button>
+    <button data-opt="c">Unstructured 90% zeros always give 10× dense-kernel throughput.</button>
+    <button data-opt="d">ONNX conversion guarantees numerically identical TensorRT output on every shape.</button>
+  </div>
+  <div class="quiz-exp"><strong>b.</strong> Payload arithmetic is only one layer. Metadata, representation, runtime kernels, supported shapes, and numerical effects require measurement.</div>
+</div>
+<div class="quiz" data-answer="c">
+  <p class="quiz-q">6. Reference bins are \((0.4,0.3,0.2,0.1)\), live bins \((0.2,0.3,0.3,0.2)\). What is the best PSI interpretation?</p>
+  <div class="opts">
+    <button data-opt="a">PSI is 0, because both vectors sum to 1.</button>
+    <button data-opt="b">PSI is a p-value proving concept drift.</button>
+    <button data-opt="c">PSI is about 0.2485 for these bins; investigate context, counts, binning, and outcomes rather than treating a cutoff as universal.</button>
+    <button data-opt="d">PSI directly measures accuracy loss.</button>
+  </div>
+  <div class="quiz-exp"><strong>c.</strong> Summing \((p_i-q_i)\ln(p_i/q_i)\) gives about 0.2485. It is binned distribution evidence, not a causal or performance conclusion.</div>
+</div>
+<div class="quiz" data-answer="d">
+  <p class="quiz-q">7. Input distributions remain stable, but correctly joined mature labels show recall falling for new prediction cohorts. Which statement is strongest?</p>
+  <div class="opts">
+    <button data-opt="a">Stable \(P(X)\) proves the model is healthy.</button>
+    <button data-opt="b">PSI must have been computed incorrectly.</button>
+    <button data-opt="c">It is a data-quality failure by definition.</button>
+    <button data-opt="d">Concept or policy change is plausible because \(P(Y\mid X)\) can move while \(P(X)\) stays stable; investigate segmented outcomes and changes.</button>
+  </div>
+  <div class="quiz-exp"><strong>d.</strong> Input-only monitors cannot rule out concept drift. The premise says the label join was checked, removing one important alternative cause.</div>
+</div>
+<div class="quiz" data-answer="a">
+  <p class="quiz-q">8. Which progressive-delivery statement is precise?</p>
+  <div class="opts">
+    <button data-opt="a">Shadow tests real-input compatibility without serving its answer, canary bounds real-user exposure, and randomized A/B estimates causal effect under assumptions.</button>
+    <button data-opt="b">Shadow has literally zero privacy, compute, or side-effect risk.</button>
+    <button data-opt="c">A non-random 1% canary always proves business uplift.</button>
+    <button data-opt="d">Every deployment must use all three methods in every context.</button>
+  </div>
+  <div class="quiz-exp"><strong>a.</strong> The methods answer different questions. Mirrored traffic still needs isolation and data governance; causal inference needs experimental discipline.</div>
+</div>
+<div class="quiz" data-answer="c">
+  <p class="quiz-q">9. A 10% baseline and 1-percentage-point MDE need roughly 14,750 independent units per arm at 95% two-sided confidence and 80% power. What else is essential?</p>
+  <div class="opts">
+    <button data-opt="a">Stop as soon as any metric becomes significant.</button>
+    <button data-opt="b">Randomize each request even if one user appears in both arms.</button>
+    <button data-opt="c">Predefine unit, eligibility, metrics, guardrails, duration/stopping, and handle clustering, missingness, interference, multiple looks, and sample-ratio mismatch.</button>
+    <button data-opt="d">Ignore practical effect size once the p-value is below 0.05.</button>
+  </div>
+  <div class="quiz-exp"><strong>c.</strong> The calculator is a planning approximation. Valid experiments require design, instrumentation, and analysis assumptions beyond the arithmetic.</div>
+</div>
+<div class="quiz" data-answer="b">
+  <p class="quiz-q">10. Reported AUC falls after a 30-day label lag, while input PSI is flat—but label completeness simultaneously drops from 96% to 41%. What is the best first action?</p>
+  <div class="opts">
+    <button data-opt="a">Declare concept drift and retrain immediately.</button>
+    <button data-opt="b">Contain decisions if needed and validate/repair the label definition, arrival, and join before interpreting AUC.</button>
+    <button data-opt="c">Raise the PSI threshold.</button>
+    <button data-opt="d">Add serving replicas.</button>
+  </div>
+  <div class="quiz-exp"><strong>b.</strong> Outcome monitoring is only as trustworthy as label coverage and semantics. Repair and replay the label pipeline before diagnosing the model.</div>
 </div>
 
 <h2>Go deeper</h2>
 <ul class="resources">
-  <li><a href="https://papers.nips.cc/paper_files/paper/2015/hash/86df7dcfd896fcaf2674f757a2463eba-Abstract.html">Sculley et al. — Hidden Technical Debt in Machine Learning Systems (NeurIPS 2015)</a><div class="rwhat">The founding document of MLOps: boundary erosion, pipeline jungles, undeclared consumers. Ten pages, read all of them.</div></li>
-  <li><a href="https://research.google/pubs/the-ml-test-score-a-rubric-for-ml-production-readiness-and-technical-debt-reduction/">Breck et al. — The ML Test Score (Google)</a><div class="rwhat">28 concrete tests for production readiness — data, model, infra, monitoring. Use it as a checklist on your own project.</div></li>
-  <li><a href="https://huyenchip.com/2022/02/07/data-distribution-shifts-and-monitoring.html">Chip Huyen — Data Distribution Shifts and Monitoring (free chapter-length post)</a><div class="rwhat">The drift taxonomy of §13.4 in depth; her book <em>Designing Machine Learning Systems</em> (O'Reilly 2022), Ch. 7–9, is the best single text for this topic.</div></li>
-  <li><a href="https://cloud.google.com/architecture/mlops-continuous-delivery-and-automation-pipelines-in-machine-learning">Google Cloud — MLOps: Continuous delivery and automation pipelines</a><div class="rwhat">The MLOps maturity levels (0/1/2) and the reference pipeline diagram behind §13.1.</div></li>
-  <li><a href="https://www.evidentlyai.com/ml-in-production/data-drift">Evidently AI — data drift guides</a><div class="rwhat">Practical PSI/KS/drift-detection walkthroughs with an open-source tool you can run on the widget's scenarios for real.</div></li>
-  <li><a href="https://madewithml.com/">Made With ML (free course)</a><div class="rwhat">End-to-end MLOps with actual code — testing, serving, CI/CD, monitoring; the lab companion to this page.</div></li>
-  <li><a href="https://arxiv.org/abs/1503.02531">Hinton et al. — Distilling the Knowledge in a Neural Network (2015)</a><div class="rwhat">§1–2 for dark knowledge and soft-label temperature; the origin of distillation.</div></li>
+  <li><a href="https://research.google/pubs/hidden-technical-debt-in-machine-learning-systems/">Sculley et al. — Hidden Technical Debt in Machine Learning Systems</a><div class="rwhat">Primary paper on feedback loops, undeclared consumers, pipeline jungles, and system-level ML debt.</div></li>
+  <li><a href="https://research.google/pubs/the-ml-test-score-a-rubric-for-ml-production-readiness-and-technical-debt-reduction/">Breck et al. — The ML Test Score</a><div class="rwhat">Primary production-readiness rubric spanning data, model, infrastructure, and monitoring tests.</div></li>
+  <li><a href="https://sre.google/sre-book/addressing-cascading-failures/">Google SRE Book — Addressing Cascading Failures</a><div class="rwhat">Primary operational guidance on overload, bounded queues, deadlines, retries, and load shedding.</div></li>
+  <li><a href="https://onnx.ai/onnx/repo-docs/IR.html">ONNX — Intermediate Representation specification</a><div class="rwhat">Official source for the graph, type, model, and operator-set representation.</div></li>
+  <li><a href="https://onnxruntime.ai/docs/performance/model-optimizations/quantization.html">ONNX Runtime — quantization documentation</a><div class="rwhat">Official PTQ/QDQ, static/dynamic scaling, calibration, debugging, operator, and hardware caveats.</div></li>
+  <li><a href="https://docs.nvidia.com/deeplearning/tensorrt/latest/">NVIDIA TensorRT documentation</a><div class="rwhat">Official engine build/runtime, precision, dynamic-shape profile, compatibility, and benchmarking material.</div></li>
+  <li><a href="https://arxiv.org/abs/1503.02531">Hinton, Vinyals, Dean — Distilling the Knowledge in a Neural Network</a><div class="rwhat">Primary distillation paper on temperature-softened teacher targets.</div></li>
+  <li><a href="https://arxiv.org/abs/2303.01227">Yurdakul and Naranjo — review of population stability procedures</a><div class="rwhat">Critical treatment of PSI and alternatives for population-stability monitoring.</div></li>
 </ul>
 
 <div class="page-footer"></div>
@@ -359,318 +859,749 @@
 
 <script>
 document.addEventListener("caie:ready", () => {
-  // ================== dynamic batching simulator ==================
-  (function () {
-    const canvas = document.getElementById("bt-canvas");
-    const tiles = document.getElementById("bt-tiles");
-    const readout = document.getElementById("bt-readout");
-    const A = 6, C = 1.2; // ms overhead, ms per request
-
-    function simulate(lam, B, W, durMs, seed) {
-      const rand = CAIE.rng(seed);
-      const arr = [];
-      let t = 0;
-      for (;;) {
-        t += -Math.log(1 - rand()) * 1000 / lam;
-        if (t > durMs) break;
-        arr.push(t);
-      }
-      if (!arr.length) return null;
-      const lat = [];
-      let free = 0, i = 0, busy = 0, lastEnd = 0;
-      while (i < arr.length) {
-        const first = Math.max(arr[i], free);
-        let start = first + W;
-        if (i + B - 1 < arr.length) start = Math.min(start, Math.max(free, arr[i + B - 1]));
-        start = Math.max(start, first);
-        let n = 0;
-        while (i + n < arr.length && arr[i + n] <= start && n < B) n++;
-        if (n === 0) { n = 1; start = Math.max(arr[i], free); }
-        const dur = A + C * n, end = start + dur;
-        for (let k = 0; k < n; k++) lat.push(end - arr[i + k]);
-        busy += dur; free = end; lastEnd = end; i += n;
-      }
-      lat.sort((x, y) => x - y);
-      const q = p => lat[Math.min(lat.length - 1, Math.floor(p * lat.length))];
-      return { p50: q(0.5), p99: q(0.99), thr: lat.length / (lastEnd / 1000), util: busy / lastEnd };
-    }
-
-    function tile(v, k) {
-      return '<div class="tile"><div class="tv">' + v + '</div><div class="tl">' + k + "</div></div>";
-    }
-    function ms(v) { return v >= 1000 ? (v / 1000).toFixed(1) + " s" : v.toFixed(1) + " ms"; }
-
-    function draw() {
-      const lam = +document.getElementById("bt-lam").value;
-      const B = Math.pow(2, +document.getElementById("bt-b").value);
-      const W = +document.getElementById("bt-w").value;
-      const cap = 1000 * B / (A + C * B);
-      const cur = simulate(lam, B, W, 20000, 11);
-      const unstable = lam > cap * 0.98;
-      tiles.innerHTML =
-        tile(ms(cur.p50), "p50 latency") +
-        tile(ms(cur.p99), "p99 latency") +
-        tile(cur.thr.toFixed(0) + "/s", "throughput") +
-        tile((100 * cur.util).toFixed(0) + "%", "GPU busy");
-      readout.innerHTML =
-        "capacity at batch " + B + ": <strong>" + cap.toFixed(0) + " req/s</strong> · load ρ = <strong>" +
-        (lam / cap).toFixed(2) + "</strong>" +
-        (unstable ? " — <strong>overloaded:</strong> the queue grows without bound; p99 is limited only by the simulation length"
-                  : lam / cap > 0.8 ? " — in the danger zone: tail latency is diverging" : " — stable");
-      // p99 vs offered load curve
-      const pal = CAIE.pal();
-      const maxW = Math.min(760, canvas.parentNode.clientWidth - 4);
-      const pts = [];
-      let ymaxv = 2;
-      for (let l = 25; l <= 600; l += 25) {
-        const s = simulate(l, B, W, 8000, 7);
-        const y = Math.log10(Math.max(s.p99, 1));
-        ymaxv = Math.max(ymaxv, y);
-        pts.push([l, y]);
-      }
-      const P = CAIE.plot(canvas, { w: maxW, h: 260, xmin: 0, xmax: 620, ymin: 0.6, ymax: ymaxv * 1.06 });
-      P.clear();
-      P.axes("offered load (req/s)", "p99 latency (log)", {
-        xticks: 6, xfmt: v => v.toFixed(0),
-        yticks: 4, yfmt: v => { const m = Math.pow(10, v); return m >= 1000 ? (m / 1000).toPrecision(2) + "s" : m.toPrecision(2) + "ms"; }
-      });
-      if (cap < 620) P.line([[cap, P.o.ymin], [cap, P.o.ymax]], pal.warning, 1.5);
-      P.line(pts, pal.s[0], 2.5);
-      P.dot(lam, Math.log10(Math.max(cur.p99, 1)), 5, pal.s[1], true);
-      if (cap < 560) P.label(cap, P.o.ymax - 0.12, "capacity", pal.warning, "left");
-    }
-    CAIE.bindQuiet("bt-lam", draw, v => v + " req/s");
-    CAIE.bindQuiet("bt-b", draw, v => Math.pow(2, v));
-    CAIE.bindQuiet("bt-w", draw, v => v + " ms");
-    CAIE.onTheme(draw);
-    window.addEventListener("resize", draw);
-    draw();
-  })();
-
-  // ================== drift monitor ==================
-  (function () {
-    const cPsi = document.getElementById("dr-psi");
-    const cAcc = document.getElementById("dr-acc");
-    const readout = document.getElementById("dr-readout");
-    const T = 300;
-    let scenario = "ok";
-
-    function erf(x) {
-      const s = x < 0 ? -1 : 1; x = Math.abs(x);
-      const t = 1 / (1 + 0.3275911 * x);
-      const y = 1 - ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x);
-      return s * y;
-    }
-    function cdf(x, mu, sg) {
-      if (x === Infinity) return 1;
-      if (x === -Infinity) return 0;
-      return 0.5 * (1 + erf((x - mu) / (sg * Math.SQRT2)));
-    }
-    const EDGES = [-Infinity, -3, -2.25, -1.5, -0.75, 0, 0.75, 1.5, 2.25, 3, Infinity];
-    const ZERO_BIN = 4; // (−0.75, 0]
-    function binProbs(mu, sg) {
-      const p = [];
-      for (let i = 0; i < EDGES.length - 1; i++) p.push(cdf(EDGES[i + 1], mu, sg) - cdf(EDGES[i], mu, sg));
-      return p;
-    }
-    const REF = binProbs(0, 1);
-    function psiOf(mu, sg, f) {
-      const base = binProbs(mu, sg);
-      let s = 0;
-      for (let i = 0; i < base.length; i++) {
-        const pa = Math.max((1 - f) * base[i] + (i === ZERO_BIN ? f : 0), 1e-4);
-        const pr = Math.max(REF[i], 1e-4);
-        s += (pa - pr) * Math.log(pa / pr);
-      }
-      return s;
-    }
-    // scenario → {mu(t), nullFrac(t), trueAcc(t), driftStart, story}
-    const SC = {
-      ok:  { mu: () => 0, f: () => 0, acc: () => 0.90, start: null },
-      cov: { mu: t => t < 120 ? 0 : Math.min(2.5, 2.5 * (t - 120) / 140), f: () => 0,
-             acc(t) { const m = this.mu(t); return 0.90 - 0.20 * Math.pow(m / 2.5, 1.5); }, start: 120 },
-      con: { mu: () => 0, f: () => 0, acc: t => t < 170 ? 0.90 : 0.62, start: 170 },
-      brk: { mu: () => 0, f: t => t < 200 ? 0 : 0.35, acc: t => t < 200 ? 0.90 : 0.70, start: 200 }
+  // ---------- conjunctive promotion gate ----------
+  (function topic13PromotionGate() {
+    const id = name => document.getElementById(name);
+    const el = {
+      incumbent: id("gate-inc"), candidate: id("gate-cand"), delta: id("gate-delta"),
+      slice: id("gate-slice"), sliceFloor: id("gate-slice-floor"),
+      p99: id("gate-p99"), p99Max: id("gate-p99-max"),
+      data: id("gate-data"), skew: id("gate-skew"), lineage: id("gate-lineage"),
+      recovery: id("gate-recovery"), result: id("gate-result"), passed: id("gate-passed"),
+      failed: id("gate-failed"), readout: id("gate-readout")
     };
-
-    function draw() {
-      const sc = SC[scenario];
-      const lag = +document.getElementById("dr-lag").value;
-      const th = +document.getElementById("dr-th").value;
-      const rand = CAIE.rng(42);
-      const psi = [], accTrue = [], accMeas = [];
-      for (let t = 0; t < T; t++) {
-        psi.push(Math.max(0, psiOf(sc.mu(t), 1, sc.f(t)) + 0.012 * rand()));
-        accTrue.push(sc.acc(t) + 0.010 * CAIE.gauss(rand));
-      }
-      for (let t = 0; t < T; t++) accMeas.push(t < lag ? null : accTrue[t - lag]);
-      let psiDay = null, accDay = null;
-      for (let t = 0; t < T; t++) { if (psi[t] > th) { psiDay = t; break; } }
-      for (let t = 0; t < T; t++) { if (accMeas[t] !== null && accMeas[t] < 0.85) { accDay = t; break; } }
-
-      const pal = CAIE.pal();
-      const maxW = Math.min(760, cPsi.parentNode.clientWidth - 4);
-      const ymax = Math.max(0.7, Math.max(...psi) * 1.15, th * 1.3);
-      const P1 = CAIE.plot(cPsi, { w: maxW, h: 170, xmin: 0, xmax: T, ymin: 0, ymax: ymax, pad: { l: 46, r: 12, t: 14, b: 26 } });
-      P1.clear();
-      P1.axes("", "feature PSI", { xticks: 6, xfmt: v => "d" + v.toFixed(0), yticks: 3, yfmt: v => v.toFixed(2) });
-      P1.line([[0, th], [T, th]], pal.warning, 1.5);
-      P1.line(psi.map((v, t) => [t, Math.min(v, ymax)]), pal.s[0], 2);
-      if (psiDay !== null) {
-        P1.line([[psiDay, 0], [psiDay, ymax]], pal.critical, 1.5);
-        P1.label(Math.min(psiDay, T - 55), ymax * 0.92, "PSI alert d" + psiDay, pal.critical);
-      }
-      P1.label(2, th, "threshold", pal.warning);
-
-      const P2 = CAIE.plot(cAcc, { w: maxW, h: 180, xmin: 0, xmax: T, ymin: 0.5, ymax: 1.0, pad: { l: 46, r: 12, t: 14, b: 30 } });
-      P2.clear();
-      P2.axes("day", "accuracy", { xticks: 6, xfmt: v => "d" + v.toFixed(0), yticks: 5, yfmt: v => v.toFixed(1) });
-      P2.line(accTrue.map((v, t) => [t, v]), pal.muted, 1.2);
-      P2.line(accMeas.map((v, t) => v === null ? [t, NaN] : [t, v]), pal.s[1], 2.5);
-      P2.line([[0, 0.85], [T, 0.85]], pal.warning, 1);
-      if (accDay !== null) {
-        P2.line([[accDay, 0.5], [accDay, 1.0]], pal.critical, 1.5);
-        P2.label(Math.min(accDay, T - 70), 0.97, "quality alarm d" + accDay, pal.critical);
-      }
-      P2.label(2, 0.995, "thin = truth · thick = your dashboard (lag " + lag + "d)", pal.ink2);
-
-      let msg;
-      if (scenario === "ok") {
-        msg = "All quiet. Note the dashboard accuracy just trails truth by the label lag — in the healthy case, lag is invisible. It only bites when something moves.";
-      } else {
-        const start = sc.start;
-        msg = "Failure begins <strong>day " + start + "</strong> · PSI alert: <strong>" +
-          (psiDay === null ? "never fires" : "day " + psiDay + " (+" + (psiDay - start) + "d)") +
-          "</strong> · quality alarm: <strong>" +
-          (accDay === null ? "not yet" : "day " + accDay + " (+" + (accDay - start) + "d)") + "</strong>. ";
-        if (scenario === "con") msg += "Input monitoring is structurally blind here — P(x) never moved. Every day of label lag is a day of silent damage.";
-        if (scenario === "cov") msg += "The unlabeled monitor wins the race — that's its entire value proposition.";
-        if (scenario === "brk") msg += "A one-day spike concentrated in one bin: not drift, a broken pipeline. Data tests on every batch catch this before the model even sees it.";
-      }
-      readout.innerHTML = msg;
+    if (Object.values(el).some(node => !node)) return;
+    const numeric = [el.incumbent, el.candidate, el.delta, el.slice, el.sliceFloor, el.p99, el.p99Max];
+    const checks = [el.data, el.skew, el.lineage, el.recovery];
+    function fail(message, field) {
+      numeric.forEach(node => node.removeAttribute("aria-invalid"));
+      if (field) field.setAttribute("aria-invalid", "true");
+      el.result.textContent = "undefined";
+      el.passed.textContent = "undefined";
+      el.failed.textContent = "undefined";
+      el.readout.textContent = "Cannot evaluate gate: " + message;
     }
-    document.querySelectorAll('[data-tabgroup="dr"] button').forEach(b => {
-      b.addEventListener("click", () => { scenario = b.dataset.tab; draw(); });
-    });
-    CAIE.bindQuiet("dr-lag", draw, v => v + " days");
-    CAIE.bindQuiet("dr-th", draw, v => v.toFixed(2));
-    CAIE.onTheme(draw);
-    window.addEventListener("resize", draw);
-    draw();
+    function update() {
+      numeric.forEach(node => node.removeAttribute("aria-invalid"));
+      const empty = numeric.find(node => !node.value.trim());
+      if (empty) return fail("all numeric fields are required.", empty);
+      const incumbent = Number(el.incumbent.value);
+      const candidate = Number(el.candidate.value);
+      const delta = Number(el.delta.value);
+      const slice = Number(el.slice.value);
+      const sliceFloor = Number(el.sliceFloor.value);
+      const p99 = Number(el.p99.value);
+      const p99Max = Number(el.p99Max.value);
+      const rates = [
+        [incumbent, el.incumbent, "incumbent quality"],
+        [candidate, el.candidate, "candidate quality"],
+        [slice, el.slice, "worst-slice quality"],
+        [sliceFloor, el.sliceFloor, "slice floor"]
+      ];
+      const badRate = rates.find(item => !Number.isFinite(item[0]) || item[0] < 0 || item[0] > 1);
+      if (badRate) return fail(badRate[2] + " must be from 0 to 1.", badRate[1]);
+      if (!Number.isFinite(delta) || delta < -1 || delta > 1)
+        return fail("required quality delta must be from -1 to 1.", el.delta);
+      if (!Number.isFinite(p99) || p99 < 0) return fail("candidate p99 must be finite and non-negative.", el.p99);
+      if (!Number.isFinite(p99Max) || p99Max < 0) return fail("p99 ceiling must be finite and non-negative.", el.p99Max);
+
+      const tolerance = 1e-12;
+      const requirements = [
+        { name: "quality delta", pass: candidate - incumbent + tolerance >= delta,
+          detail: "candidate−incumbent " + (candidate - incumbent).toFixed(3) + " versus required " + delta.toFixed(3) },
+        { name: "slice floor", pass: slice + tolerance >= sliceFloor,
+          detail: slice.toFixed(3) + " versus floor " + sliceFloor.toFixed(3) },
+        { name: "p99 ceiling", pass: p99 <= p99Max + tolerance,
+          detail: p99.toFixed(1) + " ms versus ceiling " + p99Max.toFixed(1) + " ms" },
+        { name: "data contracts", pass: el.data.checked, detail: el.data.checked ? "passed" : "not passed" },
+        { name: "train/serve replay", pass: el.skew.checked, detail: el.skew.checked ? "passed" : "not passed" },
+        { name: "lineage", pass: el.lineage.checked, detail: el.lineage.checked ? "complete" : "incomplete" },
+        { name: "rollback", pass: el.recovery.checked, detail: el.recovery.checked ? "rehearsed" : "not rehearsed" }
+      ];
+      const failures = requirements.filter(item => !item.pass);
+      const passCount = requirements.length - failures.length;
+      el.result.textContent = failures.length ? "BLOCK" : "ELIGIBLE";
+      el.passed.textContent = passCount + " / " + requirements.length;
+      el.failed.textContent = String(failures.length);
+      el.readout.textContent = failures.length
+        ? "Blocked by: " + failures.map(item => item.name + " (" + item.detail + ")").join("; ") +
+          ". Repair or obtain only the explicitly authorized exception; do not average hard failures away."
+        : "All seven illustrative hard requirements pass. The candidate is eligible for the defined approval and progressive release; this calculator does not grant production approval or establish statistical significance.";
+    }
+    numeric.forEach(node => node.addEventListener("input", update));
+    checks.forEach(node => node.addEventListener("change", update));
+    update();
   })();
 
-  // ================== incident triage trainer ==================
-  (function () {
-    const body = document.getElementById("tr-body");
-    const CASES = [
+  // ---------- dynamic batching finite-window simulator ----------
+  (function topic13BatchingSimulator() {
+    const id = name => document.getElementById(name);
+    const el = {
+      lambda: id("bt-lam"), batch: id("bt-b"), wait: id("bt-w"),
+      base: id("bt-base"), per: id("bt-per"), slo: id("bt-slo"),
+      capacity: id("bt-capacity"), rho: id("bt-rho"), p50: id("bt-p50"),
+      p99: id("bt-p99"), canvas: id("bt-canvas"), readout: id("bt-readout")
+    };
+    if (Object.values(el).some(node => !node) || !el.canvas.getContext) return;
+    const fields = [el.lambda, el.batch, el.wait, el.base, el.per, el.slo];
+    function css(name, fallback) {
+      const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+      return value || fallback;
+    }
+    function rng(seed) {
+      let state = seed >>> 0;
+      return function next() {
+        state = (1664525 * state + 1013904223) >>> 0;
+        return state / 4294967296;
+      };
+    }
+    function simulate(lambda, batch, maxWait, base, perItem, durationMs, seed) {
+      const random = rng(seed);
+      const arrivals = [];
+      let time = 0;
+      while (arrivals.length < 200000) {
+        const u = Math.max(1e-12, 1 - random());
+        time += -Math.log(u) * 1000 / lambda;
+        if (time > durationMs) break;
+        arrivals.push(time);
+      }
+      if (!arrivals.length) return { p50: 0, p99: 0, throughput: 0, count: 0, drainedAt: 0 };
+      const latencies = [];
+      let free = 0;
+      let index = 0;
+      while (index < arrivals.length) {
+        const firstPossible = Math.max(arrivals[index], free);
+        let start = firstPossible + maxWait;
+        if (index + batch - 1 < arrivals.length)
+          start = Math.min(start, Math.max(free, arrivals[index + batch - 1]));
+        start = Math.max(start, free, arrivals[index]);
+        let count = 0;
+        while (index + count < arrivals.length && count < batch && arrivals[index + count] <= start) count += 1;
+        if (count === 0) {
+          count = 1;
+          start = Math.max(arrivals[index], free);
+        }
+        const end = start + base + perItem * count;
+        for (let k = 0; k < count; k += 1) latencies.push(end - arrivals[index + k]);
+        free = end;
+        index += count;
+      }
+      latencies.sort((a, b) => a - b);
+      const quantile = q => latencies[Math.min(latencies.length - 1, Math.floor(q * (latencies.length - 1)))];
+      return {
+        p50: quantile(0.50), p99: quantile(0.99),
+        throughput: latencies.length / (Math.max(durationMs, free) / 1000),
+        count: latencies.length, drainedAt: free
+      };
+    }
+    function formatMs(value) {
+      if (!Number.isFinite(value)) return "undefined";
+      return value >= 1000 ? (value / 1000).toFixed(2) + " s" : value.toFixed(1) + " ms";
+    }
+    function fail(message, field) {
+      fields.forEach(node => node.removeAttribute("aria-invalid"));
+      if (field) field.setAttribute("aria-invalid", "true");
+      [el.capacity, el.rho, el.p50, el.p99].forEach(node => node.textContent = "undefined");
+      el.readout.textContent = "Cannot simulate: " + message;
+      el.canvas.getContext("2d").clearRect(0, 0, el.canvas.width, el.canvas.height);
+      el.canvas.setAttribute("aria-label", "Batching chart unavailable: " + message);
+    }
+    function update() {
+      fields.forEach(node => node.removeAttribute("aria-invalid"));
+      const numericFields = [el.lambda, el.wait, el.base, el.per, el.slo];
+      const empty = numericFields.find(node => !node.value.trim());
+      if (empty) return fail("all numeric fields are required.", empty);
+      const lambda = Number(el.lambda.value);
+      const batch = Number(el.batch.value);
+      const maxWait = Number(el.wait.value);
+      const base = Number(el.base.value);
+      const perItem = Number(el.per.value);
+      const slo = Number(el.slo.value);
+      if (!Number.isFinite(lambda) || lambda <= 0 || lambda > 5000)
+        return fail("arrival rate must be positive and at most 5,000 req/s.", el.lambda);
+      if (![1, 2, 4, 8, 16, 32].includes(batch)) return fail("choose a supported maximum batch.", el.batch);
+      const nonnegative = [
+        [maxWait, el.wait, "max wait"], [base, el.base, "batch overhead"], [perItem, el.per, "per-request work"]
+      ];
+      const badNonnegative = nonnegative.find(item => !Number.isFinite(item[0]) || item[0] < 0 || item[0] > 1000);
+      if (badNonnegative) return fail(badNonnegative[2] + " must be finite from 0 to 1,000 ms.", badNonnegative[1]);
+      if (!Number.isFinite(slo) || slo <= 0 || slo > 100000)
+        return fail("p99 SLO must be positive and at most 100,000 ms.", el.slo);
+      const fullBatchTime = base + perItem * batch;
+      if (!(fullBatchTime > 0)) return fail("full-batch service time must be positive.", el.base);
+      const capacity = 1000 * batch / fullBatchTime;
+      const rho = lambda / capacity;
+      const current = simulate(lambda, batch, maxWait, base, perItem, 30000, 13013);
+      el.capacity.textContent = capacity.toFixed(1) + "/s";
+      el.rho.textContent = rho.toFixed(2);
+      el.p50.textContent = formatMs(current.p50);
+      el.p99.textContent = formatMs(current.p99);
+
+      const maxX = Math.max(capacity * 1.25, lambda * 1.08);
+      const points = [];
+      let maxLog = Math.log10(Math.max(10, current.p99));
+      for (let index = 1; index <= 16; index += 1) {
+        const offered = maxX * index / 16;
+        const result = simulate(Math.max(1, offered), batch, maxWait, base, perItem, 10000, 4000 + index);
+        const logLatency = Math.log10(Math.max(1, result.p99));
+        maxLog = Math.max(maxLog, logLatency);
+        points.push([offered, logLatency]);
+      }
+      const ctx = el.canvas.getContext("2d");
+      const W = el.canvas.width;
+      const H = el.canvas.height;
+      const left = 68;
+      const right = 24;
+      const top = 25;
+      const bottom = 48;
+      const plotW = W - left - right;
+      const plotH = H - top - bottom;
+      const minLog = 0;
+      const xOf = x => left + plotW * x / maxX;
+      const yOf = y => top + plotH * (maxLog - y) / Math.max(0.1, maxLog - minLog);
+      ctx.clearRect(0, 0, W, H);
+      ctx.strokeStyle = css("--grid", "#cccccc");
+      ctx.fillStyle = css("--ink-2", "#444444");
+      ctx.font = "11px system-ui, sans-serif";
+      for (let i = 0; i <= 4; i += 1) {
+        const x = left + plotW * i / 4;
+        const xv = maxX * i / 4;
+        ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, top + plotH); ctx.stroke();
+        ctx.fillText(xv.toFixed(0), x - 12, H - 27);
+      }
+      for (let i = 0; i <= 4; i += 1) {
+        const logValue = minLog + (maxLog - minLog) * i / 4;
+        const y = yOf(logValue);
+        ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(left + plotW, y); ctx.stroke();
+        const ms = Math.pow(10, logValue);
+        ctx.fillText(ms >= 1000 ? (ms / 1000).toFixed(1) + "s" : ms.toFixed(0) + "ms", 8, y + 4);
+      }
+      ctx.strokeStyle = "#7c6fc4";
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      points.forEach((point, index) => {
+        const x = xOf(point[0]);
+        const y = yOf(point[1]);
+        if (index === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+      const capX = xOf(capacity);
+      ctx.strokeStyle = "#d76969";
+      ctx.setLineDash([5, 4]);
+      ctx.beginPath(); ctx.moveTo(capX, top); ctx.lineTo(capX, top + plotH); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = css("--ink", "#252525");
+      ctx.font = "12px system-ui, sans-serif";
+      ctx.fillText("offered arrival rate (req/s)", left + plotW / 2 - 65, H - 7);
+      ctx.save();
+      ctx.translate(14, top + plotH / 2 + 32);
+      ctx.rotate(-Math.PI / 2);
+      ctx.fillText("simulated p99 (log scale)", 0, 0);
+      ctx.restore();
+      ctx.fillStyle = "#e09f26";
+      ctx.beginPath();
+      ctx.arc(xOf(Math.min(lambda, maxX)), yOf(Math.log10(Math.max(1, current.p99))), 5, 0, 2 * Math.PI);
+      ctx.fill();
+
+      const state = rho >= 1 ? "overloaded under the full-batch capacity model" :
+        rho >= 0.8 ? "stable in theory but with little headroom" : "below 80% of ideal full-batch capacity";
+      const sloState = current.p99 <= slo ? "meets" : "misses";
+      el.readout.textContent =
+        "Full-batch service time is " + fullBatchTime.toFixed(2) + " ms and ideal capacity is " +
+        capacity.toFixed(1) + " req/s. Offered utilization is " + rho.toFixed(2) + ": " + state +
+        ". In this fixed 30-second arrival simulation, " + current.count.toLocaleString() +
+        " requests have p99 " + formatMs(current.p99) + ", which " + sloState +
+        " the " + slo.toFixed(1) + " ms illustrative SLO. Treat overload latency as a finite-window symptom, not a stable steady state.";
+      el.canvas.setAttribute(
+        "aria-label",
+        "Simulated p99 latency curve across offered request rate. Current arrival " + lambda.toFixed(0) +
+        " requests per second, ideal capacity " + capacity.toFixed(1) +
+        ", utilization " + rho.toFixed(2) + ", simulated p99 " + formatMs(current.p99) + "."
+      );
+    }
+    [el.lambda, el.wait, el.base, el.per, el.slo].forEach(node => node.addEventListener("input", update));
+    el.batch.addEventListener("change", update);
+    const theme = document.getElementById("themeToggle");
+    if (theme) theme.addEventListener("click", () => setTimeout(update, 0));
+    update();
+  })();
+
+  // ---------- quantized artifact ledger ----------
+  (function topic13OptimizationLedger() {
+    const id = name => document.getElementById(name);
+    const el = {
+      params: id("opt-params"), retained: id("opt-retained"), bits: id("opt-bits"),
+      group: id("opt-group"), meta: id("opt-meta"), baseline: id("opt-baseline"),
+      payload: id("opt-payload"), metadata: id("opt-metadata"), total: id("opt-total"),
+      ratio: id("opt-ratio"), readout: id("opt-readout")
+    };
+    if (Object.values(el).some(node => !node)) return;
+    const fields = [el.params, el.retained, el.bits, el.group, el.meta];
+    function gb(value) {
+      return value >= 1e9 ? (value / 1e9).toFixed(3) + " GB" :
+        value >= 1e6 ? (value / 1e6).toFixed(1) + " MB" :
+        value >= 1e3 ? (value / 1e3).toFixed(1) + " kB" : value.toFixed(0) + " B";
+    }
+    function fail(message, field) {
+      fields.forEach(node => node.removeAttribute("aria-invalid"));
+      if (field) field.setAttribute("aria-invalid", "true");
+      [el.baseline, el.payload, el.metadata, el.total, el.ratio].forEach(node => node.textContent = "undefined");
+      el.readout.textContent = "Cannot calculate: " + message;
+    }
+    function update() {
+      fields.forEach(node => node.removeAttribute("aria-invalid"));
+      const numericFields = [el.params, el.retained, el.group, el.meta];
+      const empty = numericFields.find(node => !node.value.trim());
+      if (empty) return fail("all numeric fields are required.", empty);
+      const paramsB = Number(el.params.value);
+      const retainedPercent = Number(el.retained.value);
+      const bits = Number(el.bits.value);
+      const group = Number(el.group.value);
+      const metaBytes = Number(el.meta.value);
+      if (!Number.isFinite(paramsB) || paramsB <= 0) return fail("parameter count must be positive.", el.params);
+      const parameters = paramsB * 1e9;
+      if (!Number.isSafeInteger(parameters)) return fail("parameter count exceeds exact safe-integer accounting.", el.params);
+      if (!Number.isFinite(retainedPercent) || retainedPercent <= 0 || retainedPercent > 100)
+        return fail("deployed parameter percentage must be above 0 and at most 100.", el.retained);
+      if (![4, 8, 16].includes(bits)) return fail("choose a supported payload bit width.", el.bits);
+      if (!Number.isSafeInteger(group) || group <= 0) return fail("weights per metadata group must be a positive safe integer.", el.group);
+      if (!Number.isFinite(metaBytes) || metaBytes < 0) return fail("metadata bytes must be finite and non-negative.", el.meta);
+      const deployedParameters = parameters * retainedPercent / 100;
+      const baselineBytes = parameters * 2;
+      const payloadBytes = deployedParameters * bits / 8;
+      const groups = Math.ceil(deployedParameters / group);
+      const metadataBytes = groups * metaBytes;
+      const totalBytes = payloadBytes + metadataBytes;
+      const compression = baselineBytes / totalBytes;
+      if (![deployedParameters, baselineBytes, payloadBytes, metadataBytes, totalBytes, compression].every(Number.isFinite))
+        return fail("the selected values overflow the numeric range.", el.params);
+      el.baseline.textContent = gb(baselineBytes);
+      el.payload.textContent = gb(payloadBytes);
+      el.metadata.textContent = gb(metadataBytes);
+      el.total.textContent = gb(totalBytes);
+      el.ratio.textContent = compression.toFixed(2) + "×";
+      el.readout.textContent =
+        deployedParameters.toLocaleString(undefined, {maximumFractionDigits: 0}) + " deployed parameters at " +
+        bits + " bits use " + gb(payloadBytes) + " of packed payload. " +
+        groups.toLocaleString() + " groups × " + metaBytes + " metadata bytes add " +
+        gb(metadataBytes) + ", total " + gb(totalBytes) + " versus " + gb(baselineBytes) +
+        " for the original FP16 weights. This excludes alignment, indices, runtime buffers, activations, and KV cache and predicts no latency.";
+    }
+    [el.params, el.retained, el.group, el.meta].forEach(node => node.addEventListener("input", update));
+    el.bits.addEventListener("change", update);
+    update();
+  })();
+
+  // ---------- synthetic drift and label-lag lab ----------
+  (function topic13DriftLab() {
+    const id = name => document.getElementById(name);
+    const el = {
+      scenario: id("dr-scenario"), lag: id("dr-lag"), lagV: id("dr-lag-v"),
+      threshold: id("dr-th"), thresholdV: id("dr-th-v"),
+      psiNow: id("dr-psi-now"), psiAlert: id("dr-psi-alert"),
+      qualityAlert: id("dr-quality-alert"), psiCanvas: id("dr-psi"),
+      accCanvas: id("dr-acc"), readout: id("dr-readout")
+    };
+    if (Object.values(el).some(node => !node) ||
+        !el.psiCanvas.getContext || !el.accCanvas.getContext) return;
+    const days = 180;
+    const qualityFloor = 0.82;
+    function css(name, fallback) {
+      const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+      return value || fallback;
+    }
+    function series(scenario) {
+      const psi = [];
+      const accuracy = [];
+      for (let day = 0; day < days; day += 1) {
+        const basePsi = 0.018 + 0.004 * Math.sin(day / 9);
+        const baseAcc = 0.90 + 0.004 * Math.sin(day / 13);
+        if (scenario === "covariate") {
+          const progress = Math.max(0, Math.min(1, (day - 60) / 90));
+          psi.push(basePsi + 0.40 * progress);
+          const qualityProgress = Math.max(0, Math.min(1, (day - 75) / 80));
+          accuracy.push(baseAcc - 0.13 * qualityProgress);
+        } else if (scenario === "concept") {
+          psi.push(basePsi);
+          accuracy.push(day < 80 ? baseAcc : 0.70 + 0.004 * Math.sin(day / 13));
+        } else if (scenario === "quality") {
+          psi.push(day < 70 ? basePsi : 0.58 + 0.02 * Math.sin(day / 7));
+          accuracy.push(day < 70 ? baseAcc : 0.64 + 0.006 * Math.sin(day / 11));
+        } else {
+          psi.push(basePsi);
+          accuracy.push(baseAcc);
+        }
+      }
+      return { psi, accuracy };
+    }
+    function firstDay(values, predicate) {
+      for (let day = 0; day < values.length; day += 1) if (predicate(values[day])) return day;
+      return null;
+    }
+    function drawChart(canvas, lines, options) {
+      const ctx = canvas.getContext("2d");
+      const W = canvas.width;
+      const H = canvas.height;
+      const left = 52;
+      const right = 20;
+      const top = 18;
+      const bottom = 34;
+      const plotW = W - left - right;
+      const plotH = H - top - bottom;
+      const xOf = day => left + plotW * day / (days - 1);
+      const yOf = value => top + plotH * (options.max - value) / (options.max - options.min);
+      ctx.clearRect(0, 0, W, H);
+      ctx.strokeStyle = css("--grid", "#cccccc");
+      ctx.fillStyle = css("--ink-2", "#444444");
+      ctx.font = "11px system-ui, sans-serif";
+      for (let i = 0; i <= 4; i += 1) {
+        const day = Math.round((days - 1) * i / 4);
+        const x = xOf(day);
+        ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, top + plotH); ctx.stroke();
+        ctx.fillText("d" + day, x - 10, H - 12);
+        const value = options.min + (options.max - options.min) * i / 4;
+        const y = yOf(value);
+        ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(left + plotW, y); ctx.stroke();
+        ctx.fillText(value.toFixed(2), 8, y + 4);
+      }
+      if (options.threshold !== null) {
+        ctx.strokeStyle = "#d76969";
+        ctx.setLineDash([5, 4]);
+        const y = yOf(options.threshold);
+        ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(left + plotW, y); ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      lines.forEach(line => {
+        ctx.strokeStyle = line.color;
+        ctx.lineWidth = line.width || 2;
+        ctx.beginPath();
+        let started = false;
+        line.values.forEach((value, day) => {
+          if (value === null || !Number.isFinite(value)) {
+            started = false;
+            return;
+          }
+          const x = xOf(day);
+          const y = yOf(value);
+          if (!started) {
+            ctx.moveTo(x, y);
+            started = true;
+          } else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+      });
+      ctx.fillStyle = css("--ink", "#252525");
+      ctx.font = "12px system-ui, sans-serif";
+      ctx.fillText(options.label, left, 13);
+    }
+    function update() {
+      [el.scenario, el.lag, el.threshold].forEach(node => node.removeAttribute("aria-invalid"));
+      if (!["healthy", "covariate", "concept", "quality"].includes(el.scenario.value)) {
+        el.scenario.setAttribute("aria-invalid", "true");
+        el.readout.textContent = "Cannot draw scenario: choose a supported scenario.";
+        return;
+      }
+      const lag = Number(el.lag.value);
+      const threshold = Number(el.threshold.value);
+      if (!Number.isSafeInteger(lag) || lag < 0 || lag > 45) {
+        el.lag.setAttribute("aria-invalid", "true");
+        el.readout.textContent = "Cannot draw scenario: label lag must be an integer from 0 to 45 days.";
+        return;
+      }
+      if (!Number.isFinite(threshold) || threshold < 0.05 || threshold > 0.60) {
+        el.threshold.setAttribute("aria-invalid", "true");
+        el.readout.textContent = "Cannot draw scenario: PSI threshold must be from 0.05 to 0.60.";
+        return;
+      }
+      const data = series(el.scenario.value);
+      const visibleAccuracy = data.accuracy.map((value, day) => day < lag ? null : data.accuracy[day - lag]);
+      const psiDay = firstDay(data.psi, value => value > threshold);
+      const qualityDay = firstDay(visibleAccuracy, value => value !== null && value < qualityFloor);
+      el.lagV.textContent = lag + " d";
+      el.thresholdV.textContent = threshold.toFixed(2);
+      el.psiNow.textContent = data.psi[data.psi.length - 1].toFixed(3);
+      el.psiAlert.textContent = psiDay === null ? "none" : "day " + psiDay;
+      el.qualityAlert.textContent = qualityDay === null ? "none" : "day " + qualityDay;
+      drawChart(el.psiCanvas, [
+        { values: data.psi, color: "#7c6fc4", width: 2.5 }
+      ], { min: 0, max: Math.max(0.65, threshold * 1.2), threshold, label: "Synthetic input PSI (threshold dashed)" });
+      drawChart(el.accCanvas, [
+        { values: data.accuracy, color: "#7d8da8", width: 1.5 },
+        { values: visibleAccuracy, color: "#e09f26", width: 2.7 }
+      ], { min: 0.55, max: 0.95, threshold: qualityFloor, label: "True cohort accuracy (grey) and label-delayed dashboard (gold)" });
+
+      let explanation;
+      if (el.scenario.value === "healthy")
+        explanation = "Both signals stay near baseline; lag is easy to overlook when nothing changes.";
+      else if (el.scenario.value === "covariate")
+        explanation = "The input signal can fire before mature quality, but it does not prove the observed shift caused the later degradation.";
+      else if (el.scenario.value === "concept")
+        explanation = "Synthetic P(X) stays stable, so PSI never fires; the performance dashboard reveals the outcome change only after label lag.";
+      else
+        explanation = "The unit/pipeline failure produces an abrupt input signal. A contract and upstream rollback should precede any retraining.";
+      el.readout.textContent =
+        explanation + " First PSI alert: " + (psiDay === null ? "none" : "day " + psiDay) +
+        "; first visible quality alert below " + qualityFloor.toFixed(2) + ": " +
+        (qualityDay === null ? "none" : "day " + qualityDay) +
+        ". At the final plotted day, the dashboard reflects the cohort from " + lag + " days earlier.";
+      el.psiCanvas.setAttribute(
+        "aria-label",
+        "Synthetic " + el.scenario.value + " scenario input PSI. Latest " +
+        data.psi[data.psi.length - 1].toFixed(3) + ", threshold " + threshold.toFixed(2) +
+        ", first alert " + (psiDay === null ? "none" : "day " + psiDay) + "."
+      );
+      el.accCanvas.setAttribute(
+        "aria-label",
+        "Synthetic " + el.scenario.value + " scenario true and delayed accuracy with " + lag +
+        " day label lag. First visible quality alert " +
+        (qualityDay === null ? "none" : "day " + qualityDay) + "."
+      );
+    }
+    el.scenario.addEventListener("change", update);
+    [el.lag, el.threshold].forEach(node => node.addEventListener("input", update));
+    const theme = document.getElementById("themeToggle");
+    if (theme) theme.addEventListener("click", () => setTimeout(update, 0));
+    update();
+  })();
+
+  // ---------- fixed-horizon A/B planning calculator ----------
+  (function topic13AbPlanner() {
+    const id = name => document.getElementById(name);
+    const el = {
+      base: id("ab-base"), mde: id("ab-mde"), confidence: id("ab-confidence"),
+      power: id("ab-power"), traffic: id("ab-traffic"), exposure: id("ab-exposure"),
+      perArm: id("ab-per-arm"), total: id("ab-total"), days: id("ab-days"),
+      readout: id("ab-readout")
+    };
+    if (Object.values(el).some(node => !node)) return;
+    const fields = [el.base, el.mde, el.confidence, el.power, el.traffic, el.exposure];
+    function fail(message, field) {
+      fields.forEach(node => node.removeAttribute("aria-invalid"));
+      if (field) field.setAttribute("aria-invalid", "true");
+      [el.perArm, el.total, el.days].forEach(node => node.textContent = "undefined");
+      el.readout.textContent = "Cannot plan experiment: " + message;
+    }
+    function update() {
+      fields.forEach(node => node.removeAttribute("aria-invalid"));
+      const numericFields = [el.base, el.mde, el.traffic, el.exposure];
+      const empty = numericFields.find(node => !node.value.trim());
+      if (empty) return fail("all numeric fields are required.", empty);
+      const p0 = Number(el.base.value) / 100;
+      const delta = Number(el.mde.value) / 100;
+      const zAlpha = Number(el.confidence.value);
+      const zBeta = Number(el.power.value);
+      const traffic = Number(el.traffic.value);
+      const exposure = Number(el.exposure.value) / 100;
+      if (!Number.isFinite(p0) || p0 <= 0 || p0 >= 1)
+        return fail("baseline conversion must be strictly between 0% and 100%.", el.base);
+      if (!Number.isFinite(delta) || delta <= 0 || p0 + delta >= 1)
+        return fail("MDE must be positive and keep the candidate conversion below 100%.", el.mde);
+      if (![1.645, 1.96, 2.576].includes(zAlpha)) return fail("choose a supported confidence level.", el.confidence);
+      if (![0.842, 1.282].includes(zBeta)) return fail("choose a supported power.", el.power);
+      if (!Number.isSafeInteger(traffic) || traffic <= 0)
+        return fail("eligible units per day must be a positive safe integer.", el.traffic);
+      if (!Number.isFinite(exposure) || exposure <= 0 || exposure > 1)
+        return fail("experimental traffic must be above 0% and at most 100%.", el.exposure);
+      const p1 = p0 + delta;
+      const pooled = (p0 + p1) / 2;
+      const numerator =
+        zAlpha * Math.sqrt(2 * pooled * (1 - pooled)) +
+        zBeta * Math.sqrt(p0 * (1 - p0) + p1 * (1 - p1));
+      const n = Math.ceil(numerator * numerator / (delta * delta));
+      const total = 2 * n;
+      const perDay = traffic * exposure;
+      const days = Math.ceil(total / perDay);
+      if (![n, total, perDay, days].every(Number.isFinite) || !Number.isSafeInteger(total))
+        return fail("the required sample exceeds the safe integer range.", el.mde);
+      el.perArm.textContent = n.toLocaleString();
+      el.total.textContent = total.toLocaleString();
+      el.days.textContent = days.toLocaleString();
+      el.readout.textContent =
+        "For baseline " + (100 * p0).toFixed(3) + "% and candidate " + (100 * p1).toFixed(3) +
+        "%, the equal-arm normal approximation requires " + n.toLocaleString() +
+        " units per arm (" + total.toLocaleString() + " total). At " +
+        Math.round(perDay).toLocaleString() + " experimental units/day, arithmetic collection time is " +
+        days + " day" + (days === 1 ? "" : "s") +
+        ". Run long enough for outcome maturity and temporal cycles; inflate for clustering, attrition, multiple looks/tests, and imperfect compliance.";
+    }
+    [el.base, el.mde, el.traffic, el.exposure].forEach(node => node.addEventListener("input", update));
+    [el.confidence, el.power].forEach(node => node.addEventListener("change", update));
+    update();
+  })();
+
+  // ---------- incident triage trainer ----------
+  (function topic13IncidentTrainer() {
+    const id = name => document.getElementById(name);
+    const el = { select: id("tr-case"), body: id("tr-body"), status: id("tr-status") };
+    if (Object.values(el).some(node => !node)) return;
+    const cases = [
       {
-        title: "The overnight latency cliff",
-        deploy: "Deploy log: 22:40 — feature-service v2.14 rolled out. Model binary unchanged.",
+        title: "Tokenizer release: a step change at 14:02",
+        change: "14:00 serving image changes tokenizer 4.44 → 4.51; model package and training environment do not change.",
         signals: [
-          ["p99 latency", "380 ms", "was 90 ms"],
-          ["error rate", "0.2%", "flat"],
-          ["feature PSI", "0.04", "flat"],
-          ["traffic", "1.0×", "flat"],
-          ["GPU utilization", "99%", "was 55%"],
-          ["feature-cache hit rate", "31%", "was 89%"]
+          ["errors", "8%", "was 0.1%; starts 14:02"],
+          ["p99", "bimodal", "new slow/error mode"],
+          ["spot check", "garbled", "only some text shapes"],
+          ["traffic", "flat", "no load spike"]
         ],
-        q: "Most likely root cause?",
-        opts: [
-          ["Concept drift is degrading the model", false],
-          ["The 22:40 deploy invalidated the feature cache; misses force recomputation, saturating the GPU and inflating tail latency", true],
-          ["A DDoS attack", false],
-          ["Corrupted model weights", false]
+        question: "Best diagnosis and first safe action?",
+        options: [
+          "Concept drift; retrain immediately.",
+          "Train/serve skew from the unpinned tokenizer; halt/roll back the compatible serving release, then pin and parity-test preprocessing.",
+          "Capacity shortage; double replicas.",
+          "Hide the errors by increasing timeouts."
         ],
-        exp: "Chain: cache hit rate ↓ → recompute load ↑ → GPU util → p99. Drift and errors flat rule out model quality; traffic flat rules out DDoS. Latency without quality change = infrastructure. Fix: warm the cache or roll back v2.14; add cache hit rate to the deploy guardrails."
+        answer: 1,
+        explanation: "Timing and the changed serving-only dependency discriminate strongly. Contain with the tested compatible release, then reproduce token/output differences and add the tokenizer digest and replay test to lineage and gates."
       },
       {
-        title: "The silent slide",
-        deploy: "Deploy log: no deploys for 6 weeks. Offline AUC at launch: 0.91.",
+        title: "Queue overload during a traffic burst",
+        change: "No deployment. Arrival rate rises from 280 to 620 req/s; measured sustainable capacity is 500 req/s.",
         signals: [
-          ["conversions", "−18%", "over 6 weeks, gradual"],
-          ["PSI: feature 12/27/33", "0.31 / 0.28 / 0.44", "37 other features < 0.05"],
-          ["p99 latency", "88 ms", "flat"],
-          ["error rate", "0.1%", "flat"],
-          ["prediction mean", "0.42", "was 0.35"]
+          ["queue", "rising", "oldest request age climbs"],
+          ["p99", "1.8 s", "was 90 ms"],
+          ["errors", "6%", "mostly deadline exceeded"],
+          ["input PSI", "flat", "feature contracts pass"],
+          ["retries", "2.4×", "amplifying load"]
         ],
-        q: "Best next action?",
-        opts: [
-          ["Roll back the model binary", false],
-          ["Scale out serving replicas", false],
-          ["Investigate the three drifted features' upstream sources; retrain on recent data once understood", true],
-          ["Declare concept drift and lower the decision threshold", false]
+        question: "Best containment and diagnosis?",
+        options: [
+          "Retrain because errors imply concept drift.",
+          "Increase every timeout so requests wait longer.",
+          "Apply bounded load shedding/fallback and retry limits, add known-safe capacity if available, then find the burst source and service-time bottleneck.",
+          "Clear the model registry."
         ],
-        exp: "Per-feature PSI has localized the problem to 3 of 40 features — likely an upstream product or logging change altering their distribution (covariate drift). Rollback fixes nothing: the old binary reads the same shifted inputs. Retraining without understanding the source risks baking a bug into the training set — investigate first, then retrain. This localization is why you alert per-feature, not globally."
+        answer: 2,
+        explanation: "Arrival exceeds measured capacity and retries multiply it. Contain the queue before scaling or diagnosis; larger timeouts preserve doomed work and worsen the cascade."
       },
       {
-        title: "The 14:02 spike",
-        deploy: "Deploy log: 14:00 — serving image rebuilt; tokenizer library 4.44 → 4.51. Training environment unchanged.",
+        title: "One feature changes units",
+        change: "No model release. Upstream producer v3 changes temperature from °C to millidegrees but retains a numeric schema.",
         signals: [
-          ["error rate", "8%", "was 0.1%, step change at 14:02"],
-          ["p99 latency", "bimodal", "new slow mode"],
-          ["output quality (spot-check)", "garbled on some inputs", ""],
-          ["feature PSI", "n/a", "text model"],
-          ["traffic", "1.0×", "flat"]
+          ["feature PSI", "1.31", "one feature only"],
+          ["feature median", "21,000", "was 21"],
+          ["null rate", "flat", "schema type still numeric"],
+          ["prediction mean", "saturated", "step change"],
+          ["latency/errors", "flat", "service healthy"]
         ],
-        q: "Diagnosis and fix?",
-        opts: [
-          ["Concept drift — retrain immediately", false],
-          ["Training–serving skew: the serving tokenizer now splits text differently than the one the model was trained with; roll back the image and pin the version", true],
-          ["Under-provisioned GPUs — scale out", false],
-          ["Increase request timeouts to absorb the slow mode", false]
+        question: "Best first action?",
+        options: [
+          "Quarantine or convert the bad producer data, route to a safe fallback/known contract, and replay affected predictions; do not retrain on the unit error.",
+          "Retrain so the model learns millidegrees.",
+          "Add GPUs.",
+          "Raise the PSI threshold above 1.31."
         ],
-        exp: "A step change at deploy time is the deploy until proven otherwise. A tokenizer version bump in serving only means the model receives token sequences it never saw in training — the purest form of train/serve skew. Fix: rollback now, then pin preprocessing versions into the model's lineage so image rebuilds can't drift. Drift and scaling explanations can't produce a step function at 14:02."
+        answer: 0,
+        explanation: "The localized 1,000× semantic change is a data-quality contract failure. Repair/rollback the producer and assess affected decisions before considering any model update."
       },
       {
-        title: "The canary that coughed",
-        deploy: "Rollout state: new model clean in shadow for 7 days; canary at 5% since yesterday.",
+        title: "Delayed quality alarm with disappearing labels",
+        change: "No release. Thirty-day-mature AUC falls from 0.86 to 0.71.",
         signals: [
-          ["canary quality metrics", "≈ control", "no regression"],
-          ["canary p99 latency", "+40 ms vs control", ""],
-          ["canary pod restarts", "6 OOM kills", "all on long-input requests"],
-          ["control pods", "0 restarts", ""],
-          ["shadow (last week)", "all green", ""]
+          ["input PSI", "0.03", "flat"],
+          ["label completeness", "41%", "was 96%"],
+          ["join failures", "59%", "new identifier format"],
+          ["serving health", "green", "latency/errors flat"],
+          ["business proxy", "flat", "not a verified label"]
         ],
-        q: "Correct call?",
-        opts: [
-          ["Proceed to 50% — quality is fine and latency is only 40 ms", false],
-          ["Jump to 100% to gather more signal faster", false],
-          ["Disable the OOM alerts; restarts are handled by the orchestrator anyway", false],
-          ["Halt the rollout at 5%, keep 95% on the incumbent, fix the memory behavior on long inputs (length caps / batching config), then re-canary", true]
+        question: "What should the team conclude first?",
+        options: [
+          "Stable PSI proves concept drift.",
+          "The model must be rolled forward.",
+          "The AUC proves the new identifier improved outcomes.",
+          "The outcome metric is not trustworthy until the label join is repaired and replayed; contain decisions if the uncertainty itself is unsafe."
         ],
-        exp: "Guardrails are not only quality: latency and stability breaches block promotion too. OOMs on a specific slice (long inputs) under real concurrency are exactly what canaries exist to catch — shadow missed it because its replicas didn't face the same batching/memory pressure profile. Rolling forward to \"get more signal\" converts a 5% incident into a 100% outage."
+        answer: 3,
+        explanation: "A metric computed on a changed 41% subset can move through selection alone. Restore label semantics and completeness before distinguishing concept drift from instrumentation failure."
+      },
+      {
+        title: "Canary OOMs on long inputs",
+        change: "Candidate was healthy in shadow; 5% canary begins serving authoritative responses.",
+        signals: [
+          ["quality", "non-inferior", "on completed requests"],
+          ["p99", "+42 ms", "candidate cohort"],
+          ["pod restarts", "6", "candidate only"],
+          ["OOM slice", ">8k tokens", "under concurrent batching"],
+          ["control", "healthy", "no restarts"]
+        ],
+        question: "Correct rollout decision?",
+        options: [
+          "Advance to 50% because average quality passes.",
+          "Disable OOM alerts because the orchestrator restarts pods.",
+          "Halt/roll back the canary, preserve 95% on the incumbent, cap or bucket lengths and fix peak memory, then load-test and re-canary.",
+          "Move directly to an A/B test."
+        ],
+        answer: 2,
+        explanation: "Stability and tail latency are hard guardrails. Shadow did not reproduce authoritative concurrency/batching. A bounded canary has found the slice before full exposure—use that safety margin."
       }
     ];
-    function render(idx) {
-      const c = CASES[idx];
-      let h = '<p style="margin:10px 0 4px"><strong>' + c.title + '</strong> — ' + c.deploy + "</p>";
-      h += '<div class="tiles">';
-      for (const [k, v, note] of c.signals) {
-        h += '<div class="tile"><div class="tv">' + v + '</div><div class="tl">' + k + (note ? " · " + note : "") + "</div></div>";
+    function makeTile(value, label, note) {
+      const tile = document.createElement("div");
+      tile.className = "tile";
+      const valueNode = document.createElement("div");
+      valueNode.className = "tv";
+      valueNode.textContent = value;
+      const labelNode = document.createElement("div");
+      labelNode.className = "tl";
+      labelNode.textContent = label + (note ? " · " + note : "");
+      tile.append(valueNode, labelNode);
+      return tile;
+    }
+    function render() {
+      el.select.removeAttribute("aria-invalid");
+      const index = Number(el.select.value);
+      if (!Number.isSafeInteger(index) || !cases[index]) {
+        el.select.setAttribute("aria-invalid", "true");
+        el.body.replaceChildren();
+        el.status.textContent = "Choose a supported incident case.";
+        return;
       }
-      h += "</div>";
-      h += '<div class="quiz" style="margin-top:10px"><p class="quiz-q">' + c.q + '</p><div class="opts">';
-      c.opts.forEach((o, i) => { h += '<button data-i="' + i + '">' + o[0] + "</button>"; });
-      h += '</div><div class="quiz-exp">' + c.exp + "</div></div>";
-      body.innerHTML = h;
-      const quiz = body.querySelector(".quiz");
-      quiz.querySelectorAll(".opts button").forEach(btn => {
-        btn.addEventListener("click", () => {
+      const item = cases[index];
+      const title = document.createElement("p");
+      const strong = document.createElement("strong");
+      strong.textContent = item.title;
+      title.append(strong, document.createTextNode(" — " + item.change));
+      const tiles = document.createElement("div");
+      tiles.className = "tiles";
+      item.signals.forEach(signal => tiles.append(makeTile(signal[1], signal[0], signal[2])));
+      const quiz = document.createElement("div");
+      quiz.className = "incident-trainer-card";
+      const question = document.createElement("p");
+      question.className = "quiz-q";
+      question.textContent = item.question;
+      const options = document.createElement("div");
+      options.className = "opts";
+      const explanation = document.createElement("div");
+      explanation.className = "quiz-exp";
+      explanation.id = "tr-explanation";
+      explanation.textContent = item.explanation;
+      item.options.forEach((label, optionIndex) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = label;
+        button.dataset.option = String(optionIndex);
+        button.setAttribute("aria-describedby", explanation.id);
+        button.addEventListener("click", () => {
           if (quiz.classList.contains("revealed")) return;
           quiz.classList.add("revealed");
-          quiz.querySelectorAll(".opts button").forEach(b2 => {
-            const right = CASES[idx].opts[+b2.dataset.i][1];
-            if (right) b2.classList.add("correct");
-            else if (b2 === btn) b2.classList.add("wrong");
-            b2.disabled = true;
+          options.querySelectorAll("button").forEach(candidate => {
+            const candidateIndex = Number(candidate.dataset.option);
+            if (candidateIndex === item.answer) candidate.classList.add("correct");
+            else if (candidate === button) candidate.classList.add("wrong");
+            candidate.disabled = true;
           });
+          el.status.textContent =
+            "Case " + (index + 1) + ": " + (optionIndex === item.answer ? "correct. " : "review. ") +
+            item.explanation;
         });
+        options.append(button);
       });
+      quiz.append(question, options, explanation);
+      el.body.replaceChildren(title, tiles, quiz);
+      el.status.textContent = "Case " + (index + 1) + " ready. Compare timing, release cohort, and the signal that changed.";
     }
-    document.querySelectorAll('[data-tabgroup="tr"] button').forEach(b => {
-      b.addEventListener("click", () => render(+b.dataset.tab));
-    });
-    render(0);
+    el.select.addEventListener("change", render);
+    render();
   })();
 });
 </script>

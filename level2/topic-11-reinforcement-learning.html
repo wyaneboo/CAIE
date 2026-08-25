@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
 <title>Topic 11 — Reinforcement Learning · CAIE Course</title>
 <link rel="stylesheet" href="../assets/course.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
@@ -24,11 +25,10 @@
 <div class="kicker">Level II · Topic 11 · Exam weight 10%</div>
 <h1>Reinforcement Learning</h1>
 <p class="lead">
-  Supervised learning copies answers; reinforcement learning discovers them by acting and being
-  scored. It's the mathematics of sequential decisions under uncertainty — and, since RLHF, the
-  machinery that turns raw language models into aligned assistants. The exam wants you fluent in
-  the MDP formalism, the Bellman equations, and the practical differences among the algorithm
-  families.
+  Reinforcement learning studies decisions whose consequences unfold over time. An agent acts,
+  observes what follows, and uses reward as a learning signal. The hard part is not merely finding
+  a high score: it is assigning credit across time, exploring safely, and knowing which policy the
+  data can validly improve.
 </p>
 
 <div class="box los">
@@ -36,246 +36,760 @@
   <ul>
     <li>Formulate problems as MDPs (states, actions, rewards, transitions, discount).</li>
     <li>Derive the Bellman equations; explain value vs policy iteration.</li>
-    <li>Compare Q-learning, SARSA, DQN; describe REINFORCE, A2C, PPO and the baseline's variance-reduction role.</li>
-    <li>Explain exploration–exploitation (ε-greedy, UCB, Thompson sampling).</li>
-    <li>Describe RLHF (reward modeling, the PPO loop) and compare with DPO.</li>
+    <li>Compare Q-learning, SARSA, and DQN.</li>
+    <li>Describe REINFORCE, A2C, PPO, and the baseline's variance-reduction role.</li>
+    <li>Explain exploration–exploitation with \(\varepsilon\)-greedy, UCB, and Thompson sampling.</li>
+    <li>Describe RLHF reward modeling, PPO, KL control, and LLM alignment.</li>
+    <li>Compare RLHF with DPO and other preference-based methods.</li>
   </ul>
 </div>
 
-<h2>11.1 The MDP formalism and the Bellman equations</h2>
-<p>
-  A <strong>Markov Decision Process</strong> is \((S, A, P, R, \gamma)\): states, actions, transition
-  probabilities \(P(s'\mid s,a)\), rewards \(R(s,a)\), and a discount \(\gamma \in [0,1)\) that
-  makes the infinite future summable and encodes impatience. The Markov property — the future
-  depends only on the current state — is what makes the math tractable. A <strong>policy</strong>
-  \(\pi(a\mid s)\) is a behavior; its <strong>value</strong> is expected discounted return:
-  \(V^\pi(s) = E\left[\sum_t \gamma^t r_t \mid s_0 = s\right]\).
-</p>
-<p>
-  The <strong>Bellman equations</strong> come from splitting that sum after one step. For the
-  optimal value function:
-  $$V^*(s) = \max_a \Big[ R(s,a) + \gamma \sum_{s'} P(s'\mid s,a)\, V^*(s') \Big],$$
-  and the action-value version \(Q^*(s,a)\) (value of doing \(a\) now, then acting optimally) with
-  \(V^*(s) = \max_a Q^*(s,a)\). These are self-consistency conditions — the value of a state is
-  today's reward plus the discounted value of where you land.
-</p>
-<div class="box bridge">
-  <div class="box-title">⚛ Physics bridge</div>
+<div class="box">
+  <div class="box-title">Orientation — the vocabulary of one interaction</div>
   <p>
-    The Bellman equation is the discrete Hamilton–Jacobi–Bellman equation: \(V\) plays the role of
-    an action functional / potential, and the greedy policy "follow \(\arg\max\)" is steepest
-    descent on it. Value iteration is a fixed-point relaxation — the Bellman operator is a
-    γ-contraction (Banach fixed point theorem guarantees convergence), exactly like relaxing a
-    lattice field to equilibrium. And watch the widget: value literally <em>diffuses</em> backward
-    from the reward like heat from a source, attenuated by γ per hop.
+    At time \(t\), the agent receives an <strong>observation</strong> \(o_t\), represents a
+    <strong>state</strong> \(s_t\), chooses an <strong>action</strong> \(a_t\) from a
+    <strong>policy</strong> \(\pi(a\mid s)\), and receives reward \(r_{t+1}\). The environment then
+    moves to \(s_{t+1}\). A <strong>trajectory</strong> is the resulting sequence; a complete
+    trajectory is often called an <strong>episode</strong>. Reward is one step's signal. Return is
+    the discounted sum the objective actually values.
+  </p>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th scope="col">Object</th><th scope="col">Question it answers</th><th scope="col">Common mistake</th></tr></thead>
+    <tbody>
+      <tr><td>state \(s_t\)</td><td>what information predicts the future under an action?</td><td>treating a partial observation as Markov</td></tr>
+      <tr><td>policy \(\pi\)</td><td>how are actions selected?</td><td>confusing behavior policy with target policy</td></tr>
+      <tr><td>value \(V^\pi,Q^\pi\)</td><td>what future return is expected?</td><td>calling immediate reward “value”</td></tr>
+      <tr><td>model \(P,R\)</td><td>how does the environment respond?</td><td>equating model-based with on-policy</td></tr>
+      <tr><td>discount \(\gamma\)</td><td>how strongly do later rewards count?</td><td>using it only as a convergence trick</td></tr>
+    </tbody>
+  </table>
+  </div>
+</div>
+
+<div class="box">
+  <div class="box-title">Orientation — two independent algorithm axes</div>
+  <p>
+    <strong>Model-based versus model-free</strong> asks whether planning uses transition/reward
+    dynamics. <strong>On-policy versus off-policy</strong> asks whether learning evaluates the same
+    policy that generated the data. These axes are independent: a method can be model-free and
+    on-policy (SARSA), model-free and off-policy (Q-learning), or model-based with either data policy.
   </p>
 </div>
-<p>
-  With a known model, <strong>value iteration</strong> applies the Bellman update everywhere until
-  convergence; <strong>policy iteration</strong> alternates full policy evaluation with greedy
-  improvement — fewer, costlier sweeps. Both are dynamic programming: exact, and doomed by the
-  curse of dimensionality beyond small state spaces — hence learning.
-</p>
 
-<div class="widget">
-  <div class="widget-head">
-    <div class="wtitle">Interactive — gridworld: dynamic programming vs learning</div>
-    <div class="wsub">Goal +1 (green), pit −1 (red), step cost −0.04. Tab 1 solves with known dynamics (value iteration). Tab 2 learns Q from experience alone — the agent doesn't know the map.</div>
-  </div>
-  <div class="widget-body">
-    <div class="tabs" data-tabgroup="gw">
-      <button data-tab="vi" class="active">Value iteration</button>
-      <button data-tab="ql">Q-learning</button>
-    </div>
-    <div data-tabpane="gw:vi">
-      <div class="controls">
-        <label>γ discount <input type="range" id="vi-g" min="0.5" max="0.99" step="0.01" value="0.9"><span class="val" id="vi-g-v"></span></label>
-        <button class="btn" id="vi-step">One sweep</button>
-        <button class="btn" id="vi-run">Run to convergence</button>
-        <button class="btn ghost" id="vi-reset">Reset</button>
-      </div>
-    </div>
-    <div data-tabpane="gw:ql" style="display:none">
-      <div class="controls">
-        <label>ε exploration <input type="range" id="ql-e" min="0" max="1" step="0.05" value="0.2"><span class="val" id="ql-e-v"></span></label>
-        <label>α learning rate <input type="range" id="ql-a" min="0.05" max="1" step="0.05" value="0.5"><span class="val" id="ql-a-v"></span></label>
-        <button class="btn" id="ql-run">Run 200 episodes</button>
-        <button class="btn ghost" id="ql-reset">Reset Q</button>
-      </div>
-    </div>
-    <canvas id="gw-canvas" width="640" height="300"></canvas>
-    <div class="readout" id="gw-readout"></div>
-    <p class="wcaption">
-      Things to try: (1) drop γ to 0.5 — value dies off within a few cells of the goal and distant
-      states become indifferent; the discount is a horizon dial. (2) In Q-learning, set ε = 0 and
-      reset: the agent greedily exploits its first lucky path and often never finds the better one —
-      the exploration problem in one picture. (3) Note VI needs the transition model; Q-learning
-      only needs experience — that distinction (model-based vs model-free) is exam-core.
-    </p>
-  </div>
+<h2>11.1 The MDP formalism and the Bellman equations</h2>
+
+<h3>MDP components — make the state sufficient</h3>
+<p>
+  A Markov decision process is \((\mathcal S,\mathcal A,P,R,\gamma)\), with
+  \(P(s'\mid s,a)\) and an expected reward convention such as \(R(s,a,s')\). The Markov property
+  says that, conditioned on the current state and action, earlier history adds no predictive
+  information about the next state. It is a modeling requirement, not a claim that raw sensor
+  readings always satisfy it. If the observation hides relevant information, use history, a belief
+  state, recurrence, or a partially observable MDP.
+</p>
+<div class="box example">
+  <div class="box-title">Worked formulation — inventory control</div>
+  <p>
+    State can include on-hand stock, outstanding orders, and time; action is order quantity; reward
+    is sales margin minus holding, shortage, and order costs; transition combines demand and
+    delivery; \(\gamma\) values later profit. If outstanding orders are omitted, identical visible
+    stock can lead to different futures, so “stock alone” is not Markov.
+  </p>
 </div>
 
-<h2>11.2 Model-free control — learning Q from experience</h2>
+<h3>Return and horizon — discounting is a decision choice</h3>
 <p>
-  <strong>Q-learning</strong> updates toward the Bellman target using samples:
-  $$Q(s,a) \mathrel{+}= \alpha \big[\, r + \gamma \max_{a'} Q(s',a') - Q(s,a) \,\big],$$
-  the bracket being the <em>temporal-difference (TD) error</em>. The \(\max\) makes it
-  <strong>off-policy</strong>: it learns the value of acting greedily even while behaving
-  exploratorily. <strong>SARSA</strong> replaces \(\max_{a'} Q(s',a')\) with \(Q(s',a')\) for the
-  action actually taken — <strong>on-policy</strong>, so it learns the value of its real
-  (ε-noisy) behavior: near a cliff, SARSA learns the safe path, Q-learning learns the optimal-but-risky
-  one. <strong>DQN</strong> scales Q-learning with a neural network over raw states (Atari pixels),
-  stabilized by two tricks worth naming: <em>experience replay</em> (train on shuffled past
-  transitions — restoring the i.i.d.-ish data SGD wants) and a <em>target network</em> (a frozen
-  copy providing the bootstrap target so the regression isn't chasing itself).
+  With reward arriving after action \(a_t\), define
+  \(G_t=\sum_{k=0}^{\infty}\gamma^k r_{t+k+1}\). A smaller \(\gamma\) shortens the effective horizon;
+  a useful scale is roughly \(1/(1-\gamma)\) for continuing problems. Usually \(0\le\gamma&lt;1\)
+  makes bounded continuing returns finite. A finite or proper episodic task can also use
+  \(\gamma=1\). Changing \(\gamma\) changes the objective unless it is only compensating for a
+  formal horizon convention.
+</p>
+<div class="box example">
+  <div class="box-title">Worked return</div>
+  <p>
+    For rewards \(2,1,4\) and \(\gamma=0.5\), the three-step return is
+    \(2+0.5(1)+0.5^2(4)=3.5\). Reward \(2\) is not the return; the later two outcomes still matter.
+  </p>
+</div>
+
+<h3>Termination and truncation — decide whether to bootstrap</h3>
+<p>
+  <strong>Termination</strong> means the MDP reached a terminal condition, so the continuation value
+  is zero. <strong>Truncation</strong> means data collection stopped for an external reason, such as
+  a simulator time limit, while the underlying process may continue; bootstrapping is usually then
+  appropriate. If the time limit is itself part of the task, include remaining time in state and
+  treat the horizon as terminal. Storing only a single “done” flag can silently bias TD targets.
+</p>
+<div class="tablewrap">
+<table>
+  <thead><tr><th scope="col">Transition end</th><th scope="col">Typical target</th><th scope="col">Question</th></tr></thead>
+  <tbody>
+    <tr><td>ordinary transition</td><td>\(r+\gamma V(s')\)</td><td>what follows from \(s'\)?</td></tr>
+    <tr><td>true terminal</td><td>\(r\)</td><td>does the modeled episode genuinely end?</td></tr>
+    <tr><td>external truncation</td><td>often \(r+\gamma V(s')\)</td><td>would the process continue without the collector's limit?</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>Bellman expectation equations — evaluate one policy</h3>
+<p>
+  Splitting return after one step gives a recursive consistency equation:
+  $$
+  V^\pi(s)=\sum_a\pi(a\mid s)\sum_{s'}P(s'\mid s,a)
+  \left[R(s,a,s')+\gamma V^\pi(s')\right].
+  $$
+  Similarly,
+  \(Q^\pi(s,a)=\mathbb E[r_{t+1}+\gamma Q^\pi(s_{t+1},a_{t+1})]\) with
+  \(a_{t+1}\sim\pi\). The expectation covers both environmental randomness and policy randomness.
 </p>
 
-<h2>11.3 Policy gradients — optimize the behavior directly</h2>
+<h3>Bellman optimality — choose the best continuation</h3>
 <p>
-  Value methods struggle with continuous actions and inherently stochastic optima. Policy-gradient
-  methods parameterize \(\pi_\theta\) directly and ascend expected return. The policy-gradient
-  theorem / <strong>REINFORCE</strong>:
-  $$\nabla_\theta J = E\big[\, G_t \, \nabla_\theta \log \pi_\theta(a_t \mid s_t) \,\big]$$
-  — increase log-probability of actions in proportion to the return that followed. Unbiased, and
-  ferociously noisy: \(G_t\) mixes the credit of one action with everything else that happened.
-  Subtracting a <strong>baseline</strong> \(b(s)\) — any function of state, typically a learned
-  \(V(s)\) — leaves the gradient unbiased (\(E[b\,\nabla\log\pi] = 0\), since probabilities sum to 1)
-  but slashes variance: what remains is the <strong>advantage</strong> \(A = G - V(s)\), "how much
-  better than expected." That's <strong>A2C</strong>: an actor (policy) plus a critic (baseline).
-</p>
-<p>
-  <strong>PPO</strong> adds the industrial safety rail. Policy gradients are only valid near the
-  current policy; a large step can collapse performance irrecoverably (the data you collect next
-  comes from the new, broken policy). PPO clips the update: with ratio
-  \(\rho = \pi_{new}(a|s)/\pi_{old}(a|s)\), it optimizes
-  \(\min(\rho A, \; \mathrm{clip}(\rho, 1\pm\epsilon) A)\) — no incentive to move the ratio beyond
-  ±ε per update. Simple, robust, and the default RL algorithm of the LLM era.
-</p>
-
-<h2>11.4 Exploration — the bandit laboratory</h2>
-<p>
-  The tension: exploit the best-known option or explore alternatives that might be better. The
-  clean testbed is the <strong>multi-armed bandit</strong> (one state, K unknown reward rates).
-  <strong>ε-greedy</strong>: random arm with probability ε — simple, never stops wasting ε of its
-  pulls. <strong>UCB</strong>: pick \(\arg\max_a \hat\mu_a + c\sqrt{\ln t / n_a}\) — "optimism in
-  the face of uncertainty," exploring exactly what is under-sampled, with logarithmic regret.
-  <strong>Thompson sampling</strong>: keep a posterior per arm (Beta for Bernoulli — Topic 2),
-  sample one draw from each, act on the sample — exploration emerges from posterior uncertainty
-  and shuts itself off as beliefs sharpen.
+  The optimal value replaces policy averaging with maximization:
+  $$
+  V^*(s)=\max_a\sum_{s'}P(s'\mid s,a)
+  \left[R(s,a,s')+\gamma V^*(s')\right],
+  \qquad V^*(s)=\max_a Q^*(s,a).
+  $$
+  Evaluation and control are different jobs. The expectation equation asks “how good is this
+  policy?” The optimality equation asks “what is the best achievable return?” A maximum over noisy
+  estimates can be optimistically biased, a point that returns in Double DQN.
 </p>
 
 <div class="widget">
   <div class="widget-head">
-    <div class="wtitle">Interactive — bandit strategy race</div>
-    <div class="wsub">Five slot machines with hidden success rates (best = 0.65). Run 1,000 pulls per strategy and compare cumulative regret — the reward you lost versus always playing the (unknown) best arm.</div>
+    <div class="wtitle">Guided calculation — one Bellman backup</div>
+    <div class="wsub">One action has two possible next states. Edit their probability, reward, value, and the discount.</div>
   </div>
   <div class="widget-body">
     <div class="controls">
-      <label>ε for ε-greedy <input type="range" id="bd-e" min="0" max="0.5" step="0.01" value="0.1"><span class="val" id="bd-e-v"></span></label>
-      <button class="btn" id="bd-run">Run 1,000 pulls</button>
+      <label for="be-p">probability of outcome 1 <input id="be-p" type="number" min="0" max="1" step="0.05" value="0.7"></label>
+      <label for="be-r1">reward 1 <input id="be-r1" type="number" step="0.1" value="2"></label>
+      <label for="be-v1">next value 1 <input id="be-v1" type="number" step="0.1" value="5"></label>
+      <label for="be-r2">reward 2 <input id="be-r2" type="number" step="0.1" value="-1"></label>
+      <label for="be-v2">next value 2 <input id="be-v2" type="number" step="0.1" value="1"></label>
+      <label for="be-gamma">discount \(\gamma\) <input id="be-gamma" type="number" min="0" max="1" step="0.05" value="0.9"></label>
     </div>
-    <canvas id="bd-canvas" width="640" height="280"></canvas>
-    <div class="readout" id="bd-readout"></div>
-    <p class="wcaption">
-      ε-greedy's regret grows linearly forever (it never stops exploring at rate ε); UCB and
-      Thompson bend logarithmic. Set ε = 0 and re-run a few times: sometimes fine, sometimes locked
-      onto a bad arm permanently — the same failure you saw in the gridworld. Production systems
-      (ad ranking, A/B platforms, RAG router selection) are bandits wearing business clothes.
-    </p>
+    <div class="readout" id="be-readout" aria-live="polite"></div>
+    <p class="wcaption">Default: \(0.7(2+0.9\cdot5)+0.3(-1+0.9\cdot1)=4.52\).</p>
   </div>
 </div>
 
-<h2>11.5 RLHF — reinforcement learning meets language models</h2>
+<h3>Value iteration — repeated optimality backups</h3>
 <p>
-  A pretrained LLM is a policy: state = the context so far, action = next token, episode = the
-  response. But there's no natural reward. <strong>RLHF</strong> manufactures one:
+  For a finite discounted MDP with a known model, synchronous value iteration applies the Bellman
+  optimality operator to every state, then replaces the old table. The exact operator is a
+  \(\gamma\)-contraction under the sup norm when \(\gamma&lt;1\), so repeated exact backups approach
+  the unique fixed point. Approximate function fitting, sampling noise, or changing dynamics do not
+  inherit that guarantee automatically.
 </p>
-<ol>
-  <li><strong>Collect preferences:</strong> humans compare pairs of model responses (A ≻ B) — far
-  easier and more reliable than absolute scoring.</li>
-  <li><strong>Train a reward model</strong> — usually a copy of the LLM with a scalar head — via
-  the Bradley–Terry likelihood \(P(A \succ B) = \sigma(r(A) - r(B))\): a learned stand-in for
-  human judgment.</li>
-  <li><strong>Optimize the policy with PPO</strong> against the reward model, with a
-  <strong>KL penalty</strong> to the original model:
-  \(\max_\pi E[r(x, y)] - \beta\, D_{KL}(\pi \,\|\, \pi_{ref})\). The KL term is load-bearing —
-  it keeps the policy from wandering into regions where the reward model is wrong and exploitable
-  (reward hacking — the subject of Topics 17 and 19).</li>
-</ol>
+<pre><code>VALUE_ITERATION(model, tolerance):
+  initialize V(s)
+  repeat:
+    old = copy(V)
+    for each nonterminal state s:
+      V(s) = max over actions of EXPECTED_REWARD_PLUS_DISCOUNTED(old, s, a)
+    delta = max over states of abs(V(s) - old(s))
+  until delta &lt; tolerance
+  return a policy greedy with respect to V</code></pre>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Guided calculation — synchronous value-iteration sweeps</div>
+    <div class="wsub">A → B → goal corridor also permits waiting. Watch reward information move backward one sweep at a time.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label for="dp-gamma">discount <input id="dp-gamma" type="number" min="0" max="0.999" step="0.05" value="0.9"></label>
+      <label for="dp-step-reward">move/wait reward <input id="dp-step-reward" type="number" step="0.05" value="-0.1"></label>
+      <label for="dp-goal-reward">B → goal reward <input id="dp-goal-reward" type="number" step="0.1" value="1"></label>
+      <button class="btn" id="dp-step" type="button">One sweep</button>
+      <button class="btn" id="dp-run" type="button">Run to tolerance</button>
+      <button class="btn ghost" id="dp-reset" type="button">Reset values</button>
+    </div>
+    <div class="tablewrap"><table id="dp-table" aria-describedby="dp-readout"></table></div>
+    <div class="readout" id="dp-readout" aria-live="polite"></div>
+  </div>
+</div>
+
+<h3>Policy iteration — evaluate, then improve</h3>
 <p>
-  <strong>DPO</strong> (Direct Preference Optimization) collapses stages 2–3: the KL-constrained
-  RLHF objective has a closed-form optimal policy, and substituting it back turns preference
-  learning into a simple classification-style loss on the policy itself —
-  no reward model, no sampling loop, no PPO machinery. In exchange, you lose the ability to sample
-  fresh responses during optimization (DPO is offline, bound to its preference dataset) and the
-  explicit reward model that RLHF can reuse for filtering and monitoring. Level III (Topic 17)
-  makes choosing between them a design decision; here, know the mechanics cold.
+  Policy iteration alternates two operations: solve or approximate \(V^\pi\) for the current policy,
+  then make the policy greedy with respect to that value. Exact policy evaluation may take many
+  sweeps or a linear solve; modified policy iteration uses only a few evaluation sweeps. In small
+  tabular problems policy iteration often needs fewer improvement rounds than value iteration, but
+  each round is more expensive. Neither is automatically preferable on every MDP.
+</p>
+<pre><code>POLICY_ITERATION(model):
+  initialize policy pi
+  repeat:
+    evaluate V_pi for pi
+    improved = GREEDY_POLICY(V_pi, model)
+    stable = every improved action matches pi
+    pi = improved
+  until stable
+  return pi, V_pi</code></pre>
+
+<div class="box bridge">
+  <div class="box-title">⚛ Physics bridge</div>
+  <p>
+    Bellman equations are discrete relatives of Hamilton–Jacobi–Bellman equations. Value iteration is
+    fixed-point relaxation: reward information propagates backward through the state graph, attenuated
+    by transition probabilities and \(\gamma\). The analogy is useful, but values are expectations
+    under decisions—not conserved fields—and approximation can break the clean contraction picture.
+  </p>
+</div>
+
+<p class="box-title">Decision guide — planning, learning, or both?</p>
+<div class="tablewrap">
+<table>
+  <thead><tr><th scope="col">Evidence available</th><th scope="col">Starting method</th><th scope="col">Main limitation</th></tr></thead>
+  <tbody>
+    <tr><td>small exact \(P,R\)</td><td>value or policy iteration</td><td>state/action explosion</td></tr>
+    <tr><td>simulator but expensive real actions</td><td>model-based planning plus offline validation</td><td>simulator mismatch</td></tr>
+    <tr><td>transition samples, discrete actions</td><td>tabular TD or DQN family</td><td>coverage and bootstrap stability</td></tr>
+    <tr><td>continuous/stochastic actions</td><td>actor–critic family</td><td>on-policy sample cost and tuning</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2>11.2 Model-free control — learning Q from experience</h2>
+
+<h3>Temporal-difference learning — update before the episode ends</h3>
+<p>
+  TD learning bootstraps: it moves an estimate toward a reward plus another estimate. For a target
+  \(Y_t\), the TD error is \(\delta_t=Y_t-Q(s_t,a_t)\), and the update is
+  \(Q\leftarrow Q+\alpha\delta_t\). Monte Carlo methods wait for a sampled return and do not
+  bootstrap; dynamic programming bootstraps from an expectation under a known model. TD occupies
+  the useful middle: sampled experience plus bootstrapping.
+</p>
+
+<h3>Q-learning and SARSA — target policy changes the backup</h3>
+<p>
+  Q-learning uses
+  \(Y^{Q}=r+\gamma\max_{a'}Q(s',a')\), so it is off-policy: exploratory behavior can generate data
+  while the backup evaluates a greedy target. SARSA uses
+  \(Y^{S}=r+\gamma Q(s',a')\) for the next action actually selected, so it is on-policy. In
+  cliff-walking with persistent \(\varepsilon\)-greedy behavior, SARSA can value a safer route
+  because its target includes future exploratory mistakes; Q-learning values the greedy route.
+  That example is illustrative, not a universal ranking.
+</p>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Guided calculation — Q-learning versus SARSA target</div>
+    <div class="wsub">The end reason controls bootstrapping. “Truncated” here means the underlying continuing task would have continued.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label for="td-method">backup <select id="td-method"><option value="q">Q-learning: max next Q</option><option value="sarsa">SARSA: chosen next Q</option></select></label>
+      <label for="td-current">current \(Q(s,a)\) <input id="td-current" type="number" step="0.1" value="2"></label>
+      <label for="td-reward">reward <input id="td-reward" type="number" step="0.1" value="1"></label>
+      <label for="td-max">maximum next Q <input id="td-max" type="number" step="0.1" value="5"></label>
+      <label for="td-chosen">chosen next Q <input id="td-chosen" type="number" step="0.1" value="3"></label>
+      <label for="td-alpha">learning rate \(\alpha\) <input id="td-alpha" type="number" min="0" max="1" step="0.05" value="0.5"></label>
+      <label for="td-gamma">discount \(\gamma\) <input id="td-gamma" type="number" min="0" max="1" step="0.05" value="0.9"></label>
+      <label for="td-end">transition <select id="td-end"><option value="continue">continues</option><option value="terminal">true terminal</option><option value="truncated">externally truncated</option></select></label>
+    </div>
+    <div class="readout" id="td-readout" aria-live="polite"></div>
+    <p class="wcaption">Default Q-learning target is \(1+0.9(5)=5.5\); the update gives \(2+0.5(5.5-2)=3.75\).</p>
+  </div>
+</div>
+
+<h3>Tabular convergence — state the assumptions</h3>
+<p>
+  In a finite stationary MDP with \(\gamma&lt;1\) (or an appropriate proper episodic setting),
+  tabular Q-learning converges to \(Q^*\) under standard conditions:
+  every state–action pair is visited sufficiently often, rewards are bounded, and learning rates
+  satisfy stochastic-approximation conditions such as
+  \(\sum_t\alpha_t=\infty\) and \(\sum_t\alpha_t^2&lt;\infty\). A constant learning rate is useful for
+  tracking but does not meet the classic almost-sure convergence statement. Function approximation,
+  partial observability, finite replay, and nonstationarity require separate evidence.
+</p>
+<div class="box warning">
+  <div class="box-title">The deadly triad</div>
+  <p>
+    Function approximation, bootstrapping, and off-policy training can interact to make values
+    diverge. DQN's stabilizers reduce this risk; they do not turn neural Q-learning into a guaranteed
+    contraction.
+  </p>
+</div>
+
+<h3>DQN — approximate Q without chasing every target immediately</h3>
+<p>
+  DQN represents \(Q(s,a;\theta)\) with a neural network. Experience replay decorrelates samples and
+  reuses data; a lagged target network \(\theta^-\) holds the bootstrap target comparatively still:
+  \(Y=r+\gamma\max_{a'}Q(s',a';\theta^-)\). DQN is model-free and off-policy. It is most natural for
+  discrete action sets because the max enumerates or searches actions.
+</p>
+<pre><code>DQN_UPDATE(replay, online, target):
+  sample transitions from replay
+  for each transition:
+    if truly terminal: y = reward
+    else: y = reward + gamma * max_a target(next_state, a)
+  minimize mean squared or Huber loss between y and online(state, action)
+  periodically or softly update target from online</code></pre>
+
+<h3>Double DQN and replay caveats — stabilizers have scope</h3>
+<p>
+  DQN's same noisy values select and evaluate the maximizing action, which can create maximization
+  bias. Double DQN selects \(a^*=\arg\max_a Q(s',a;\theta)\) with the online network but evaluates
+  it using \(Q(s',a^*;\theta^-)\). Replay distribution can still overrepresent old behavior,
+  duplicate transitions, or unsafe logging policies. Prioritized replay changes the sampling
+  distribution and normally needs importance weighting to correct its bias.
+</p>
+
+<h2>11.3 Policy gradients — optimize the behavior directly</h2>
+
+<h3>REINFORCE — differentiate log-probability, weight by return</h3>
+<p>
+  For a differentiable stochastic policy, the likelihood-ratio identity yields
+  $$
+  \nabla_\theta J(\theta)=
+  \mathbb E_{\tau\sim\pi_\theta}\left[
+  \sum_t G_t\nabla_\theta\log\pi_\theta(a_t\mid s_t)
+  \right].
+  $$
+  Positive return increases the sampled action's log-probability; negative return decreases it.
+  REINFORCE is an on-policy Monte Carlo estimator: conceptually simple and often high variance.
+  Continuous actions are possible when the policy defines a density, such as a Gaussian.
+</p>
+<pre><code>REINFORCE:
+  collect complete trajectories with current policy
+  compute return G_t for every step
+  accumulate (G_t - baseline(s_t)) * gradient log policy(a_t | s_t)
+  update policy by gradient ascent
+  discard or carefully correct stale on-policy data</code></pre>
+
+<h3>Baselines and advantages — reduce variance without changing the expected gradient</h3>
+<p>
+  Subtracting an action-independent baseline \(b(s)\) leaves the expected policy gradient unchanged
+  because \(\mathbb E_{a\sim\pi}[\nabla\log\pi(a\mid s)]=0\). The signal
+  \(G_t-b(s_t)\) estimates advantage: performance above or below expectation. The theorem concerns
+  expectation and an action-independent baseline. A baseline that depends on the sampled action
+  without correction can bias the gradient, and a finite batch need not have exactly zero mean score.
+</p>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Guided calculation — baseline and gradient contributions</div>
+    <div class="wsub">Each line is return,score-gradient for one sampled action. Compare sample contribution spread.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label for="pg-samples">samples
+        <textarea id="pg-samples" rows="5" spellcheck="false">4,1
+1,-1
+3,0.5
+0,-0.5</textarea>
+      </label>
+      <label for="pg-baseline">state baseline <input id="pg-baseline" type="number" step="0.1" value="2"></label>
+    </div>
+    <div class="tablewrap"><table id="pg-table" aria-describedby="pg-readout"></table></div>
+    <div class="readout" id="pg-readout" aria-live="polite"></div>
+  </div>
+</div>
+
+<h3>A2C — actor and critic learn together</h3>
+<p>
+  An actor–critic uses a policy actor and a value critic. A2C commonly collects synchronized batches
+  from parallel environments, forms one-step or \(n\)-step bootstrapped advantages, updates the actor
+  with those advantages, and fits the critic to return targets. It remains on-policy in its standard
+  form. A poor critic can add bias to bootstrapped advantage estimates, so value loss, advantage
+  normalization, entropy, and rollout length are monitored rather than treated as decoration.
+</p>
+
+<h3>PPO — a clipped surrogate, not a hard trust-region guarantee</h3>
+<p>
+  PPO reuses a recent on-policy batch for several epochs. With probability ratio
+  \(\rho_t=\pi_\theta(a_t\mid s_t)/\pi_{\mathrm{old}}(a_t\mid s_t)\), advantage \(\hat A_t\), and
+  clip width \(\epsilon\), its common surrogate is
+  $$
+  L^{\mathrm{clip}}=
+  \mathbb E\left[\min\left(\rho_t\hat A_t,
+  \operatorname{clip}(\rho_t,1-\epsilon,1+\epsilon)\hat A_t\right)\right].
+  $$
+  Clipping removes incentive from some overly large ratio moves. It does not impose a hard KL bound
+  or guarantee monotonic improvement; implementations still monitor approximate KL, entropy,
+  clipping fraction, value error, and held-out performance.
+</p>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Guided calculation — PPO clipping</div>
+    <div class="wsub">See why the minimum behaves differently for positive and negative advantages.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label for="ppo-old">old action probability <input id="ppo-old" type="number" min="0.0001" max="1" step="0.01" value="0.2"></label>
+      <label for="ppo-new">new action probability <input id="ppo-new" type="number" min="0.0001" max="1" step="0.01" value="0.26"></label>
+      <label for="ppo-adv">advantage <input id="ppo-adv" type="number" step="0.1" value="2"></label>
+      <label for="ppo-eps">clip width \(\epsilon\) <input id="ppo-eps" type="number" min="0.001" max="0.99" step="0.01" value="0.2"></label>
+    </div>
+    <div class="readout" id="ppo-readout" aria-live="polite"></div>
+    <p class="wcaption">Default ratio \(1.3\): unclipped term \(2.6\), clipped term \(2.4\), surrogate contribution \(2.4\).</p>
+  </div>
+</div>
+
+<p class="box-title">Policy-optimization decision guide — match data and action space</p>
+<div class="tablewrap">
+<table>
+  <thead><tr><th scope="col">Situation</th><th scope="col">Reasonable starting point</th><th scope="col">Audit first</th></tr></thead>
+  <tbody>
+    <tr><td>small discrete action table</td><td>tabular Q-learning or SARSA</td><td>coverage and terminal handling</td></tr>
+    <tr><td>pixels, discrete actions</td><td>DQN family</td><td>replay distribution and value stability</td></tr>
+    <tr><td>continuous action policy</td><td>A2C/PPO family</td><td>scaling, entropy, safety constraints</td></tr>
+    <tr><td>logged data only</td><td>offline RL or preference learning</td><td>support mismatch; do not assume on-policy PPO fits</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2>11.4 Exploration — the bandit laboratory</h2>
+
+<h3>Bandits and regret — isolate the exploration problem</h3>
+<p>
+  A \(K\)-armed bandit has no state transition: each arm has an unknown reward distribution. If
+  \(\mu^*=\max_a\mu_a\), pseudo-regret after \(T\) pulls is
+  \(\sum_{t=1}^T(\mu^*-\mu_{a_t})\). Regret measures the opportunity cost of learning. It differs
+  from realized reward noise and depends on assumptions such as stationarity.
+</p>
+
+<h3>\(\varepsilon\)-greedy and UCB — random exploration versus optimism</h3>
+<p>
+  \(\varepsilon\)-greedy chooses a random arm with probability \(\varepsilon\), otherwise a
+  current empirical best. Constant \(\varepsilon>0\) keeps exploring forever and generally gives
+  linear regret in a stationary bandit; schedules can decay. UCB chooses an optimistic index such as
+  \(\hat\mu_a+c\sqrt{\ln t/n_a}\). Under appropriate stationary bounded or sub-Gaussian reward
+  assumptions, classical UCB variants achieve logarithmic expected regret. The constant and formula
+  are algorithm definitions, not universal defaults.
+</p>
+
+<h3>Thompson sampling — act according to posterior uncertainty</h3>
+<p>
+  For Bernoulli rewards and a \(\operatorname{Beta}(\alpha,\beta)\) prior, \(s\) successes and \(f\)
+  failures give posterior \(\operatorname{Beta}(\alpha+s,\beta+f)\). Thompson sampling draws one
+  possible success rate per arm and chooses the largest. Poor priors eventually wash out under
+  sufficient data, but model misspecification, delayed outcomes, censoring, and nonstationarity can
+  invalidate the tidy posterior story.
+</p>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Guided laboratory — three exploration views</div>
+    <div class="wsub">Counts define empirical means, UCB indices, and Beta(1,1) posteriors. The seed makes the Thompson draw reproducible.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label for="bd-a-s">A successes <input id="bd-a-s" type="number" min="0" step="1" value="4"></label>
+      <label for="bd-a-f">A failures <input id="bd-a-f" type="number" min="0" step="1" value="6"></label>
+      <label for="bd-b-s">B successes <input id="bd-b-s" type="number" min="0" step="1" value="6"></label>
+      <label for="bd-b-f">B failures <input id="bd-b-f" type="number" min="0" step="1" value="4"></label>
+      <label for="bd-c-s">C successes <input id="bd-c-s" type="number" min="0" step="1" value="1"></label>
+      <label for="bd-c-f">C failures <input id="bd-c-f" type="number" min="0" step="1" value="1"></label>
+      <label for="bd-epsilon">\(\varepsilon\) <input id="bd-epsilon" type="number" min="0" max="1" step="0.05" value="0.1"></label>
+      <label for="bd-c">UCB \(c\) <input id="bd-c" type="number" min="0" step="0.1" value="1"></label>
+      <label for="bd-seed">draw seed <input id="bd-seed" type="number" min="1" max="4294967295" step="1" value="7"></label>
+      <button class="btn" id="bd-next" type="button">Next posterior draw</button>
+    </div>
+    <canvas id="bd-canvas" width="700" height="280" role="img" aria-label="Empirical rates and one Thompson posterior draw">Bandit chart unavailable; the table and readout contain the results.</canvas>
+    <div class="tablewrap"><table id="bd-table" aria-describedby="bd-readout"></table></div>
+    <div class="readout" id="bd-readout" aria-live="polite"></div>
+  </div>
+</div>
+
+<p class="box-title">Exploration decision guide — stationary is an assumption</p>
+<div class="tablewrap">
+<table>
+  <thead><tr><th scope="col">Setting</th><th scope="col">Useful adaptation</th><th scope="col">Failure mode</th></tr></thead>
+  <tbody>
+    <tr><td>stationary independent arms</td><td>UCB or Thompson baseline</td><td>delayed/censored rewards</td></tr>
+    <tr><td>changing reward rates</td><td>windows, discounting, change detection</td><td>old evidence dominates</td></tr>
+    <tr><td>decision depends on context</td><td>contextual bandit</td><td>one global arm mean hides subgroups</td></tr>
+    <tr><td>actions affect future state</td><td>full MDP/RL formulation</td><td>bandit ignores delayed consequences</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2>11.5 RLHF — reinforcement learning meets language models</h2>
+
+<h3>Language models as policies — map the abstraction carefully</h3>
+<p>
+  In token-level RL, context is state, the next token is an action, and the generated response is a
+  trajectory. A terminal sequence reward can be assigned back to many token decisions. This mapping
+  is useful, but the environment includes prompts, tools, users, and deployment feedback—not merely
+  a static vocabulary. Offline preference training and online interaction therefore answer different
+  distributional questions.
+</p>
+
+<h3>RLHF pipeline — supervised start, reward model, constrained optimization</h3>
+<ol>
+  <li><strong>Supervised fine-tuning:</strong> fit demonstrations to obtain a capable reference/start policy.</li>
+  <li><strong>Preference collection:</strong> compare responses under a documented rubric and sampling policy.</li>
+  <li><strong>Reward modeling:</strong> fit a scalar preference predictor, often with a Bradley–Terry loss.</li>
+  <li><strong>Policy optimization:</strong> sample responses, score them, and optimize with PPO or another method while controlling drift from a reference.</li>
+  <li><strong>Evaluation:</strong> use held-out human judgments, safety tests, and distribution slices; proxy reward alone is not success.</li>
+</ol>
+<pre><code>RLHF_LOOP:
+  start from supervised policy and frozen reference
+  repeat:
+    sample prompts and policy responses
+    score responses with reward model
+    form reward minus reference-divergence penalty
+    estimate advantages and update policy with PPO
+    stop or adjust when KL, reward, safety, or human evaluation drifts
+  evaluate on preference, capability, and safety suites</code></pre>
+
+<h3>Reward models — pairwise probability is not ground truth</h3>
+<p>
+  A common model assigns scalar scores and fits
+  \(P(y_w\succ y_l)=\sigma(r_\phi(x,y_w)-r_\phi(x,y_l))\). Pairwise labels are easier than absolute
+  scores in some settings, but they can be inconsistent, position-biased, culturally narrow, or
+  noisy. The reward model interpolates those labels; optimizing it out of distribution can exploit
+  its errors.
+</p>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Guided calculation — Bradley–Terry preference</div>
+    <div class="wsub">Convert a reward-score difference into preference probability and negative log-likelihood.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label for="rm-win">preferred score <input id="rm-win" type="number" step="0.1" value="1.2"></label>
+      <label for="rm-lose">other score <input id="rm-lose" type="number" step="0.1" value="0.4"></label>
+    </div>
+    <div class="readout" id="rm-readout" aria-live="polite"></div>
+    <p class="wcaption">A score gap is relative within the comparison model; it is not a calibrated utility unit.</p>
+  </div>
+</div>
+
+<h3>PPO with KL control — optimize a proxy without leaving its evidence</h3>
+<p>
+  A simplified sequence objective is
+  \(\mathbb E[r_\phi(x,y)-\beta D_{\mathrm{KL}}(\pi(\cdot\mid x)\Vert\pi_{\mathrm{ref}}(\cdot\mid x))]\).
+  In practice the KL term may be estimated token by token and its coefficient adapted. It discourages
+  large drift into regions where the reward model has little evidence. It cannot guarantee safety,
+  remove reward hacking, or substitute for human evaluation.
+</p>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Guided calculation — reward minus KL penalty</div>
+    <div class="wsub">Compare two candidate policy updates under the same illustrative penalty coefficient.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label for="kl-a-r">A reward <input id="kl-a-r" type="number" step="0.1" value="1.4"></label>
+      <label for="kl-a-k">A KL estimate <input id="kl-a-k" type="number" min="0" step="0.1" value="0.3"></label>
+      <label for="kl-b-r">B reward <input id="kl-b-r" type="number" step="0.1" value="1.7"></label>
+      <label for="kl-b-k">B KL estimate <input id="kl-b-k" type="number" min="0" step="0.1" value="1.2"></label>
+      <label for="kl-beta">penalty \(\beta\) <input id="kl-beta" type="number" min="0" step="0.05" value="0.5"></label>
+    </div>
+    <div class="readout" id="kl-readout" aria-live="polite"></div>
+    <p class="wcaption">Default: A scores \(1.25\), B scores \(1.10\); the higher raw reward does not win after the illustrative penalty.</p>
+  </div>
+</div>
+
+<h3>DPO — classify preferences relative to a reference policy</h3>
+<p>
+  DPO uses preference pairs without fitting a separate explicit reward model or running an online PPO
+  loop. For chosen \(y_w\), rejected \(y_l\), reference \(\pi_{\mathrm{ref}}\), and scale \(\beta\),
+  a common loss is
+  $$
+  -\log\sigma\left(\beta\left[
+  \log\frac{\pi_\theta(y_w\mid x)}{\pi_\theta(y_l\mid x)}
+  -\log\frac{\pi_{\mathrm{ref}}(y_w\mid x)}{\pi_{\mathrm{ref}}(y_l\mid x)}
+  \right]\right).
+  $$
+  It is an offline, reference-relative preference objective derived under modeling assumptions. It
+  still depends on preference quality, pair coverage, reference choice, and \(\beta\), and is not a
+  theorem that every DPO model is safer or better than every RLHF model.
+</p>
+
+<div class="widget">
+  <div class="widget-head">
+    <div class="wtitle">Guided calculation — one DPO pair</div>
+    <div class="wsub">Sequence log-probabilities are nonpositive. Compare policy and reference preference margins.</div>
+  </div>
+  <div class="widget-body">
+    <div class="controls">
+      <label for="dpo-pw">policy log \(p(y_w)\) <input id="dpo-pw" type="number" max="0" step="0.1" value="-1"></label>
+      <label for="dpo-pl">policy log \(p(y_l)\) <input id="dpo-pl" type="number" max="0" step="0.1" value="-2"></label>
+      <label for="dpo-rw">reference log \(p(y_w)\) <input id="dpo-rw" type="number" max="0" step="0.1" value="-1.2"></label>
+      <label for="dpo-rl">reference log \(p(y_l)\) <input id="dpo-rl" type="number" max="0" step="0.1" value="-1.8"></label>
+      <label for="dpo-beta">\(\beta\) <input id="dpo-beta" type="number" min="0.001" step="0.1" value="1"></label>
+    </div>
+    <div class="readout" id="dpo-readout" aria-live="polite"></div>
+  </div>
+</div>
+
+<p class="box-title">RLHF or DPO? Choose by feedback loop, not slogan</p>
+<div class="tablewrap">
+<table>
+  <thead><tr><th scope="col">Dimension</th><th scope="col">Reward-model + online RL</th><th scope="col">DPO-style offline preference training</th></tr></thead>
+  <tbody>
+    <tr><td>core artifacts</td><td>policy, reference, explicit reward model, rollout loop</td><td>policy, reference, preference pairs</td></tr>
+    <tr><td>fresh sampling</td><td>can iteratively collect new policy responses</td><td>normally trains on fixed pairs</td></tr>
+    <tr><td>control</td><td>explicit proxy reward and KL diagnostics</td><td>implicit preference margin controlled by \(\beta\)</td></tr>
+    <tr><td>engineering</td><td>more moving parts and online instability</td><td>simpler supervised-style optimization</td></tr>
+    <tr><td>shared risk</td><td colspan="2">biased preferences, weak coverage, distribution shift, overoptimization, and benchmark gaming</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p class="box-title">Beyond DPO — match the objective to the feedback record</p>
+<div class="tablewrap">
+<table>
+  <thead><tr><th scope="col">Method</th><th scope="col">Feedback it can use</th><th scope="col">Anchor and objective</th><th scope="col">Important caveat</th></tr></thead>
+  <tbody>
+    <tr><td>DPO</td><td>paired chosen/rejected responses</td><td>logistic, reference-relative pair margin</td><td>pair coverage, reference choice, sequence length, and margin scaling affect behavior</td></tr>
+    <tr><td>IPO</td><td>paired preferences</td><td>reference-relative regression-style target on the preference margin</td><td>changes the loss geometry and assumptions; it does not guarantee better generalization</td></tr>
+    <tr><td>KTO</td><td>individual desirable/undesirable labels, which need not be paired</td><td>prospect-theoretic utility around a reference/KL baseline</td><td>class balance, loss weights, reference behavior, and label policy still matter</td></tr>
+    <tr><td>ORPO</td><td>paired favored/disfavored responses</td><td>chosen-response likelihood plus an odds-ratio preference penalty, without a separate reference model</td><td>reference-free does not mean drift-free; the supervised anchor and penalty require evaluation</td></tr>
+  </tbody>
+</table>
+</div>
+<p>
+  These names identify different training losses, not a safety ranking. Decide from the feedback
+  actually available, memory and rollout budget, desired anchoring, and held-out capability and
+  safety evidence. Offline data also limit every method to the comparisons and response support that
+  were collected.
 </p>
 
 <div class="box jargon">
   <div class="box-title">Jargon decoder</div>
   <dl>
-    <dt>return / reward</dt><dd>One step's score vs the discounted sum over the future — the thing actually maximized.</dd>
-    <dt>on-policy / off-policy</dt><dd>Learning about the policy you're executing (SARSA, PPO) vs about a different (greedy) one (Q-learning, DQN).</dd>
-    <dt>model-based / model-free</dt><dd>Uses known/learned dynamics P(s′|s,a) (value iteration, MuZero) vs learns from transitions alone.</dd>
-    <dt>TD error</dt><dd>r + γV(s′) − V(s): the surprise; the universal learning signal (and dopamine's best computational model).</dd>
-    <dt>advantage</dt><dd>Q(s,a) − V(s): how much better an action is than the policy's average — the variance-reduced credit signal.</dd>
-    <dt>regret</dt><dd>Cumulative shortfall vs always playing the optimal action; the bandit performance metric.</dd>
-    <dt>reward model (RM)</dt><dd>Learned scorer of responses trained from human pairwise preferences.</dd>
-    <dt>Bradley–Terry</dt><dd>The pairwise-comparison probability model σ(r_A − r_B) behind RM training (and chess Elo).</dd>
+    <dt>behavior / target policy</dt><dd>The policy that generated data versus the policy being evaluated or improved.</dd>
+    <dt>on-policy / off-policy</dt><dd>Same behavior and target policy versus learning about a different target.</dd>
+    <dt>model-based / model-free</dt><dd>Plans with transition/reward dynamics versus learning without using such a model for action selection.</dd>
+    <dt>bootstrap</dt><dd>Use an existing next-state estimate inside a learning target.</dd>
+    <dt>TD error</dt><dd>Target minus current value: the one-step surprise used for an update.</dd>
+    <dt>advantage</dt><dd>How much better an action was than the policy's state-dependent expectation.</dd>
+    <dt>regret</dt><dd>Cumulative opportunity cost relative to the best arm under the stated bandit model.</dd>
+    <dt>reward model</dt><dd>A learned proxy for preference judgments, not the human objective itself.</dd>
   </dl>
 </div>
 
 <h2>Self-check</h2>
 <div class="quiz" data-answer="c">
-  <p class="quiz-q">1. In cliff-walking with ε-greedy behavior, SARSA learns a path far from the cliff while Q-learning hugs the edge. Why?</p>
+  <p class="quiz-q">1. A robot camera omits battery level, although battery level changes motion dynamics. Which statement is most accurate?</p>
   <div class="opts">
-    <button data-opt="a">Q-learning's α is too high</button>
-    <button data-opt="b">SARSA uses a larger γ</button>
-    <button data-opt="c">SARSA is on-policy: its values include the cost of its own ε-random stumbles off the cliff; Q-learning's max evaluates the greedy policy that never stumbles</button>
-    <button data-opt="d">they always converge to identical policies</button>
+    <button data-opt="a">the image is automatically a Markov state</button>
+    <button data-opt="b">discounting restores the Markov property</button>
+    <button data-opt="c">the observation is not sufficient; add relevant information or model partial observability</button>
+    <button data-opt="d">Q-learning removes hidden state</button>
   </div>
-  <div class="quiz-exp"><strong>c.</strong> The canonical on-/off-policy exam question (Sutton &amp; Barto Example 6.6). Q-learning is right about the greedy policy but the greedy policy isn't what's being executed during learning.</div>
+  <div class="quiz-exp"><strong>c.</strong> A state must summarize information relevant to future transitions and rewards. An algorithm cannot manufacture the Markov property from an insufficient observation.</div>
 </div>
+
 <div class="quiz" data-answer="b">
-  <p class="quiz-q">2. Subtracting a state-value baseline from returns in REINFORCE:</p>
+  <p class="quiz-q">2. A continuing simulator cuts every rollout at 1,000 steps only to control compute. At the cutoff, a TD value target should usually:</p>
   <div class="opts">
-    <button data-opt="a">introduces bias but reduces variance</button>
-    <button data-opt="b">leaves the gradient unbiased and reduces variance — E[b(s)∇log π] = 0 because probabilities sum to one</button>
-    <button data-opt="c">is only valid for deterministic policies</button>
-    <button data-opt="d">is equivalent to increasing the learning rate</button>
+    <button data-opt="a">force continuation value to zero because every “done” means terminal</button>
+    <button data-opt="b">bootstrap from the next state, while recording that the collector truncated a continuing process</button>
+    <button data-opt="c">discard the reward</button>
+    <button data-opt="d">set \(\gamma=0\) for the whole run</button>
   </div>
-  <div class="quiz-exp"><strong>b.</strong> ∑_a π(a|s) = 1 ⇒ ∑_a ∇π = 0, so any state-only baseline integrates to zero against the score function. This unbiased-variance-reduction argument is a standard derivation request.</div>
+  <div class="quiz-exp"><strong>b.</strong> External truncation differs from an MDP terminal state. If the time limit defines the actual task, include time in state and model the horizon explicitly.</div>
 </div>
+
 <div class="quiz" data-answer="d">
-  <p class="quiz-q">3. Remove the KL penalty from RLHF's objective and train PPO hard against the reward model. Expected outcome:</p>
+  <p class="quiz-q">3. Which statement correctly distinguishes value iteration from policy iteration?</p>
   <div class="opts">
-    <button data-opt="a">faster convergence to genuinely better responses</button>
-    <button data-opt="b">nothing changes; the KL term is a numerical nicety</button>
-    <button data-opt="c">the policy converges to the reference model</button>
-    <button data-opt="d">reward-model exploitation: the policy drifts into off-distribution outputs the RM mis-scores — high proxy reward, degenerate text</button>
+    <button data-opt="a">value iteration is model-free, while policy iteration always uses samples</button>
+    <button data-opt="b">value iteration cannot produce a policy</button>
+    <button data-opt="c">policy iteration applies only one Bellman backup and never evaluates a policy</button>
+    <button data-opt="d">value iteration repeats optimality backups; policy iteration alternates policy evaluation with greedy improvement</button>
   </div>
-  <div class="quiz-exp"><strong>d.</strong> The RM is only accurate near the data it was trained on. Unconstrained optimization against a learned proxy is Goodhart's law in action — the mechanism behind reward hacking (Topics 17/19).</div>
+  <div class="quiz-exp"><strong>d.</strong> Both are model-based dynamic-programming methods in this setting. Value iteration uses partial evaluation inside optimality backups; policy iteration separates evaluation and improvement.</div>
 </div>
+
 <div class="quiz" data-answer="a">
-  <p class="quiz-q">4. Your team must choose between RLHF and DPO for preference-tuning with a fixed dataset of 80k comparisons, no budget for online sampling. Recommend:</p>
+  <p class="quiz-q">4. For current \(Q=2\), reward \(1\), \(\gamma=0.9\), \(\alpha=0.5\), max next Q \(5\), and chosen next Q \(3\), the continuing Q-learning update gives:</p>
   <div class="opts">
-    <button data-opt="a">DPO — offline by design, one model, no RM/PPO infrastructure; well matched to a fixed preference set</button>
-    <button data-opt="b">RLHF — PPO always dominates offline methods</button>
-    <button data-opt="c">neither; preference data requires supervised fine-tuning only</button>
-    <button data-opt="d">train the reward model and stop there</button>
+    <button data-opt="a">3.75</button><button data-opt="b">2.85</button><button data-opt="c">5.50</button><button data-opt="d">4.50</button>
   </div>
-  <div class="quiz-exp"><strong>a.</strong> DPO's sweet spot is exactly this: fixed offline preferences, limited infra. RLHF earns its complexity when you can sample fresh responses and iterate the RM (Topic 17 develops the full decision).</div>
+  <div class="quiz-exp"><strong>a.</strong> Target \(=1+0.9(5)=5.5\); updated value \(=2+0.5(5.5-2)=3.75\). SARSA would use the chosen value and update to \(2.85\).</div>
+</div>
+
+<div class="quiz" data-answer="c">
+  <p class="quiz-q">5. Which statement about DQN is defensible?</p>
+  <div class="opts">
+    <button data-opt="a">replay and a target network guarantee convergence with any neural network</button>
+    <button data-opt="b">DQN is on-policy because it samples replay</button>
+    <button data-opt="c">replay and a target network improve stability, while function approximation, bootstrapping, and off-policy data can still fail</button>
+    <button data-opt="d">DQN requires a known transition matrix</button>
+  </div>
+  <div class="quiz-exp"><strong>c.</strong> DQN is model-free and off-policy. Its engineering stabilizers are powerful, but they do not supply the tabular convergence theorem.</div>
+</div>
+
+<div class="quiz" data-answer="b">
+  <p class="quiz-q">6. Why can a state-only baseline reduce REINFORCE variance without changing its expected gradient?</p>
+  <div class="opts">
+    <button data-opt="a">it increases every action probability equally</button>
+    <button data-opt="b">its expected score-function term is zero: \(\mathbb E_{a\sim\pi}[\nabla\log\pi(a\mid s)]=0\)</button>
+    <button data-opt="c">it makes returns deterministic</button>
+    <button data-opt="d">it converts the method to off-policy learning</button>
+  </div>
+  <div class="quiz-exp"><strong>b.</strong> The baseline must not introduce uncorrected action dependence. A finite sample can still show a small mean change even though the expectation is unchanged.</div>
+</div>
+
+<div class="quiz" data-answer="d">
+  <p class="quiz-q">7. PPO has old probability 0.20, new probability 0.26, advantage \(2\), and \(\epsilon=0.2\). The clipped surrogate contribution is:</p>
+  <div class="opts">
+    <button data-opt="a">2.0</button><button data-opt="b">2.2</button><button data-opt="c">2.6</button><button data-opt="d">2.4</button>
+  </div>
+  <div class="quiz-exp"><strong>d.</strong> The ratio is \(1.3\). Compare \(1.3(2)=2.6\) with \(1.2(2)=2.4\) and take the minimum.</div>
+</div>
+
+<div class="quiz" data-answer="a">
+  <p class="quiz-q">8. Which exploration claim needs no missing qualification?</p>
+  <div class="opts">
+    <button data-opt="a">UCB's logarithmic-regret results rely on a specified stationary reward model and index rule</button>
+    <button data-opt="b">constant-\(\varepsilon\) greedy always has logarithmic regret</button>
+    <button data-opt="c">Thompson sampling needs no prior or likelihood</button>
+    <button data-opt="d">a bandit captures actions that alter all future states</button>
+  </div>
+  <div class="quiz-exp"><strong>a.</strong> Regret theorems depend on their assumptions. Nonstationarity, delayed/censored feedback, and context can require a different design.</div>
+</div>
+
+<div class="quiz" data-answer="c">
+  <p class="quiz-q">9. Candidate A has reward 1.4 and KL 0.3; B has reward 1.7 and KL 1.2. With \(\beta=0.5\), which has the larger reward-minus-KL score?</p>
+  <div class="opts">
+    <button data-opt="a">B, because raw reward always dominates</button>
+    <button data-opt="b">they tie</button>
+    <button data-opt="c">A: 1.25 versus B: 1.10</button>
+    <button data-opt="d">the score is undefined whenever KL is nonzero</button>
+  </div>
+  <div class="quiz-exp"><strong>c.</strong> A gives \(1.4-0.5(0.3)=1.25\); B gives \(1.7-0.5(1.2)=1.10\). This scalar is still only an illustrative proxy objective.</div>
+</div>
+
+<div class="quiz" data-answer="b">
+  <p class="quiz-q">10. Which comparison among reward-model-plus-PPO RLHF and direct preference objectives is most accurate?</p>
+  <div class="opts">
+    <button data-opt="a">DPO and KTO remove the need for human- or model-supplied feedback labels</button>
+    <button data-opt="b">DPO uses paired preferences relative to a reference; KTO can use unpaired desirable/undesirable labels; reward-model-plus-PPO retains an explicit reward model and rollout loop</button>
+    <button data-opt="c">ORPO's lack of a separate reference model guarantees less policy drift and safer outputs</button>
+    <button data-opt="d">DPO, IPO, KTO, and ORPO optimize the same loss and differ only in implementation</button>
+  </div>
+  <div class="quiz-exp"><strong>b.</strong> The feedback shape, reference/anchor, and training loop differ. ORPO combines chosen-response likelihood with an odds-ratio penalty, while IPO changes the pairwise loss geometry. All inherit feedback-quality, coverage, and distribution-shift risks; none dominates without task evidence.</div>
 </div>
 
 <h2>Go deeper</h2>
 <ul class="resources">
-  <li><a href="http://incompleteideas.net/book/the-book-2nd.html">Sutton &amp; Barto — Reinforcement Learning: An Introduction (free PDF)</a><div class="rwhat">THE book. Ch. 3–4 (MDPs, DP), 6 (TD/Q-learning/SARSA), 13 (policy gradients). Do the gridworld exercises by hand once.</div></li>
-  <li><a href="https://spinningup.openai.com/">OpenAI Spinning Up in Deep RL (free)</a><div class="rwhat">"Intro to Policy Optimization" derives REINFORCE→baseline→PPO exactly as the exam wants it, with code.</div></li>
-  <li><a href="https://arxiv.org/abs/1707.06347">PPO (Schulman et al., 2017)</a><div class="rwhat">§3 for the clipped objective — 2 pages of the most-used RL algorithm alive.</div></li>
-  <li><a href="https://arxiv.org/abs/2203.02155">InstructGPT (Ouyang et al., 2022)</a><div class="rwhat">The RLHF recipe as deployed: Fig. 2 is the three-stage diagram everyone redraws.</div></li>
-  <li><a href="https://arxiv.org/abs/2305.18290">DPO (Rafailov et al., 2023)</a><div class="rwhat">§4: the change-of-variables that eliminates the reward model.</div></li>
-  <li><a href="https://karpathy.github.io/2016/05/31/rl/">Karpathy — Pong from Pixels</a><div class="rwhat">Policy gradients built from nothing in 130 lines; the best intuition pump for §11.3.</div></li>
+  <li><a href="http://incompleteideas.net/book/the-book-2nd.html">Sutton &amp; Barto — Reinforcement Learning: An Introduction</a><div class="rwhat">Primary textbook treatment of MDPs, dynamic programming, TD control, policy gradients, and bandits.</div></li>
+  <li><a href="https://www.nature.com/articles/nature14236">Human-level control through deep reinforcement learning</a><div class="rwhat">The DQN paper: replay, target networks, Atari evaluation, and stability choices.</div></li>
+  <li><a href="https://arxiv.org/abs/1602.01783">Asynchronous Methods for Deep Reinforcement Learning</a><div class="rwhat">The actor–critic lineage behind A3C and its synchronous A2C variant.</div></li>
+  <li><a href="https://arxiv.org/abs/1707.06347">Proximal Policy Optimization Algorithms</a><div class="rwhat">The clipped-surrogate objective and empirical motivation.</div></li>
+  <li><a href="https://link.springer.com/article/10.1023/A:1013689704352">Finite-time Analysis of the Multiarmed Bandit Problem</a><div class="rwhat">Primary UCB regret analysis and assumptions.</div></li>
+  <li><a href="https://arxiv.org/abs/2203.02155">Training language models to follow instructions with human feedback</a><div class="rwhat">The supervised, reward-model, and PPO pipeline used for InstructGPT.</div></li>
+  <li><a href="https://arxiv.org/abs/2305.18290">Direct Preference Optimization</a><div class="rwhat">Reference-relative preference optimization without an explicit learned reward model.</div></li>
+  <li><a href="https://arxiv.org/abs/2402.01306">KTO: Model Alignment as Prospect Theoretic Optimization</a><div class="rwhat">Primary paper for learning from desirable/undesirable feedback without requiring paired comparisons.</div></li>
+  <li><a href="https://arxiv.org/abs/2403.07691">ORPO: Monolithic Preference Optimization without Reference Model</a><div class="rwhat">Primary paper for combining supervised fine-tuning and an odds-ratio preference penalty without a separate reference model.</div></li>
 </ul>
 
 <div class="page-footer"></div>
@@ -283,264 +797,322 @@
 
 <script>
 document.addEventListener("caie:ready", () => {
-  // ================== gridworld ==================
-  (function () {
-    const ROWS = 5, COLS = 7;
-    // 0 empty, 1 wall, 2 goal(+1), 3 pit(-1)
-    const grid = [
-      [0, 0, 0, 0, 0, 0, 0],
-      [0, 1, 1, 0, 1, 2, 0],
-      [0, 0, 0, 0, 1, 3, 0],
-      [0, 1, 0, 0, 0, 0, 0],
-      [0, 0, 0, 1, 0, 0, 0]
-    ];
-    const START = [4, 0];
-    const STEP = -0.04;
-    const dirs = [[-1, 0], [1, 0], [0, -1], [0, 1]]; // U D L R
-    const arrows = ["↑", "↓", "←", "→"];
-    let V = zeros(), Q = qzeros(), sweeps = 0, episodes = 0, mode = "vi";
-    let agentPos = null;
-    function zeros() { return [...Array(ROWS)].map(() => new Array(COLS).fill(0)); }
-    function qzeros() { return [...Array(ROWS)].map(() => [...Array(COLS)].map(() => [0, 0, 0, 0])); }
-    function terminal(r, c) { return grid[r][c] === 2 || grid[r][c] === 3; }
-    function reward(r, c) { return grid[r][c] === 2 ? 1 : grid[r][c] === 3 ? -1 : STEP; }
-    function stepEnv(r, c, a) {
-      // 80% intended, 10% each perpendicular
-      const rr = Math.random();
-      let d = a;
-      if (rr > 0.8) {
-        const perp = (a < 2) ? [2, 3] : [0, 1];
-        d = perp[rr > 0.9 ? 1 : 0];
-      }
-      let nr = r + dirs[d][0], nc = c + dirs[d][1];
-      if (nr < 0 || nr >= ROWS || nc < 0 || nc >= COLS || grid[nr][nc] === 1) { nr = r; nc = c; }
-      return [nr, nc];
+  // ---------- Bellman expectation calculator ----------
+  (function topic11BellmanCalculator() {
+    const ids = ["be-p","be-r1","be-v1","be-r2","be-v2","be-gamma","be-readout"];
+    const e = Object.fromEntries(ids.map(id => [id, document.getElementById(id)]));
+    if (ids.some(id => !e[id])) return;
+    const fields = ids.slice(0, -1).map(id => e[id]);
+    function fail(message, field) {
+      fields.forEach(x => x.removeAttribute("aria-invalid"));
+      if (field) field.setAttribute("aria-invalid", "true");
+      e["be-readout"].textContent = "Cannot calculate: " + message;
     }
-    function viSweep() {
-      const g = +document.getElementById("vi-g").value;
-      const nv = zeros();
-      let delta = 0;
-      for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
-        if (grid[r][c] === 1) continue;
-        if (terminal(r, c)) { nv[r][c] = reward(r, c); continue; }
-        let best = -1e9;
-        for (let a = 0; a < 4; a++) {
-          let q = 0;
-          // expected over stochastic transitions
-          const outs = [[a, 0.8], [(a < 2 ? 2 : 0), 0.1], [(a < 2 ? 3 : 1), 0.1]];
-          for (const [d, p] of outs) {
-            let nr = r + dirs[d][0], nc = c + dirs[d][1];
-            if (nr < 0 || nr >= ROWS || nc < 0 || nc >= COLS || grid[nr][nc] === 1) { nr = r; nc = c; }
-            q += p * (STEP + g * V[nr][nc]);
-          }
-          if (q > best) best = q;
-        }
-        nv[r][c] = best;
-        delta = Math.max(delta, Math.abs(nv[r][c] - V[r][c]));
-      }
-      V = nv; sweeps++;
-      return delta;
+    function update() {
+      fields.forEach(x => x.removeAttribute("aria-invalid"));
+      const empty = fields.find(x => !x.value.trim());
+      if (empty) return fail("all fields are required.", empty);
+      const v = fields.map(x => Number(x.value));
+      const bad = v.findIndex(x => !Number.isFinite(x));
+      if (bad >= 0) return fail("values must be finite numbers.", fields[bad]);
+      if (v[0] < 0 || v[0] > 1) return fail("probability must be between 0 and 1.", fields[0]);
+      if (v[5] < 0 || v[5] > 1) return fail("discount must be between 0 and 1.", fields[5]);
+      const first = v[1] + v[5] * v[2];
+      const second = v[3] + v[5] * v[4];
+      const total = v[0] * first + (1 - v[0]) * second;
+      if (![first, second, total].every(Number.isFinite)) return fail("calculation overflowed.", fields[2]);
+      e["be-readout"].textContent = "outcome 1 continuation " + first.toFixed(3) +
+        " · outcome 2 continuation " + second.toFixed(3) +
+        " · probability-weighted Bellman target " + total.toFixed(3) + ".";
     }
-    function qlEpisodes(n) {
-      const g = 0.9;
-      const eps = +document.getElementById("ql-e").value;
-      const alpha = +document.getElementById("ql-a").value;
-      for (let ep = 0; ep < n; ep++) {
-        let [r, c] = START, guard = 0;
-        while (!terminal(r, c) && guard++ < 200) {
-          const a = Math.random() < eps ? Math.floor(Math.random() * 4)
-            : Q[r][c].indexOf(Math.max(...Q[r][c]));
-          const [nr, nc] = stepEnv(r, c, a);
-          const rew = terminal(nr, nc) ? reward(nr, nc) : STEP;
-          const target = terminal(nr, nc) ? rew : rew + g * Math.max(...Q[nr][nc]);
-          Q[r][c][a] += alpha * (target - Q[r][c][a]);
-          r = nr; c = nc;
-        }
-        episodes++;
-      }
-    }
-    const canvas = document.getElementById("gw-canvas");
-    function draw() {
-      const pal = CAIE.pal();
-      const W = Math.min(640, canvas.parentNode.clientWidth - 4);
-      const { ctx, w, h } = CAIE.setupCanvas(canvas, W, 300);
-      ctx.clearRect(0, 0, w, h);
-      const cell = Math.min((w - 8) / COLS, (h - 8) / ROWS);
-      const x0 = (w - cell * COLS) / 2, y0 = (h - cell * ROWS) / 2;
-      for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
-        const x = x0 + c * cell, y = y0 + r * cell;
-        let fill;
-        const val = mode === "vi" ? V[r][c] : Math.max(...Q[r][c]);
-        if (grid[r][c] === 1) fill = pal.baseline;
-        else if (grid[r][c] === 2) fill = pal.good;
-        else if (grid[r][c] === 3) fill = pal.critical;
-        else fill = CAIE.div(Math.max(-1, Math.min(1, val * 1.6)));
-        ctx.fillStyle = fill;
-        ctx.beginPath(); ctx.roundRect(x + 2, y + 2, cell - 4, cell - 4, 6); ctx.fill();
-        if (grid[r][c] === 0) {
-          ctx.fillStyle = Math.abs(val) > 0.4 ? "#fff" : pal.ink;
-          ctx.font = "10px " + CAIE.css("--mono"); ctx.textAlign = "center";
-          ctx.fillText(val.toFixed(2), x + cell / 2, y + cell - 9);
-          // policy arrow
-          const qs = mode === "vi" ? null : Q[r][c];
-          let bestA = -1;
-          if (mode === "vi") {
-            // derive greedy action from V
-            let bq = -1e9;
-            for (let a = 0; a < 4; a++) {
-              let nr = r + dirs[a][0], nc = c + dirs[a][1];
-              if (nr < 0 || nr >= ROWS || nc < 0 || nc >= COLS || grid[nr][nc] === 1) { nr = r; nc = c; }
-              const q = STEP + 0.9 * V[nr][nc];
-              if (q > bq) { bq = q; bestA = a; }
-            }
-            if (sweeps === 0) bestA = -1;
-          } else {
-            const mx = Math.max(...qs);
-            if (qs.some(v => v !== 0)) bestA = qs.indexOf(mx);
-          }
-          if (bestA >= 0) {
-            ctx.font = "600 " + (cell * 0.34) + "px " + CAIE.css("--sans");
-            ctx.fillStyle = Math.abs(val) > 0.4 ? "#fff" : pal.ink;
-            ctx.fillText(arrows[bestA], x + cell / 2, y + cell / 2 + 2);
-          }
-        } else if (grid[r][c] !== 1) {
-          ctx.fillStyle = "#fff"; ctx.font = "700 " + (cell * 0.4) + "px " + CAIE.css("--sans");
-          ctx.textAlign = "center"; ctx.textBaseline = "middle";
-          ctx.fillText(grid[r][c] === 2 ? "+1" : "−1", x + cell / 2, y + cell / 2);
-          ctx.textBaseline = "alphabetic";
-        }
-      }
-      // start marker
-      ctx.strokeStyle = pal.s[2]; ctx.lineWidth = 3;
-      ctx.strokeRect(x0 + START[1] * cell + 2, y0 + START[0] * cell + 2, cell - 4, cell - 4);
-      document.getElementById("gw-readout").innerHTML = mode === "vi"
-        ? "sweeps: <b>" + sweeps + "</b><span>yellow box = start state; arrows = greedy policy w.r.t. current V</span>"
-        : "episodes: <b>" + episodes + "</b><span>cell value = max_a Q(s,a); arrows = argmax Q</span>";
-    }
-    document.getElementById("vi-step").addEventListener("click", () => { viSweep(); draw(); });
-    document.getElementById("vi-run").addEventListener("click", () => {
-      let guard = 0;
-      while (viSweep() > 1e-4 && guard++ < 500) {}
-      draw();
-    });
-    document.getElementById("vi-reset").addEventListener("click", () => { V = zeros(); sweeps = 0; draw(); });
-    document.getElementById("vi-g").addEventListener("input", () => {
-      document.getElementById("vi-g-v").textContent = document.getElementById("vi-g").value;
-      V = zeros(); sweeps = 0; draw();
-    });
-    document.getElementById("ql-run").addEventListener("click", () => { qlEpisodes(200); draw(); });
-    document.getElementById("ql-reset").addEventListener("click", () => { Q = qzeros(); episodes = 0; draw(); });
-    ["ql-e", "ql-a"].forEach(id => document.getElementById(id).addEventListener("input", () => {
-      document.getElementById(id + "-v").textContent = document.getElementById(id).value;
-    }));
-    document.getElementById("vi-g-v").textContent = "0.9";
-    document.getElementById("ql-e-v").textContent = "0.2";
-    document.getElementById("ql-a-v").textContent = "0.5";
-    document.addEventListener("caie:tab", e => {
-      if (e.detail.group === "gw") { mode = e.detail.tab; draw(); }
-    });
-    CAIE.onTheme(draw); window.addEventListener("resize", draw);
-    draw();
+    fields.forEach(x => x.addEventListener("input", update));
+    update();
   })();
 
-  // ================== bandits ==================
-  (function () {
-    const canvas = document.getElementById("bd-canvas");
-    const p = [0.35, 0.5, 0.65, 0.45, 0.25];
-    const best = Math.max(...p);
-    let curves = null;
-    function run() {
-      const eps = +document.getElementById("bd-e").value;
-      const T = 1000;
-      const strategies = {
-        "ε-greedy": () => {
-          const n = new Array(5).fill(0), s = new Array(5).fill(0);
-          return t => {
-            let a;
-            if (Math.random() < eps || t < 5) a = t < 5 ? t : Math.floor(Math.random() * 5);
-            else { const m = n.map((ni, i) => ni ? s[i] / ni : 0); a = m.indexOf(Math.max(...m)); }
-            const r = Math.random() < p[a] ? 1 : 0;
-            n[a]++; s[a] += r;
-            return [a, r];
-          };
-        },
-        "UCB": () => {
-          const n = new Array(5).fill(0), s = new Array(5).fill(0);
-          return t => {
-            let a;
-            if (t < 5) a = t;
-            else {
-              const u = n.map((ni, i) => s[i] / ni + 1.2 * Math.sqrt(Math.log(t + 1) / ni));
-              a = u.indexOf(Math.max(...u));
-            }
-            const r = Math.random() < p[a] ? 1 : 0;
-            n[a]++; s[a] += r;
-            return [a, r];
-          };
-        },
-        "Thompson": () => {
-          const alpha = new Array(5).fill(1), beta = new Array(5).fill(1);
-          function betaSample(a, b) {
-            // approx via gamma from sums of exponentials (small ints ok) -> use normal approx fallback
-            const ga = gammaS(a), gb = gammaS(b);
-            return ga / (ga + gb);
-          }
-          function gammaS(k) {
-            // Marsaglia-Tsang for k>=1
-            let d = k - 1 / 3, c = 1 / Math.sqrt(9 * d);
-            while (true) {
-              let x = CAIE.gauss(Math.random), v = Math.pow(1 + c * x, 3);
-              if (v <= 0) continue;
-              const u = Math.random();
-              if (Math.log(u) < 0.5 * x * x + d - d * v + d * Math.log(v)) return d * v;
-            }
-          }
-          return () => {
-            const draws = alpha.map((a2, i) => betaSample(a2, beta[i]));
-            const a = draws.indexOf(Math.max(...draws));
-            const r = Math.random() < p[a] ? 1 : 0;
-            if (r) alpha[a]++; else beta[a]++;
-            return [a, r];
-          };
+  // ---------- small synchronous value iteration ----------
+  (function topic11ValueIteration() {
+    const ids = ["dp-gamma","dp-step-reward","dp-goal-reward","dp-step","dp-run","dp-reset","dp-table","dp-readout"];
+    const e = Object.fromEntries(ids.map(id => [id, document.getElementById(id)]));
+    if (ids.some(id => !e[id])) return;
+    const fields = [e["dp-gamma"],e["dp-step-reward"],e["dp-goal-reward"]];
+    let values = [0,0,0], sweeps = 0, last = null;
+    function fail(message, field) {
+      fields.forEach(x => x.removeAttribute("aria-invalid"));
+      if (field) field.setAttribute("aria-invalid", "true");
+      e["dp-readout"].textContent = "Cannot calculate: " + message;
+    }
+    function params() {
+      fields.forEach(x => x.removeAttribute("aria-invalid"));
+      const empty = fields.find(x => !x.value.trim());
+      if (empty) { fail("all model fields are required.", empty); return null; }
+      const v = fields.map(x => Number(x.value));
+      const bad = v.findIndex(x => !Number.isFinite(x));
+      if (bad >= 0) { fail("model values must be finite.", fields[bad]); return null; }
+      if (v[0] < 0 || v[0] >= 1) { fail("this convergence lab requires 0 ≤ discount < 1.", fields[0]); return null; }
+      return {gamma:v[0],step:v[1],goal:v[2]};
+    }
+    function calculateActionValues(p, old) {
+      return [
+        [p.step + p.gamma * old[1], p.step + p.gamma * old[0]],
+        [p.goal, p.step + p.gamma * old[1]],
+        [0,0]
+      ];
+    }
+    function sweep(renderNow) {
+      const p = params(); if (!p) return null;
+      const action = calculateActionValues(p, values);
+      const next = [Math.max(...action[0]),Math.max(...action[1]),0];
+      const delta = Math.max(...next.map((x,i)=>Math.abs(x-values[i])));
+      values = next; sweeps++; last = {action,delta};
+      if (renderNow !== false) render(p);
+      return delta;
+    }
+    function cell(tag, text, scope) {
+      const n = document.createElement(tag); n.textContent = text;
+      if (scope) n.setAttribute("scope", scope);
+      return n;
+    }
+    function render(p) {
+      const action = calculateActionValues(p, values);
+      const caption = document.createElement("caption");
+      caption.textContent = "Current state values and action values after synchronous backups.";
+      const thead = document.createElement("thead"), hr = document.createElement("tr");
+      ["state","V","advance","wait","greedy action"].forEach(x=>hr.appendChild(cell("th",x,"col")));
+      thead.appendChild(hr);
+      const tbody = document.createElement("tbody");
+      ["A","B","goal"].forEach((name,i)=>{
+        const tr=document.createElement("tr");
+        tr.appendChild(cell("th",name,"row"));
+        tr.appendChild(cell("td",values[i].toFixed(3)));
+        if (i===2) {
+          tr.appendChild(cell("td","terminal")); tr.appendChild(cell("td","terminal")); tr.appendChild(cell("td","—"));
+        } else {
+          tr.appendChild(cell("td",action[i][0].toFixed(3)));
+          tr.appendChild(cell("td",action[i][1].toFixed(3)));
+          tr.appendChild(cell("td",action[i][0] >= action[i][1] ? "advance" : "wait"));
         }
-      };
-      curves = {};
-      for (const [name, mk] of Object.entries(strategies)) {
-        const stepFn = mk();
-        let regret = 0;
-        const cur = [];
-        for (let t = 0; t < T; t++) {
-          const [a] = stepFn(t);
-          regret += best - p[a];
-          cur.push(regret);
-        }
-        curves[name] = cur;
+        tbody.appendChild(tr);
+      });
+      e["dp-table"].replaceChildren(caption,thead,tbody);
+      const d = last ? last.delta.toFixed(6) : "not yet computed";
+      e["dp-readout"].textContent = "completed sweeps " + sweeps + " · maximum value change " + d +
+        " · values use the previous sweep, not in-place updates.";
+    }
+    function reset() {
+      const p=params(); if(!p) return;
+      values=[0,0,0];sweeps=0;last=null;render(p);
+    }
+    e["dp-step"].addEventListener("click",sweep);
+    e["dp-run"].addEventListener("click",()=>{
+      const p=params();if(!p)return;
+      let delta=Infinity,guard=0;
+      while(delta>=1e-8&&guard<1000){delta=sweep(false);if(delta===null)return;guard++;}
+      render(p);
+      e["dp-readout"].textContent += guard>=1000 ? " · iteration cap reached." : " · tolerance reached.";
+    });
+    e["dp-reset"].addEventListener("click",reset);
+    fields.forEach(x=>x.addEventListener("input",reset));
+    reset();
+  })();
+
+  // ---------- TD target calculator ----------
+  (function topic11TDCalculator() {
+    const ids=["td-method","td-current","td-reward","td-max","td-chosen","td-alpha","td-gamma","td-end","td-readout"];
+    const e=Object.fromEntries(ids.map(id=>[id,document.getElementById(id)]));
+    if(ids.some(id=>!e[id]))return;
+    const fields=["td-current","td-reward","td-max","td-chosen","td-alpha","td-gamma"].map(id=>e[id]);
+    function fail(message,field){fields.forEach(x=>x.removeAttribute("aria-invalid"));if(field)field.setAttribute("aria-invalid","true");e["td-readout"].textContent="Cannot calculate: "+message;}
+    function update(){
+      fields.forEach(x=>x.removeAttribute("aria-invalid"));
+      const empty=fields.find(x=>!x.value.trim());if(empty)return fail("all numeric fields are required.",empty);
+      const v=fields.map(x=>Number(x.value)),bad=v.findIndex(x=>!Number.isFinite(x));
+      if(bad>=0)return fail("values must be finite.",fields[bad]);
+      if(v[4]<0||v[4]>1)return fail("learning rate must be between 0 and 1.",fields[4]);
+      if(v[5]<0||v[5]>1)return fail("discount must be between 0 and 1.",fields[5]);
+      const ended=e["td-end"].value==="terminal";
+      const next=e["td-method"].value==="q"?v[2]:v[3];
+      const bootstrap=ended?0:v[5]*next;
+      const target=v[1]+bootstrap,delta=target-v[0],updated=v[0]+v[4]*delta;
+      if(![target,delta,updated].every(Number.isFinite))return fail("calculation overflowed.",fields[0]);
+      const method=e["td-method"].value==="q"?"Q-learning max":"SARSA chosen-action";
+      const endText=e["td-end"].value==="terminal"?"true terminal: no bootstrap":
+        e["td-end"].value==="truncated"?"external truncation: continuation bootstrap retained":"continuing transition";
+      e["td-readout"].textContent=method+" · "+endText+" · target "+target.toFixed(3)+
+        " · TD error "+delta.toFixed(3)+" · updated Q "+updated.toFixed(3)+".";
+    }
+    fields.forEach(x=>x.addEventListener("input",update));
+    [e["td-method"],e["td-end"]].forEach(x=>x.addEventListener("change",update));
+    update();
+  })();
+
+  // ---------- policy-gradient baseline calculator ----------
+  (function topic11PolicyGradientCalculator() {
+    const ids=["pg-samples","pg-baseline","pg-table","pg-readout"];
+    const e=Object.fromEntries(ids.map(id=>[id,document.getElementById(id)]));
+    if(ids.some(id=>!e[id]))return;
+    const inputs=[e["pg-samples"],e["pg-baseline"]];
+    function fail(message,field){inputs.forEach(x=>x.removeAttribute("aria-invalid"));if(field)field.setAttribute("aria-invalid","true");e["pg-readout"].textContent="Cannot calculate: "+message;e["pg-table"].replaceChildren();}
+    function parse(){
+      if(!e["pg-samples"].value.trim()){fail("at least one return,gradient row is required.",e["pg-samples"]);return null;}
+      const lines=e["pg-samples"].value.split(/\r?\n/).filter(x=>x.trim());
+      const rows=[];
+      for(let i=0;i<lines.length;i++){
+        const p=lines[i].split(",").map(x=>x.trim());
+        if(p.length!==2||p.some(x=>x==="")){fail("line "+(i+1)+" must be return,score-gradient.",e["pg-samples"]);return null;}
+        const nums=p.map(Number);
+        if(nums.some(x=>!Number.isFinite(x))){fail("line "+(i+1)+" contains a non-finite number.",e["pg-samples"]);return null;}
+        rows.push(nums);
       }
+      return rows;
+    }
+    function cell(tag,text,scope){const n=document.createElement(tag);n.textContent=text;if(scope)n.setAttribute("scope",scope);return n;}
+    function sampleVariance(xs){if(xs.length<2)return null;const m=xs.reduce((a,b)=>a+b,0)/xs.length;return xs.reduce((a,b)=>a+(b-m)*(b-m),0)/(xs.length-1);}
+    function update(){
+      inputs.forEach(x=>x.removeAttribute("aria-invalid"));
+      if(!e["pg-baseline"].value.trim())return fail("baseline is required.",e["pg-baseline"]);
+      const baseline=Number(e["pg-baseline"].value);if(!Number.isFinite(baseline))return fail("baseline must be finite.",e["pg-baseline"]);
+      const rows=parse();if(!rows)return;
+      const raw=rows.map(x=>x[0]*x[1]),adjusted=rows.map(x=>(x[0]-baseline)*x[1]);
+      if(!raw.concat(adjusted).every(Number.isFinite))return fail("contribution calculation overflowed.",e["pg-samples"]);
+      const caption=document.createElement("caption");caption.textContent="Sample policy-gradient contributions before and after subtracting the baseline.";
+      const thead=document.createElement("thead"),hr=document.createElement("tr");
+      ["sample","return","score gradient","raw contribution","baseline-adjusted"].forEach(x=>hr.appendChild(cell("th",x,"col")));thead.appendChild(hr);
+      const tbody=document.createElement("tbody");
+      rows.forEach((row,i)=>{const tr=document.createElement("tr");tr.appendChild(cell("th",String(i+1),"row"));[row[0],row[1],raw[i],adjusted[i]].forEach(x=>tr.appendChild(cell("td",x.toFixed(3))));tbody.appendChild(tr);});
+      e["pg-table"].replaceChildren(caption,thead,tbody);
+      const mean=x=>x.reduce((a,b)=>a+b,0)/x.length;
+      const rv=sampleVariance(raw),av=sampleVariance(adjusted);
+      e["pg-readout"].textContent="raw mean "+mean(raw).toFixed(3)+" · adjusted mean "+mean(adjusted).toFixed(3)+
+        " · raw sample variance "+(rv===null?"undefined":rv.toFixed(3))+
+        " · adjusted sample variance "+(av===null?"undefined":av.toFixed(3))+
+        " · expectation is unchanged only under the action-independent baseline identity; finite-sample means may differ.";
+    }
+    inputs.forEach(x=>x.addEventListener("input",update));
+    update();
+  })();
+
+  // ---------- PPO clipping calculator ----------
+  (function topic11PPOCalculator() {
+    const ids=["ppo-old","ppo-new","ppo-adv","ppo-eps","ppo-readout"];
+    const e=Object.fromEntries(ids.map(id=>[id,document.getElementById(id)]));
+    if(ids.some(id=>!e[id]))return;
+    const fields=ids.slice(0,-1).map(id=>e[id]);
+    function fail(message,field){fields.forEach(x=>x.removeAttribute("aria-invalid"));if(field)field.setAttribute("aria-invalid","true");e["ppo-readout"].textContent="Cannot calculate: "+message;}
+    function update(){
+      fields.forEach(x=>x.removeAttribute("aria-invalid"));const empty=fields.find(x=>!x.value.trim());
+      if(empty)return fail("all fields are required.",empty);
+      const v=fields.map(x=>Number(x.value)),bad=v.findIndex(x=>!Number.isFinite(x));if(bad>=0)return fail("values must be finite.",fields[bad]);
+      if(v[0]<=0||v[0]>1)return fail("old probability must be in (0,1].",fields[0]);
+      if(v[1]<=0||v[1]>1)return fail("new probability must be in (0,1].",fields[1]);
+      if(v[3]<=0||v[3]>=1)return fail("clip width must be between 0 and 1.",fields[3]);
+      const ratio=v[1]/v[0],clipped=Math.min(1+v[3],Math.max(1-v[3],ratio));
+      const raw=ratio*v[2],bounded=clipped*v[2],surrogate=Math.min(raw,bounded);
+      if(![ratio,raw,bounded,surrogate].every(Number.isFinite))return fail("calculation overflowed.",fields[0]);
+      const active=Math.abs(raw-surrogate)>1e-12?"clipping limits this sampled contribution":"clipping does not change this sampled contribution";
+      e["ppo-readout"].textContent="ratio "+ratio.toFixed(3)+" · clipped ratio "+clipped.toFixed(3)+
+        " · ratio×advantage "+raw.toFixed(3)+" · clipped-ratio×advantage "+bounded.toFixed(3)+
+        " · surrogate "+surrogate.toFixed(3)+" · "+active+".";
+    }
+    fields.forEach(x=>x.addEventListener("input",update));
+    update();
+  })();
+
+  // ---------- reproducible bandit calculator ----------
+  (function topic11BanditCalculator() {
+    const ids=["bd-a-s","bd-a-f","bd-b-s","bd-b-f","bd-c-s","bd-c-f","bd-epsilon","bd-c","bd-seed","bd-next","bd-canvas","bd-table","bd-readout"];
+    const e=Object.fromEntries(ids.map(id=>[id,document.getElementById(id)]));
+    if(ids.some(id=>!e[id]))return;
+    const counts=ids.slice(0,6).map(id=>e[id]),numeric=counts.concat([e["bd-epsilon"],e["bd-c"],e["bd-seed"]]);
+    let last=null;
+    function fail(message,field){numeric.forEach(x=>x.removeAttribute("aria-invalid"));if(field)field.setAttribute("aria-invalid","true");e["bd-readout"].textContent="Cannot calculate: "+message;e["bd-table"].replaceChildren();last=null;draw();}
+    function rng(seed){let x=seed>>>0;return function(){x=(1664525*x+1013904223)>>>0;return (x+0.5)/4294967296;};}
+    function normal(random){const u=Math.max(Number.MIN_VALUE,random()),v=random();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);}
+    function gamma(shape,random){const d=shape-1/3,c=1/Math.sqrt(9*d);for(let guard=0;guard<10000;guard++){const x=normal(random),base=1+c*x;if(base<=0)continue;const cube=base*base*base,u=random();if(u<1-0.0331*x*x*x*x||Math.log(u)<0.5*x*x+d*(1-cube+Math.log(cube)))return d*cube;}return shape;}
+    function betaSample(a,b,random){const x=gamma(a,random),y=gamma(b,random);return x/(x+y);}
+    function cell(tag,text,scope){const n=document.createElement(tag);n.textContent=text;if(scope)n.setAttribute("scope",scope);return n;}
+    function update(){
+      numeric.forEach(x=>x.removeAttribute("aria-invalid"));
+      const empty=numeric.find(x=>!x.value.trim());if(empty)return fail("all fields are required.",empty);
+      const cv=counts.map(x=>Number(x.value)),bad=cv.findIndex(x=>!Number.isSafeInteger(x)||x<0||x>Number.MAX_SAFE_INTEGER-1);
+      if(bad>=0)return fail("successes and failures must be nonnegative safe integers.",counts[bad]);
+      const eps=Number(e["bd-epsilon"].value),c=Number(e["bd-c"].value),seed=Number(e["bd-seed"].value);
+      if(!Number.isFinite(eps)||eps<0||eps>1)return fail("epsilon must be between 0 and 1.",e["bd-epsilon"]);
+      if(!Number.isFinite(c)||c<0)return fail("UCB c must be finite and nonnegative.",e["bd-c"]);
+      if(!Number.isSafeInteger(seed)||seed<1||seed>4294967295)return fail("seed must be an integer from 1 to 4,294,967,295.",e["bd-seed"]);
+      const arms=[[cv[0],cv[1]],[cv[2],cv[3]],[cv[4],cv[5]]],total=arms.reduce((z,a)=>z+a[0]+a[1],0);
+      if(!Number.isSafeInteger(total))return fail("total count exceeds the safe integer range.",counts[0]);
+      const means=arms.map(a=>a[0]+a[1]===0?null:a[0]/(a[0]+a[1]));
+      const known=means.filter(x=>x!==null),bestMean=known.length?Math.max(...known):null;
+      const ties=bestMean===null?[]:means.map((m,i)=>m===bestMean?i:-1).filter(i=>i>=0);
+      const greedyProb=bestMean===null?[1/3,1/3,1/3]:
+        means.map((m,i)=>eps/3+(ties.includes(i)?(1-eps)/ties.length:0));
+      const ucb=arms.map((a,i)=>{const n=a[0]+a[1];return n===0?Infinity:means[i]+c*Math.sqrt(Math.log(Math.max(1,total))/n);});
+      const random=rng(seed),samples=arms.map(a=>betaSample(a[0]+1,a[1]+1,random));
+      const ucbMax=Math.max(...ucb),ucbChoice=ucb.map((x,i)=>x===ucbMax?i:-1).filter(i=>i>=0);
+      const thChoice=samples.indexOf(Math.max(...samples));
+      last={arms,means,greedyProb,ucb,samples,ucbChoice,thChoice,total};
+      const caption=document.createElement("caption");caption.textContent="Empirical, optimistic, and posterior-sampling views of each arm.";
+      const thead=document.createElement("thead"),hr=document.createElement("tr");
+      ["arm","pulls","empirical mean","ε-greedy probability","UCB index","Thompson draw"].forEach(x=>hr.appendChild(cell("th",x,"col")));thead.appendChild(hr);
+      const tbody=document.createElement("tbody");
+      ["A","B","C"].forEach((name,i)=>{const tr=document.createElement("tr");tr.appendChild(cell("th",name,"row"));tr.appendChild(cell("td",String(arms[i][0]+arms[i][1])));tr.appendChild(cell("td",means[i]===null?"undefined":means[i].toFixed(3)));tr.appendChild(cell("td",(100*greedyProb[i]).toFixed(1)+"%"));tr.appendChild(cell("td",Number.isFinite(ucb[i])?ucb[i].toFixed(3):"unpulled → explore"));tr.appendChild(cell("td",samples[i].toFixed(3)));tbody.appendChild(tr);});
+      e["bd-table"].replaceChildren(caption,thead,tbody);
+      const names=["A","B","C"];
+      e["bd-readout"].textContent="total observations "+total+" · empirical best "+(ties.length?ties.map(i=>names[i]).join("/"):"undefined")+
+        " · UCB chooses "+ucbChoice.map(i=>names[i]).join("/")+" · this seeded Thompson draw chooses "+names[thChoice]+
+        " · posterior draw is one randomized decision, not a claim about the true best arm.";
       draw();
     }
-    function draw() {
-      const pal = CAIE.pal();
-      const colors = { "ε-greedy": pal.s[0], "UCB": pal.s[2], "Thompson": pal.s[4] };
-      const ymax = curves ? Math.max(30, ...Object.values(curves).map(c => c[c.length - 1])) * 1.1 : 60;
-      const P = CAIE.plot(canvas, { w: Math.min(640, canvas.parentNode.clientWidth - 4), h: 280, xmin: 0, xmax: 1000, ymin: 0, ymax });
-      P.clear(); P.axes("pulls", "cumulative regret", { xfmt: v => Math.round(v), yfmt: v => v.toFixed(0) });
-      if (curves) {
-        let ro = "";
-        for (const [name, cur] of Object.entries(curves)) {
-          P.line(cur.map((v, i) => [i, v]), colors[name], 2.2);
-          P.label(720, cur[720] + ymax * 0.03, name, colors[name]);
-          ro += "<span>" + name + ": <b>" + cur[cur.length - 1].toFixed(0) + "</b></span>";
-        }
-        document.getElementById("bd-readout").innerHTML = "final regret — " + ro +
-          "<span>arm rates: " + p.join(", ") + "</span>";
-      }
+    function draw(){
+      const pal=CAIE.pal(),parent=e["bd-canvas"].parentElement;
+      const width=Math.max(1,Math.min(700,parent.clientWidth-40));
+      const setup=CAIE.setupCanvas(e["bd-canvas"],width,280),ctx=setup.ctx,w=setup.w,h=setup.h;
+      ctx.clearRect(0,0,w,h);
+      if(!last){e["bd-canvas"].setAttribute("aria-label","Bandit chart unavailable because inputs are invalid.");return;}
+      const base=h-42,top=24,group=w/3,bar=Math.max(10,Math.min(34,group/4));
+      ctx.strokeStyle=pal.grid;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(24,base);ctx.lineTo(w-10,base);ctx.stroke();
+      ["A","B","C"].forEach((name,i)=>{
+        const cx=group*(i+0.5),mean=last.means[i]===null?0:last.means[i],sample=last.samples[i];
+        ctx.fillStyle=pal.s[0];ctx.fillRect(cx-bar-2,base-(base-top)*mean,bar,(base-top)*mean);
+        ctx.fillStyle=pal.s[2];ctx.fillRect(cx+2,base-(base-top)*sample,bar,(base-top)*sample);
+        ctx.fillStyle=pal.ink;ctx.font="12px "+CAIE.css("--sans");ctx.textAlign="center";ctx.fillText(name,cx,base+18);
+      });
+      ctx.textAlign="left";ctx.fillStyle=pal.s[0];ctx.fillRect(24,8,12,8);ctx.fillStyle=pal.ink;ctx.fillText("empirical",40,16);
+      ctx.fillStyle=pal.s[2];ctx.fillRect(115,8,12,8);ctx.fillStyle=pal.ink;ctx.fillText("Thompson draw",131,16);
+      e["bd-canvas"].setAttribute("aria-label","Bar chart of empirical rates and seeded Thompson draws; Thompson chooses "+["A","B","C"][last.thChoice]+".");
     }
-    document.getElementById("bd-run").addEventListener("click", run);
-    document.getElementById("bd-e").addEventListener("input", () =>
-      document.getElementById("bd-e-v").textContent = document.getElementById("bd-e").value);
-    document.getElementById("bd-e-v").textContent = "0.1";
-    CAIE.onTheme(draw); window.addEventListener("resize", draw);
-    run();
+    numeric.forEach(x=>x.addEventListener("input",update));
+    e["bd-next"].addEventListener("click",()=>{const n=Number(e["bd-seed"].value);e["bd-seed"].value=String(Number.isSafeInteger(n)&&n<4294967295?n+1:1);update();});
+    CAIE.onTheme(draw);window.addEventListener("resize",draw);update();
+  })();
+
+  // ---------- Bradley-Terry reward-model calculator ----------
+  (function topic11RewardModelCalculator() {
+    const ids=["rm-win","rm-lose","rm-readout"],e=Object.fromEntries(ids.map(id=>[id,document.getElementById(id)]));
+    if(ids.some(id=>!e[id]))return;const fields=[e["rm-win"],e["rm-lose"]];
+    function fail(message,field){fields.forEach(x=>x.removeAttribute("aria-invalid"));if(field)field.setAttribute("aria-invalid","true");e["rm-readout"].textContent="Cannot calculate: "+message;}
+    function softplus(x){return Math.max(x,0)+Math.log1p(Math.exp(-Math.abs(x)));}
+    function update(){fields.forEach(x=>x.removeAttribute("aria-invalid"));const empty=fields.find(x=>!x.value.trim());if(empty)return fail("both scores are required.",empty);const v=fields.map(x=>Number(x.value)),bad=v.findIndex(x=>!Number.isFinite(x));if(bad>=0)return fail("scores must be finite.",fields[bad]);const d=v[0]-v[1],p=d>=0?1/(1+Math.exp(-d)):Math.exp(d)/(1+Math.exp(d)),loss=softplus(-d);e["rm-readout"].textContent="score gap "+d.toFixed(3)+" · model preference probability "+(100*p).toFixed(1)+"% · negative log-likelihood "+loss.toFixed(3)+".";}
+    fields.forEach(x=>x.addEventListener("input",update));update();
+  })();
+
+  // ---------- KL-penalized reward calculator ----------
+  (function topic11KLCalculator() {
+    const ids=["kl-a-r","kl-a-k","kl-b-r","kl-b-k","kl-beta","kl-readout"],e=Object.fromEntries(ids.map(id=>[id,document.getElementById(id)]));
+    if(ids.some(id=>!e[id]))return;const fields=ids.slice(0,-1).map(id=>e[id]);
+    function fail(message,field){fields.forEach(x=>x.removeAttribute("aria-invalid"));if(field)field.setAttribute("aria-invalid","true");e["kl-readout"].textContent="Cannot calculate: "+message;}
+    function update(){fields.forEach(x=>x.removeAttribute("aria-invalid"));const empty=fields.find(x=>!x.value.trim());if(empty)return fail("all fields are required.",empty);const v=fields.map(x=>Number(x.value)),bad=v.findIndex(x=>!Number.isFinite(x));if(bad>=0)return fail("values must be finite.",fields[bad]);if(v[1]<0)return fail("A KL estimate cannot be negative.",fields[1]);if(v[3]<0)return fail("B KL estimate cannot be negative.",fields[3]);if(v[4]<0)return fail("penalty coefficient cannot be negative.",fields[4]);const a=v[0]-v[4]*v[1],b=v[2]-v[4]*v[3];if(!Number.isFinite(a)||!Number.isFinite(b))return fail("calculation overflowed.",fields[0]);const pick=Math.abs(a-b)<1e-12?"tie":a>b?"A":"B";e["kl-readout"].textContent="A adjusted score "+a.toFixed(3)+" · B adjusted score "+b.toFixed(3)+" · higher illustrative objective: "+pick+" · this comparison does not replace distribution-level KL or human evaluation.";}
+    fields.forEach(x=>x.addEventListener("input",update));update();
+  })();
+
+  // ---------- DPO pair calculator ----------
+  (function topic11DPOCalculator() {
+    const ids=["dpo-pw","dpo-pl","dpo-rw","dpo-rl","dpo-beta","dpo-readout"],e=Object.fromEntries(ids.map(id=>[id,document.getElementById(id)]));
+    if(ids.some(id=>!e[id]))return;const fields=ids.slice(0,-1).map(id=>e[id]);
+    function fail(message,field){fields.forEach(x=>x.removeAttribute("aria-invalid"));if(field)field.setAttribute("aria-invalid","true");e["dpo-readout"].textContent="Cannot calculate: "+message;}
+    function softplus(x){return Math.max(x,0)+Math.log1p(Math.exp(-Math.abs(x)));}
+    function update(){fields.forEach(x=>x.removeAttribute("aria-invalid"));const empty=fields.find(x=>!x.value.trim());if(empty)return fail("all log-probabilities and beta are required.",empty);const v=fields.map(x=>Number(x.value)),bad=v.findIndex(x=>!Number.isFinite(x));if(bad>=0)return fail("values must be finite.",fields[bad]);for(let i=0;i<4;i++)if(v[i]>0)return fail("log-probabilities must be nonpositive.",fields[i]);if(v[4]<=0)return fail("beta must be positive.",fields[4]);const pm=v[0]-v[1],rm=v[2]-v[3],z=v[4]*(pm-rm),p=z>=0?1/(1+Math.exp(-z)):Math.exp(z)/(1+Math.exp(z)),loss=softplus(-z);if(![pm,rm,z,p,loss].every(Number.isFinite))return fail("calculation overflowed.",fields[0]);e["dpo-readout"].textContent="policy chosen-over-rejected margin "+pm.toFixed(3)+" · reference margin "+rm.toFixed(3)+" · scaled relative logit "+z.toFixed(3)+" · preference probability "+(100*p).toFixed(1)+"% · pair loss "+loss.toFixed(3)+".";}
+    fields.forEach(x=>x.addEventListener("input",update));update();
   })();
 });
 </script>
